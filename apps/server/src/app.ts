@@ -14,16 +14,22 @@ export const DEFAULT_WEB_DIR = resolve(import.meta.dirname, '../../web/dist');
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
+export const CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; " +
+  "object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 type Row = Record<string, unknown>;
 
-function encodeCursor(committedAt: string, sha: string): string {
-  return Buffer.from(JSON.stringify([committedAt, sha])).toString('base64url');
+// Cursor = [committed epoch seconds, sha]. committed_at keeps git's local offset
+// (%cI), so ordering must use the UTC epoch, not the raw string.
+function encodeCursor(epoch: number, sha: string): string {
+  return Buffer.from(JSON.stringify([epoch, sha])).toString('base64url');
 }
 
-function decodeCursor(cursor: string): [string, string] | null {
+function decodeCursor(cursor: string): [number, string] | null {
   try {
     const v = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-    if (Array.isArray(v) && typeof v[0] === 'string' && typeof v[1] === 'string') return [v[0], v[1]];
+    if (Array.isArray(v) && Number.isInteger(v[0]) && typeof v[1] === 'string') return [v[0], v[1]];
   } catch {
     /* fall through */
   }
@@ -48,6 +54,13 @@ export function buildApp({ db, webDir = DEFAULT_WEB_DIR }: AppOptions): FastifyI
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return reply.code(405).header('allow', 'GET, HEAD').send({ error: 'method_not_allowed' });
     }
+  });
+
+  // Architecture §6: bundled assets only, no inline scripts, LLM output never rendered as HTML.
+  app.addHook('onSend', async (_req, reply) => {
+    reply.header('content-security-policy', CSP);
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('referrer-policy', 'no-referrer');
   });
 
   app.get('/api/repos', async () => {
@@ -75,15 +88,15 @@ export function buildApp({ db, webDir = DEFAULT_WEB_DIR }: AppOptions): FastifyI
       if (req.query.cursor !== undefined) {
         const cur = decodeCursor(req.query.cursor);
         if (!cur) return reply.code(400).send({ error: 'bad_cursor' });
-        where += ' AND (c.committed_at < ? OR (c.committed_at = ? AND c.sha < ?))';
+        where += ' AND (unixepoch(c.committed_at) < ? OR (unixepoch(c.committed_at) = ? AND c.sha < ?))';
         params.push(cur[0], cur[0], cur[1]);
       }
       params.push(limit + 1);
       const rows = db
         .prepare(
-          `SELECT c.*, u.id AS change_id FROM commit_ c
+          `SELECT c.*, unixepoch(c.committed_at) AS epoch, u.id AS change_id FROM commit_ c
            LEFT JOIN change_unit u ON u.repo_id = c.repo_id AND u.kind = 'commit' AND u.head_sha = c.sha
-           WHERE ${where} ORDER BY c.committed_at DESC, c.sha DESC LIMIT ?`,
+           WHERE ${where} ORDER BY epoch DESC, c.sha DESC LIMIT ?`,
         )
         .all(...params) as Row[];
       const page = rows.slice(0, limit);
@@ -105,7 +118,7 @@ export function buildApp({ db, webDir = DEFAULT_WEB_DIR }: AppOptions): FastifyI
       });
       const last = page[page.length - 1];
       const nextCursor =
-        rows.length > limit && last ? encodeCursor(last.committed_at as string, last.sha as string) : null;
+        rows.length > limit && last ? encodeCursor(last.epoch as number, last.sha as string) : null;
       return { commits, nextCursor };
     },
   );

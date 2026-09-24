@@ -56,6 +56,29 @@ describe('api', () => {
     expect(p3.nextCursor).toBeNull();
   });
 
+  it('orders by UTC instant, not the offset-bearing committed_at string', async () => {
+    const db = openDb(':memory:');
+    db.prepare("INSERT INTO repo (id, name, path) VALUES (1, 'r', '/x')").run();
+    const ins = db.prepare(
+      "INSERT INTO commit_ (sha, repo_id, author_name, authored_at, committed_at, message) VALUES (?, 1, 'a', ?, ?, 'm')",
+    );
+    ins.run('kst', '2026-09-25T00:01:13+09:00', '2026-09-25T00:01:13+09:00'); // 15:01Z
+    ins.run('utc', '2026-09-24T15:30:00Z', '2026-09-24T15:30:00Z');
+    ins.run('old', '2026-09-24T09:00:00-05:00', '2026-09-24T09:00:00-05:00'); // 14:00Z
+    const app = buildApp({ db, webDir: '/nonexistent' });
+    apps.push(app);
+    const p1 = (await app.inject('/api/repos/1/timeline?limit=1')).json();
+    const p2 = (await app.inject(`/api/repos/1/timeline?limit=2&cursor=${p1.nextCursor}`)).json();
+    expect([...p1.commits, ...p2.commits].map((c: { sha: string }) => c.sha)).toEqual(['utc', 'kst', 'old']);
+    expect(p2.nextCursor).toBeNull();
+  });
+
+  it('sets a strict CSP and hardening headers', async () => {
+    const res = await make().inject('/api/repos');
+    expect(res.headers['content-security-policy']).toContain("script-src 'self'");
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+  });
+
   it('rejects bad cursor/limit and 404s unknown ids', async () => {
     const app = make();
     expect((await app.inject('/api/repos/1/timeline?cursor=zzz')).statusCode).toBe(400);
