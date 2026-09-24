@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
 import type { DatabaseSync } from 'node:sqlite';
 import { BudgetTracker, StubProvider, explainAll, explainUnit, createProvider, RepoNotAllowedError, PROMPT_VERSION, buildPrompt } from './index.js';
+import { checkLevels } from './validate.js';
 import type { AllLevels, ExplanationInput, ExplanationProvider, ProviderResult } from './index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -186,5 +187,20 @@ describe('golden sample for commit 3dd6389', () => {
     const r = await explainUnit(db, new Scripted([reference]), id!, budget());
     expect(r.outcome).toBe('ok');
     expect(JSON.parse(rows(db)[3]!.content).annotations).toEqual(reference.l3.annotations);
+  });
+
+  it('the real-provider (claude-code) golden passes checkLevels against the fixture diff unchanged', () => {
+    const golden = JSON.parse(readFileSync(join(here, '../test/golden/3dd6389.claude.json'), 'utf8')) as {
+      changeUnit: string; provider: string; promptVersion: string;
+      levels: Record<'L0' | 'L1' | 'L2' | 'L3', { status: string; content: unknown }>;
+    };
+    expect(golden).toMatchObject({ changeUnit: '3dd6389', provider: 'claude-code', promptVersion: PROMPT_VERSION });
+    expect(Object.values(golden.levels).map((l) => l.status)).toEqual(['ok', 'ok', 'ok', 'ok']);
+    const levels = { l0: golden.levels.L0.content, l1: golden.levels.L1.content, l2: golden.levels.L2.content, l3: golden.levels.L3.content };
+    const files = fixture.files.map((f) => ({ ...f, filteredReason: null }));
+    const r = checkLevels(levels, files)!;
+    expect(r).not.toBeNull();
+    expect(r.violations).toEqual([]);
+    expect(r.levels).toEqual(levels);
   });
 });
