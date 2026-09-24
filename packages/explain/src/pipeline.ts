@@ -80,14 +80,14 @@ export function loadChange(db: DatabaseSync, changeUnitId: number): RawChange | 
   };
 }
 
-function isCached(db: DatabaseSync, id: number, promptVersion: string, inputHash: string): boolean {
+export function isCached(db: DatabaseSync, id: number, promptVersion: string, inputHash: string): boolean {
   const rows = db.prepare(
     `SELECT level, status, input_hash FROM explanation WHERE change_unit_id = ? AND prompt_version = ?`,
   ).all(id, promptVersion) as unknown as { level: number; status: string; input_hash: string }[];
   return rows.length === 4 && rows.every((r) => (r.status === 'ok' || r.status === 'truncated') && r.input_hash === inputHash);
 }
 
-function store(
+export function store(
   db: DatabaseSync, id: number, levels: AllLevels, status: ExplanationStatus,
   provider: { provider: string; model: string }, promptVersion: string, inputHash: string, at: string,
 ): void {

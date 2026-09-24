@@ -144,6 +144,19 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX unit_event_unit ON unit_event(work_unit_id, at);
   CREATE UNIQUE INDEX unit_event_landed ON unit_event(change_unit_id) WHERE kind = 'landed';
   `,
+  // M2-3: explain scheduler. One row per provider call (or per unit left pending by the daily budget).
+  `
+  CREATE TABLE explain_call (
+    id             INTEGER PRIMARY KEY,
+    at             TEXT NOT NULL,
+    change_unit_id INTEGER REFERENCES change_unit(id),
+    reason         TEXT NOT NULL CHECK (reason IN ('merged','handoff','rollup','backfill','manual')),
+    duration_ms    INTEGER NOT NULL DEFAULT 0,
+    outcome        TEXT NOT NULL CHECK (outcome IN ('ok','error','budget'))
+  );
+  CREATE INDEX explain_call_at ON explain_call(at);
+  CREATE INDEX explain_call_unit ON explain_call(change_unit_id, at);
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {
