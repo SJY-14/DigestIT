@@ -1,0 +1,81 @@
+:root {
+  color-scheme: light dark;
+  --bg: #fafafa;
+  --fg: #1b1f24;
+  --muted: #5b6470;
+  --border: #d8dde3;
+  --hover: #eef1f5;
+  --selected: #dde8fb;
+  --focus: #1d5fd1;
+  --add: #16794a;
+  --del: #b42318;
+  --ref-bg: #e6ecf5;
+  --lane-0: #2563eb;
+  --lane-1: #c2410c;
+  --lane-2: #15803d;
+  --lane-3: #a21caf;
+  --lane-4: #0e7490;
+  --lane-5: #a16207;
+  --lane-6: #be123c;
+  --lane-7: #4d7c0f;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --fg: #e6e9ee;
+    --muted: #9aa4b2;
+    --border: #2c333d;
+    --hover: #1d222a;
+    --selected: #223452;
+    --focus: #7fb0ff;
+    --add: #4ade80;
+    --del: #f87171;
+    --ref-bg: #283140;
+    --lane-0: #60a5fa;
+    --lane-1: #fb923c;
+    --lane-2: #4ade80;
+    --lane-3: #e879f9;
+    --lane-4: #22d3ee;
+    --lane-5: #facc15;
+    --lane-6: #fb7185;
+    --lane-7: #a3e635;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); line-height: 1.4; }
+.app { max-width: 960px; margin: 0 auto; padding: 0 16px 48px; }
+.top { display: flex; align-items: center; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.top h1 { font-size: 1.15rem; margin: 0; }
+.repo-name, .muted { color: var(--muted); }
+select, button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+.timeline { list-style: none; margin: 0; padding: 0; }
+.row { display: flex; align-items: stretch; height: 64px; content-visibility: auto; contain-intrinsic-size: auto 64px; }
+.graph { flex: none; }
+.lane { fill: none; stroke: currentColor; stroke-width: 2; }
+.node { fill: currentColor; stroke: var(--bg); stroke-width: 2; }
+.node-hole { fill: var(--bg); }
+.lane-0 { color: var(--lane-0); } .lane-1 { color: var(--lane-1); } .lane-2 { color: var(--lane-2); }
+.lane-3 { color: var(--lane-3); } .lane-4 { color: var(--lane-4); } .lane-5 { color: var(--lane-5); }
+.lane-6 { color: var(--lane-6); } .lane-7 { color: var(--lane-7); }
+line.lane, path.lane { stroke: currentColor; }
+
+.commit {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  text-align: left; background: none; border: 0; border-radius: 6px; padding: 0 10px; cursor: pointer;
+}
+.commit:hover { background: var(--hover); }
+.commit[aria-current='true'] { background: var(--selected); }
+.label-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.label.pending { font-weight: 400; font-style: italic; color: var(--muted); }
+.ref { flex: none; background: var(--ref-bg); border-radius: 4px; padding: 0 6px; font-size: 0.75rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.8rem; color: var(--muted); overflow: hidden; height: 1.2rem; }
+.stats .add { color: var(--add); }
+.stats .del { color: var(--del); }
+.sentinel { padding: 16px; text-align: center; min-height: 56px; }
+.sentinel button, .error button { border: 1px solid var(--border); background: none; border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+.error { color: var(--del); }
+@media (prefers-reduced-motion: no-preference) { .commit { transition: background 0.1s; } }
