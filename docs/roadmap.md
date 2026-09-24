@@ -60,10 +60,21 @@ timeline and can open any commit at L0, L1, L2 or L3. Design: [architecture.md](
 - L3 renders the unified diff with annotations inline at their anchored lines; filtered files are listed as "not analysed".
 - Generated text is rendered escaped (no raw HTML); a strict CSP header is set.
 
-## Milestone 2 — real-time tracking of agent work (proposed)
+## Milestone 2 — real-time tracking of agent work
 
 Watch mode, issue-level work units, quota-guarded explanation timing and digest-speed metrics.
-Proposal and build issues: [milestone-2.md](milestone-2.md). Pending Board approval (DIG-12).
+Design and acceptance scope: [milestone-2.md](milestone-2.md). Approved by the Board on 2026-09-24 (DIG-12).
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 1 | DIG-13 | `digest watch` | Diff engineer | — |
+| 2 | DIG-14 | Work units + range snapshots | Diff engineer | DIG-13 |
+| 3 | DIG-15 | Explain scheduler + 40/day budget | Summarization engineer | DIG-14 |
+| 4 | DIG-16 | Range prompt + last-hour roll-up | Summarization engineer | — |
+| 5 | DIG-17 | Live API (SSE, work units, metrics) | Diff engineer | DIG-14 |
+| 6 | DIG-18 | `POST /api/ui-events` + metric derivation | Diff engineer | DIG-17 |
+| 7 | DIG-19 | Live dashboard + `/metrics` | Frontend engineer | DIG-17, DIG-18, DIG-9, DIG-11 |
+| 8 | DIG-20 | *(gated)* Paperclip read-only enrichment | — | separate Board approval |
 
 ## Later
 

@@ -1,6 +1,7 @@
-# Milestone 2 — real-time tracking of agent work (proposal)
+# Milestone 2 — real-time tracking of agent work
 
-**Status:** proposed for Board approval (DIG-12), 2026-09-25. Builds on
+**Status:** approved by the Board on 2026-09-24 (DIG-12), with the conditions
+listed under Security and Risks. The cap is 40 LLM calls/day, and issue 8 stays gated. Builds on
 [architecture.md](architecture.md); the D1–D3 decisions there still hold.
 
 **Goal:** a human keeps up with agent work *while it happens*. Within seconds
@@ -64,9 +65,10 @@ hypothesis holds when digest ≥ production). There's a `/metrics` page and
   new ports, no Funnel, no new egress. The LLM path is unchanged (D2), and the
   repo allowlist still applies.
 - **The first write endpoint:** `POST /api/ui-events`. It is append-only and
-  accepts only the event kinds above, with a JSON schema, a 2 KB body cap and
+  accepts only the event kinds above, with a JSON schema. It is JSON-only, has a 4 KB body cap and
   a rate limit. It requires the `Origin` header to match the served origin
-  plus a custom `X-DigestIT` header (CSRF). It **cannot** trigger ingest, git
+  (and `Sec-Fetch-Site: same-origin` when present) plus a custom `X-DigestIT`
+  header (CSRF). There are tests for every rejection case (Board condition). It **cannot** trigger ingest, git
   or LLM calls. A test asserts that no other non-GET route exists.
 - The watcher runs git with fixed argument arrays, reads repos only (never
   writes refs, hooks or config), and ignores paths outside the allowlisted
@@ -79,28 +81,30 @@ hypothesis holds when digest ≥ production). There's a `/metrics` page and
   enforce this. The key is never logged or put in the DB, and agents never
   receive it. Without the key, M2 works with git-only linking.
 
-## Build issues (after approval)
+## Build issues
 
-| # | Issue | Owner | Depends on |
-|---|---|---|---|
-| 1 | `digest watch`: ref polling across branches and worktrees, incremental ingest, dirty-tree diffstat, `landed` events | Diff engineer | — |
-| 2 | Work units: `work_unit` / `unit_commit` / `range` units, `DIG-n` linking from branch and merge subject, state machine active→handoff→merged | Diff engineer | 1 |
-| 3 | Explain scheduler: quiet-period + merge triggers, priority queue, per-day budget, `explain_call` log, stub L0 on land | Summarization engineer | 2 |
-| 4 | Range-unit prompt (L0–L3 over a multi-commit diff) + "last hour" roll-up from unit L0/L1 (text-only call) | Summarization engineer | 2 |
-| 5 | Live API: SSE `/api/stream`, work-unit + window endpoints, `/api/metrics` | Diff engineer | 2 |
-| 6 | `POST /api/ui-events` + `unit_event` store + metric derivation (merge = decided) | Diff engineer | 5 |
-| 7 | Live dashboard: work-unit lane view, "last hour" digest, unread badges, live updates, "Mark reviewed", `/metrics` page | Frontend engineer (after DIG-9, DIG-11) | 5, 6 |
-| 8 | *(gated)* Paperclip read-only enrichment: issue title/status, run windows for commit attribution, handoff = `in_review`, decisions from issue activity | Diff engineer | 2, Board key |
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 1 | DIG-13 | `digest watch`: ref polling across branches and worktrees, incremental ingest, dirty-tree diffstat, `landed` events | Diff engineer | — |
+| 2 | DIG-14 | Work units: `work_unit` / `unit_commit` / `range` units, `DIG-n` linking from branch and merge subject, state machine active→handoff→merged | Diff engineer | 1 |
+| 3 | DIG-15 | Explain scheduler: quiet-period + merge triggers, priority queue, per-day budget, `explain_call` log, stub L0 on land | Summarization engineer | 2 |
+| 4 | DIG-16 | Range-unit prompt (L0–L3 over a multi-commit diff) + "last hour" roll-up from unit L0/L1 (text-only call) | Summarization engineer | — (wired in via 2, 3) |
+| 5 | DIG-17 | Live API: SSE `/api/stream`, work-unit + window endpoints, `/api/metrics` | Diff engineer | 2 |
+| 6 | DIG-18 | `POST /api/ui-events` + `unit_event` store + metric derivation (merge = decided) | Diff engineer | 5 |
+| 7 | DIG-19 | Live dashboard: work-unit lane view, "last hour" digest, unread badges, live updates, "Mark reviewed", `/metrics` page | Frontend engineer (after DIG-9, DIG-11) | 5, 6 |
+| 8 | DIG-20 | *(gated)* Paperclip read-only enrichment: issue title/status, run windows for commit attribution, handoff = `in_review`, decisions from issue activity | Diff engineer | 2, Board key |
 
-We can run 1→2 and the prompt work in 4 in parallel with DIG-9/DIG-11. The
+We run 1→2 and 4 in parallel with DIG-9/DIG-11. The
 Frontend engineer stays on the MVP until both are merged.
 
 ## Risks
 
 - **Wrong attribution in the shared checkout:** commits can land on the wrong
   `DIG-n` branch, which can mislead a unit's explanation. Mitigations: show
-  member commits, let the owner treat the unit as a branch unit, and fix it
-  properly with issue 8.
+  member commits and let the owner treat the unit as a branch unit. Board
+  condition: don't work around this in code. The operator is evaluating
+  per-agent git worktrees at the Paperclip level, and issue 8 would add
+  run windows.
 - **Large range diffs:** a whole issue can exceed the input budget. The MVP's
   budget/truncation applies. L2 lists what was not analysed. Units above a
   size cap fall back to per-commit L0 + stub.
