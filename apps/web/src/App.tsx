@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Level } from './api.js';
+import { levelForKey, loadLevel, saveLevel } from './level.js';
+import { Panel } from './Panel.js';
 import { commitLabel, formatDate, shortSha } from './format.js';
 import { Graph } from './Graph.js';
 import { useTimeline } from './useTimeline.js';
@@ -6,6 +9,11 @@ import { useTimeline } from './useTimeline.js';
 export function App() {
   const { repos, repoId, setRepoId, rows, done, loading, error, loadMore } = useTimeline();
   const [selected, setSelected] = useState<string | null>(null);
+  const [level, setLevelState] = useState<Level>(() => loadLevel());
+  const setLevel = useCallback((l: Level) => {
+    setLevelState(l);
+    saveLevel(l);
+  }, []);
   const sentinel = useRef<HTMLDivElement>(null);
 
   // Infinite scroll: fetch the next page when the sentinel nears the viewport.
@@ -19,10 +27,21 @@ export function App() {
     return () => io.disconnect();
   }, [done, error, loadMore, rows.length]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') return setSelected(null);
+      const l = levelForKey(e);
+      if (l !== null && selected) setLevel(l);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selected, setLevel]);
+
+  const selectedRow = rows.find((r) => r.commit.sha === selected)?.commit;
   const gutter = rows.reduce((m, r) => Math.max(m, r.lanes.width), 1);
 
   return (
-    <div className="app">
+    <div className={selectedRow ? 'app with-panel' : 'app'}>
       <header className="top">
         <h1>DigestIT</h1>
         {repos.length > 1 && (
@@ -36,6 +55,7 @@ export function App() {
         )}
         {repos.length === 1 && <span className="repo-name">{repos[0]?.name}</span>}
       </header>
+      <div className="split">
       <main>
         {error && (
           <p role="alert" className="error">
@@ -92,6 +112,17 @@ export function App() {
           {done && rows.length > 0 && <span className="muted">{rows.length} commits, start of history</span>}
         </div>
       </main>
+      {selectedRow && (
+        <Panel
+          changeId={selectedRow.changeId}
+          sha={selectedRow.sha}
+          title={commitLabel(selectedRow).text}
+          level={level}
+          onLevel={setLevel}
+          onClose={() => setSelected(null)}
+        />
+      )}
+      </div>
     </div>
   );
 }
