@@ -5,13 +5,13 @@ per commit → show a timeline where clicking a commit lets the user pick the
 level. Level definitions: [abstraction-levels.md](abstraction-levels.md).
 Work breakdown: [roadmap.md](roadmap.md).
 
-## 1. Decisions needing Board sign-off
+## 1. Board decisions (approved 2026-09-24)
 
-| # | Decision | Recommendation | Alternatives |
+| # | Decision | Approved | Alternatives |
 |---|---|---|---|
 | D1 | Stack | TypeScript end-to-end, pnpm workspaces, SQLite via Node 24 built-in `node:sqlite`, Fastify API, React + Vite UI | Python backend (splits the codebase); Postgres (needs a service to run) |
-| D2 | Where explanations are generated (**code leaves the server**) | **B: Claude Code headless (`claude -p`) on this server** for the MVP, limited to allowlisted repos (initially only DigestIT) | A: Anthropic API via SDK; C: local model; D: offline stub only |
-| D3 | Exposure | Bind to `127.0.0.1` only, no auth in the MVP, access via SSH port-forward | Reverse proxy with SSO (after MVP, only if needed) |
+| D2 | Where explanations are generated (**code leaves the server**) | **B: Claude Code headless (`claude -p`) on this server** for the MVP, limited to allowlisted repos (initially only DigestIT). Uses the owner's Max subscription limits; keep the provider interface so we can move to A before any external distribution | A: Anthropic API via SDK; C: local model; D: offline stub only |
+| D3 | Exposure (amended by the Board) | Server binds `127.0.0.1:4780` only, no auth in the MVP. Reached only via **Tailscale serve** (tailnet-only) on port **4780**; the tailnet ACL allows only the owner's device to that port. SSH tunnels are not available in this environment | Reverse proxy with SSO (after MVP, only if needed) |
 
 ### D2 options in detail
 
@@ -36,7 +36,7 @@ allowlist in config).
 ```
 git repo ──► ingest ──► SQLite ◄── explain (worker) ──► ExplanationProvider (B / A / C / D)
                           ▲
-                          └── api (Fastify, 127.0.0.1) ◄── web (React timeline)
+                          └── api (Fastify, 127.0.0.1:4780) ◄── web (React timeline, served by api)
 ```
 
 pnpm workspace layout:
@@ -46,7 +46,7 @@ pnpm workspace layout:
 | `packages/core` | Shared types, SQLite schema + migrations, config loading |
 | `packages/ingest` | Runs the local `git` CLI (`git log`, `git show --numstat --patch`), parses the output into commits, file changes and hunks; incremental (skips SHAs it already has) |
 | `packages/explain` | Diff preparation (filter, budget, redact) → provider → validate against level limits → cache |
-| `apps/server` | Read-only REST API + CLI entry points (`digest ingest`, `digest explain`) |
+| `apps/server` | Read-only REST API + static serving of the built `apps/web` bundle (one port) + CLI entry points (`digest ingest`, `digest explain`) |
 | `apps/web` | Timeline dashboard + explanation panel with level picker |
 
 Dependencies are kept to well-known packages (typescript, vitest, fastify,
@@ -110,8 +110,12 @@ surface cannot trigger outbound LLM calls.
 
 ## 6. Security posture
 
-- The server listens on `127.0.0.1` only. Nothing is exposed to the host's
-  network or the internet. Users reach it through an SSH tunnel.
+- The server listens on `127.0.0.1:4780` only (port configurable, default
+  4780). Nothing is exposed to the host's network or the internet. The
+  operator publishes it with Tailscale serve, tailnet-only, on port 4780. The
+  tailnet ACL allows only the owner's device to reach that port. Tailscale
+  serve and the ACL are configured by the operator outside the repo and are
+  never changed by agents. No Tailscale Funnel.
 - The only outbound path is the chosen LLM provider (D2), and it only
   processes repos on the allowlist. There is no telemetry, no CDN (UI assets are
   bundled) and no third-party fonts or scripts.

@@ -2,9 +2,9 @@
 
 ## Milestone 1 — MVP: explain DigestIT's own history
 
-Done when a user tunnels to the dashboard, sees this repo's commits on a
+Done when the owner opens the dashboard over Tailscale (port 4780), sees this repo's commits on a
 timeline and can open any commit at L0, L1, L2 or L3. Design: [architecture.md](architecture.md),
-[abstraction-levels.md](abstraction-levels.md). Issues can start after Board sign-off on the architecture (DIG-1).
+[abstraction-levels.md](abstraction-levels.md). Architecture approved by the Board on 2026-09-24 (DIG-1).
 
 | # | Issue | Owner | Depends on |
 |---|---|---|---|
@@ -47,7 +47,8 @@ timeline and can open any commit at L0, L1, L2 or L3. Design: [architecture.md](
 - Worked example commit `3dd6389` produces output comparable to abstraction-levels.md (checked in as a golden sample from the stub path + one manual real run).
 
 **6. Read-only API server**
-- Endpoints from architecture.md §5 with cursor pagination; binds `127.0.0.1` only (a test asserts this).
+- Endpoints from architecture.md §5 with cursor pagination; binds `127.0.0.1:4780` by default (port configurable; a test asserts the host is loopback).
+- Serves the built `apps/web` bundle from the same port so a single Tailscale serve mapping covers UI + API.
 - Returns 404 for unknown ids and 200 with `status: pending` for explanations not generated yet; no write endpoints.
 
 **7. Timeline dashboard**
