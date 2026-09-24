@@ -1,10 +1,13 @@
 import { numberPatch } from './difflines.js';
 import type { ExplanationInput } from './provider.js';
 
-/** Bump whenever the instructions or the rendering below change; explanations are cached per version. */
+/**
+ * Bump whenever the instructions or the rendering below change; explanations are cached per version.
+ * This is the single-commit prompt; range and roll-up prompts have their own versions in range.ts.
+ */
 export const PROMPT_VERSION = 'p2';
 
-const INSTRUCTIONS = `You explain a code change at four levels for people who must digest many AI-written changes quickly. Reply with ONLY one JSON object, no prose, no code fence:
+export const INSTRUCTIONS = `You explain a code change at four levels for people who must digest many AI-written changes quickly. Reply with ONLY one JSON object, no prose, no code fence:
 {"l0":{"text":string},"l1":{"userVisible":boolean,"bullets":string[]},"l2":{"items":[{"path":string,"role":string,"change":string}],"notAnalysed":string[]},"l3":{"annotations":[{"path":string,"side":"new"|"old","startLine":number,"endLine":number,"note":string}]}}
 
 Levels (each must be readable on its own; higher levels drop detail, never add it):

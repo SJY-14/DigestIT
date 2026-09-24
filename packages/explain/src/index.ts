@@ -9,3 +9,4 @@ export * from './difflines.js';
 export * from './validate.js';
 export * from './pipeline.js';
 export * from './run-cli.js';
+export * from './range.js';

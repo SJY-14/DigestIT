@@ -1,0 +1,54 @@
+{
+ "levels": {
+  "l0": {
+   "text": "DIG-99 add range prompt"
+  },
+  "l1": {
+   "userVisible": false,
+   "bullets": [
+    "No user-visible change",
+    "3 commit(s), 2 file(s), +4 / -1 lines; too large to analyse (~36 tokens, cap 10)."
+   ]
+  },
+  "l2": {
+   "items": [
+    {
+     "path": "aaaaaaa",
+     "role": "commit",
+     "change": "Add a() change"
+    },
+    {
+     "path": "bbbbbbb",
+     "role": "commit",
+     "change": "Add b.ts constants"
+    },
+    {
+     "path": "ccccccc",
+     "role": "commit",
+     "change": "Fix typo"
+    }
+   ],
+   "notAnalysed": [
+    "src/a.ts (too_large)",
+    "src/b.ts (too_large)"
+   ]
+  },
+  "l3": {
+   "annotations": []
+  }
+ },
+ "commitStubs": [
+  {
+   "sha": "aaaaaaa1111",
+   "l0": "Add a() change"
+  },
+  {
+   "sha": "bbbbbbb2222",
+   "l0": "Add b.ts constants"
+  },
+  {
+   "sha": "ccccccc3333",
+   "l0": "Fix typo"
+  }
+ ]
+}

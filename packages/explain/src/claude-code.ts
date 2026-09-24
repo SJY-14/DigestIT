@@ -5,8 +5,12 @@ import type {
   ExplanationInput,
   ExplanationProvider,
   ProviderResult,
+  RangeInput,
+  RollupInput,
+  RollupResult,
 } from './provider.js';
 import { buildPrompt } from './prompt.js';
+import { buildRangePrompt, buildRollupPrompt } from './range.js';
 
 export type SpawnFn = (cmd: string, args: string[]) => ChildProcessWithoutNullStreams;
 
@@ -29,7 +33,7 @@ function isObj(v: unknown): v is Record<string, unknown> {
 }
 
 /** Shape check only; length limits and anchors are the pipeline validator's job. */
-export function parseLevels(text: string): AllLevels {
+function parseJson(text: string): Record<string, unknown> {
   let v: unknown;
   try {
     v = JSON.parse(stripFence(text));
@@ -37,6 +41,11 @@ export function parseLevels(text: string): AllLevels {
     throw new Error('claude output is not valid JSON');
   }
   if (!isObj(v)) throw new Error('claude output is not an object');
+  return v;
+}
+
+export function parseLevels(text: string): AllLevels {
+  const v = parseJson(text);
   const { l0, l1, l2, l3 } = v;
   if (!isObj(l0) || typeof l0.text !== 'string') throw new Error('invalid l0');
   if (!isObj(l1) || typeof l1.userVisible !== 'boolean' || !Array.isArray(l1.bullets)) {
@@ -65,9 +74,26 @@ export class ClaudeCodeProvider implements ExplanationProvider {
   }
 
   async explain(input: ExplanationInput): Promise<ProviderResult> {
+    return { levels: parseLevels(await this.call(buildPrompt(input))), provider: this.id, model: this.model };
+  }
+
+  async explainRange(input: RangeInput): Promise<ProviderResult> {
+    return { levels: parseLevels(await this.call(buildRangePrompt(input))), provider: this.id, model: this.model };
+  }
+
+  async rollup(input: RollupInput): Promise<RollupResult> {
+    const v = parseJson(await this.call(buildRollupPrompt(input)));
+    const { l0, l1 } = v;
+    if (!isObj(l0) || typeof l0.text !== 'string') throw new Error('invalid l0');
+    if (!isObj(l1) || typeof l1.userVisible !== 'boolean' || !Array.isArray(l1.bullets)) throw new Error('invalid l1');
+    return { levels: { l0, l1 } as unknown as RollupResult['levels'], provider: this.id, model: this.model };
+  }
+
+  /** Runs one prompt and returns the model's text result. */
+  private async call(prompt: string): Promise<string> {
     const args = ['-p', '--output-format', 'json', '--tools', ''];
     if (this.model !== 'default') args.push('--model', this.model);
-    const stdout = await this.run(args, buildPrompt(input));
+    const stdout = await this.run(args, prompt);
     let envelope: unknown;
     try {
       envelope = JSON.parse(stdout);
@@ -77,7 +103,7 @@ export class ClaudeCodeProvider implements ExplanationProvider {
     if (!isObj(envelope) || envelope.is_error === true || typeof envelope.result !== 'string') {
       throw new Error('claude returned an error result');
     }
-    return { levels: parseLevels(envelope.result), provider: this.id, model: this.model };
+    return envelope.result;
   }
 
   private run(args: string[], stdin: string): Promise<string> {

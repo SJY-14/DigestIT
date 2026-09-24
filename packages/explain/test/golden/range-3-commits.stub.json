@@ -1,0 +1,30 @@
+{
+ "l0": {
+  "text": "DIG-99 add range prompt"
+ },
+ "l1": {
+  "userVisible": false,
+  "bullets": [
+   "No user-visible change",
+   "3 commit(s), 2 file(s) in the range."
+  ]
+ },
+ "l2": {
+  "items": [
+   {
+    "path": "src/a.ts",
+    "role": "file",
+    "change": "M +2 -1"
+   },
+   {
+    "path": "src/b.ts",
+    "role": "file",
+    "change": "A +2 -0"
+   }
+  ],
+  "notAnalysed": []
+ },
+ "l3": {
+  "annotations": []
+ }
+}

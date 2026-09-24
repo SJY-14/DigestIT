@@ -32,6 +32,14 @@ export function withAllowlist(
       }
       return inner.explain(input);
     },
+    explainRange: inner.explainRange && ((input) => {
+      if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
+      return inner.explainRange!(input);
+    }),
+    rollup: inner.rollup && ((input) => {
+      if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
+      return inner.rollup!(input);
+    }),
   };
 }
 
