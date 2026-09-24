@@ -16,6 +16,8 @@ export interface ExplanationInput {
   title: string;
   message: string;
   files: ProviderFile[];
+  /** Validation problems from the previous attempt; only set on the pipeline's single retry. */
+  retryFeedback?: string[];
 }
 
 export interface AllLevels {
