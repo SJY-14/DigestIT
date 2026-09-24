@@ -99,17 +99,17 @@ export async function readFiles(repo: string, sha: string, firstParent: string |
   const target = firstParent ? [firstParent, sha] : ['--root', sha];
 
   const raw = nul(await git(repo, ['diff-tree', ...DIFF_FLAGS, '--raw', '-z', ...target]));
-  const entries: { path: string; oldPath: string | null; status: ChangeStatus }[] = [];
+  const entries: { path: string; oldPath: string | null; status: ChangeStatus; typeChange: boolean }[] = [];
   for (let i = 0; i < raw.length; ) {
     // Root form without a parent prints the commit id first.
     if (!raw[i]!.startsWith(':')) { i++; continue; }
     const code = raw[i]!.split(' ').at(-1)![0]!;
     const status = STATUS_MAP[code] ?? 'M';
     if (code === 'R' || code === 'C') {
-      entries.push({ oldPath: code === 'R' ? raw[i + 1]! : null, path: raw[i + 2]!, status });
+      entries.push({ oldPath: code === 'R' ? raw[i + 1]! : null, path: raw[i + 2]!, status, typeChange: false });
       i += 3;
     } else {
-      entries.push({ oldPath: null, path: raw[i + 1]!, status });
+      entries.push({ oldPath: null, path: raw[i + 1]!, status, typeChange: code === 'T' });
       i += 2;
     }
   }
@@ -133,19 +133,24 @@ export async function readFiles(repo: string, sha: string, firstParent: string |
 
   const patchText = await git(repo, ['diff-tree', ...DIFF_FLAGS, '-p', ...target]);
   const patches = splitPatch(patchText);
-  if (patches.length !== entries.length) {
-    throw new Error(`patch/file count mismatch for ${sha}: ${patches.length} vs ${entries.length}`);
+  // A type change (file <-> symlink) is printed as a delete section plus an add section.
+  const expected = entries.reduce((n, e) => n + (e.typeChange ? 2 : 1), 0);
+  if (patches.length !== expected) {
+    throw new Error(`patch/file count mismatch for ${sha}: ${patches.length} vs ${expected}`);
   }
 
-  return entries.map((e, i) => {
+  let p = 0;
+  return entries.map((e) => {
     const c = counts.get(e.path) ?? { add: 0, del: 0, binary: false };
+    const patch = e.typeChange ? patches[p]! + patches[p + 1]! : patches[p]!;
+    p += e.typeChange ? 2 : 1;
     return {
       path: e.path,
       oldPath: e.oldPath,
       status: c.binary ? 'B' : e.status,
       additions: c.add,
       deletions: c.del,
-      patch: c.binary ? null : patches[i]!,
+      patch: c.binary ? null : patch,
     };
   });
 }

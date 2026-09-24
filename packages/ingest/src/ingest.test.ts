@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -135,6 +135,23 @@ describe('ingestRepo', () => {
     expect(rows.map((r) => r.path)).toEqual(['run.sh', 'sp ace/é.txt']);
     expect(rows[0].patch).toContain('new mode 100755');
     expect(rows[1].patch).toContain('+b');
+  });
+
+  it('keeps a file <-> symlink type change as one file change', async () => {
+    write('link', 'plain\n');
+    commit('c1');
+    rmSync(join(dir, 'link'));
+    symlinkSync('target', join(dir, 'link'));
+    commit('c2');
+    const db = openDb(':memory:');
+    await ingestRepo(db, dir);
+    const rows = db.prepare(
+      "SELECT path, status, patch FROM file_change f JOIN change_unit u ON u.id=f.change_unit_id WHERE u.title='c2'",
+    ).all() as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ path: 'link', status: 'M' });
+    expect(rows[0].patch).toContain('deleted file mode 100644');
+    expect(rows[0].patch).toContain('new file mode 120000');
   });
 
   it('handles an empty repository', async () => {
