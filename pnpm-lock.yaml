@@ -71,6 +71,9 @@ importers:
       '@digestit/core':
         specifier: workspace:*
         version: link:../core
+      '@digestit/explain':
+        specifier: workspace:*
+        version: link:../explain
 
 packages:
 

@@ -8,3 +8,4 @@ export * from './prompt.js';
 export * from './difflines.js';
 export * from './validate.js';
 export * from './pipeline.js';
+export * from './run-cli.js';
