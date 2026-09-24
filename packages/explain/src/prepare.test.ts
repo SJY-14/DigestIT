@@ -39,6 +39,21 @@ describe('redact', () => {
     const s = '+function add(a, b) { return a + b; }\n';
     expect(redact(s)).toBe(s);
   });
+  it('does not treat identifiers, calls or member access as secret values', () => {
+    for (const s of [
+      '+  author: commit.authorName,',
+      '+  authorEmail = row.author_email',
+      '+const tokenizer = createTokenizer(opts);',
+      '+  const auth = requireAuth(req);',
+      '+  passwordInput = document.querySelector("#pw")',
+      '+  remaining = opt.tokenBudget;',
+    ]) expect(redact(s)).toBe(s);
+  });
+  it('redacts env-style and JSON-style secret values', () => {
+    expect(redact('+DB_PASSWORD=hunter2pass')).toBe(`+DB_PASSWORD=${REDACTED}`);
+    expect(redact('+  "client_secret": "abc123def456ghi"')).toBe(`+  "client_secret": "${REDACTED}"`);
+    expect(redact("+auth_token: 'zzzzyyyyxxxx'")).toBe(`+auth_token: '${REDACTED}'`);
+  });
 });
 
 describe('filterReason', () => {
