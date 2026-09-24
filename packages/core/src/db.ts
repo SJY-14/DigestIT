@@ -88,6 +88,63 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (repo_id, path)
   );
   `,
+  // M2-2: work units. change_unit and unit_event are rebuilt (SQLite cannot alter a CHECK) to allow
+  // kind 'range' and the state-transition events 'handoff'/'resumed'; ids and rows are preserved.
+  `
+  PRAGMA defer_foreign_keys = ON;
+  CREATE TABLE work_unit (
+    id                   INTEGER PRIMARY KEY,
+    repo_id              INTEGER NOT NULL REFERENCES repo(id),
+    key                  TEXT NOT NULL,
+    kind                 TEXT NOT NULL CHECK (kind IN ('issue','branch')),
+    title                TEXT NOT NULL,
+    state                TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','handoff','merged')),
+    tip_sha              TEXT NOT NULL,
+    base_sha             TEXT,
+    first_commit_at      TEXT NOT NULL,
+    last_commit_at       TEXT NOT NULL,
+    merged_at            TEXT,
+    latest_range_unit_id INTEGER,
+    UNIQUE (repo_id, key)
+  );
+  CREATE TABLE unit_commit (
+    work_unit_id INTEGER NOT NULL REFERENCES work_unit(id),
+    sha          TEXT NOT NULL,
+    PRIMARY KEY (work_unit_id, sha)
+  );
+  CREATE INDEX unit_commit_sha ON unit_commit(sha);
+
+  CREATE TABLE change_unit_new (
+    id       INTEGER PRIMARY KEY,
+    repo_id  INTEGER NOT NULL REFERENCES repo(id),
+    kind     TEXT NOT NULL DEFAULT 'commit' CHECK (kind IN ('commit','range')),
+    head_sha TEXT NOT NULL,
+    base_sha TEXT,
+    title    TEXT NOT NULL
+  );
+  INSERT INTO change_unit_new SELECT id, repo_id, kind, head_sha, base_sha, title FROM change_unit;
+  DROP TABLE change_unit;
+  ALTER TABLE change_unit_new RENAME TO change_unit;
+  CREATE UNIQUE INDEX change_unit_commit ON change_unit(repo_id, head_sha) WHERE kind = 'commit';
+  CREATE UNIQUE INDEX change_unit_range ON change_unit(repo_id, head_sha, COALESCE(base_sha, '')) WHERE kind = 'range';
+
+  CREATE TABLE unit_event_new (
+    id             INTEGER PRIMARY KEY,
+    repo_id        INTEGER NOT NULL REFERENCES repo(id),
+    work_unit_id   INTEGER REFERENCES work_unit(id),
+    change_unit_id INTEGER REFERENCES change_unit(id),
+    kind           TEXT NOT NULL CHECK (kind IN
+                   ('landed','explained','opened','level_viewed','reviewed','merged','handoff','resumed')),
+    at             TEXT NOT NULL,
+    detail         TEXT NOT NULL DEFAULT '{}'
+  );
+  INSERT INTO unit_event_new SELECT id, repo_id, work_unit_id, change_unit_id, kind, at, detail FROM unit_event;
+  DROP TABLE unit_event;
+  ALTER TABLE unit_event_new RENAME TO unit_event;
+  CREATE INDEX unit_event_repo_at ON unit_event(repo_id, at);
+  CREATE INDEX unit_event_unit ON unit_event(work_unit_id, at);
+  CREATE UNIQUE INDEX unit_event_landed ON unit_event(change_unit_id) WHERE kind = 'landed';
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {

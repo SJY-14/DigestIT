@@ -200,6 +200,7 @@ export function listUnitsOldestFirst(db: DatabaseSync): number[] {
   const rows = db.prepare(
     `SELECT cu.id FROM change_unit cu
        LEFT JOIN commit_ c ON c.sha = cu.head_sha
+      WHERE cu.kind = 'commit'
       ORDER BY c.committed_at ASC, cu.id ASC`,
   ).all() as unknown as { id: number }[];
   return rows.map((r) => r.id);

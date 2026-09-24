@@ -33,7 +33,7 @@ export interface Commit {
 export interface ChangeUnit {
   id: number;
   repoId: number;
-  kind: 'commit';
+  kind: 'commit' | 'range';
   headSha: string;
   baseSha: string | null;
   title: string;
@@ -83,4 +83,22 @@ export interface Explanation<L extends Level = Level> {
   promptVersion: string;
   inputHash: string;
   createdAt: string;
+}
+
+export type WorkUnitKind = 'issue' | 'branch';
+export type WorkUnitState = 'active' | 'handoff' | 'merged';
+
+export interface WorkUnit {
+  id: number;
+  repoId: number;
+  key: string;
+  kind: WorkUnitKind;
+  title: string;
+  state: WorkUnitState;
+  tipSha: string;
+  baseSha: string | null;
+  firstCommitAt: string;
+  lastCommitAt: string;
+  mergedAt: string | null;
+  latestRangeUnitId: number | null;
 }
