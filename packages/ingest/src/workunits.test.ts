@@ -17,11 +17,11 @@ const commit = (file: string, msg: string) => {
 };
 type Db = ReturnType<typeof openDb>;
 const units = (db: Db) =>
-  db.prepare('SELECT id, key, kind, state, tip_sha, base_sha FROM work_unit ORDER BY key').all() as any[];
+  db.prepare('SELECT id, key, kind, state, tip_sha, base_sha, merged_at FROM work_unit ORDER BY key').all() as any[];
 const members = (db: Db, key: string) =>
   (db.prepare('SELECT uc.sha FROM unit_commit uc JOIN work_unit w ON w.id = uc.work_unit_id WHERE w.key = ?').all(key) as any[]).map((r) => r.sha).sort();
 const events = (db: Db) =>
-  db.prepare("SELECT w.key, e.kind, e.detail FROM unit_event e JOIN work_unit w ON w.id = e.work_unit_id WHERE e.kind != 'landed' ORDER BY e.id").all() as any[];
+  db.prepare("SELECT w.key, e.kind, e.at, e.detail FROM unit_event e JOIN work_unit w ON w.id = e.work_unit_id WHERE e.kind != 'landed' ORDER BY e.id").all() as any[];
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'digest-wu-')));
@@ -128,6 +128,12 @@ describe('syncWorkUnits', () => {
     const u = units(db)[0];
     expect(u).toMatchObject({ key: 'DIG-7', state: 'merged', tip_sha: c1 });
     expect(u.base_sha).toBe(g('rev-parse', 'HEAD^2^'));
+    // Backfill: merged_at and the merged event carry the merge commit's time, flagged as backfill.
+    const mergeAt = new Date(g('log', '-1', '--format=%cI', 'HEAD')).toISOString();
+    expect(new Date(u.merged_at).toISOString()).toBe(mergeAt);
+    const ev = events(db).find((e) => e.kind === 'merged')!;
+    expect(new Date(ev.at).toISOString()).toBe(mergeAt);
+    expect(JSON.parse(ev.detail)).toMatchObject({ backfill: true });
     const { changeUnitId } = await createRangeUnit(db, dir, u.id);
     expect((db.prepare('SELECT path FROM file_change WHERE change_unit_id = ?').all(changeUnitId) as any[]).map((r) => r.path)).toEqual(['c1.txt']);
   });

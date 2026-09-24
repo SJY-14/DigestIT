@@ -91,7 +91,6 @@ export const MIGRATIONS: readonly string[] = [
   // M2-2: work units. change_unit and unit_event are rebuilt (SQLite cannot alter a CHECK) to allow
   // kind 'range' and the state-transition events 'handoff'/'resumed'; ids and rows are preserved.
   `
-  PRAGMA defer_foreign_keys = ON;
   CREATE TABLE work_unit (
     id                   INTEGER PRIMARY KEY,
     repo_id              INTEGER NOT NULL REFERENCES repo(id),
@@ -150,16 +149,27 @@ export const MIGRATIONS: readonly string[] = [
 export function migrate(db: DatabaseSync): number {
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number };
   let version = row.user_version;
-  for (; version < MIGRATIONS.length; version++) {
-    db.exec('BEGIN');
-    try {
-      db.exec(MIGRATIONS[version]!);
-      db.exec(`PRAGMA user_version = ${version + 1}`);
-      db.exec('COMMIT');
-    } catch (e) {
-      db.exec('ROLLBACK');
-      throw e;
+  if (version >= MIGRATIONS.length) return version;
+  // Table rebuilds (SQLite's documented 12-step procedure) need foreign keys off; the pragma is a
+  // no-op inside a transaction, so set it first and verify with foreign_key_check before COMMIT.
+  const fk = (db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys;
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    for (; version < MIGRATIONS.length; version++) {
+      db.exec('BEGIN');
+      try {
+        db.exec(MIGRATIONS[version]!);
+        const bad = db.prepare('PRAGMA foreign_key_check').all();
+        if (bad.length > 0) throw new Error(`migration ${version + 1}: foreign_key_check failed (${bad.length} rows)`);
+        db.exec(`PRAGMA user_version = ${version + 1}`);
+        db.exec('COMMIT');
+      } catch (e) {
+        db.exec('ROLLBACK');
+        throw e;
+      }
     }
+  } finally {
+    db.exec(`PRAGMA foreign_keys = ${fk ? 'ON' : 'OFF'}`);
   }
   return version;
 }

@@ -1,6 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { MIGRATIONS, migrate, openDb } from './db.js';
 
@@ -42,5 +43,26 @@ describe('migrate', () => {
     db.exec("INSERT INTO repo(name,path) VALUES('r','/r')");
     db.exec("INSERT INTO change_unit(repo_id,head_sha,title) VALUES(1,'a','t')");
     expect(() => db.exec("INSERT INTO file_change(change_unit_id,path,status) VALUES(1,'p','X')")).toThrow();
+  });
+
+  it('migrates a populated v2 database to v3 preserving rows and constraints', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec('PRAGMA foreign_keys = ON');
+    for (const m of MIGRATIONS.slice(0, 2)) db.exec(m);
+    db.exec('PRAGMA user_version = 2');
+    db.exec(`INSERT INTO repo(name,path) VALUES('r','/r');
+      INSERT INTO change_unit(id,repo_id,head_sha,title) VALUES(7,1,'a','t');
+      INSERT INTO file_change(change_unit_id,path,status) VALUES(7,'p','M');
+      INSERT INTO explanation VALUES(7,0,'{}','ok','stub','m','v1','h','now');
+      INSERT INTO unit_event(repo_id,change_unit_id,kind,at) VALUES(1,7,'landed','now');`);
+    expect(migrate(db)).toBe(MIGRATIONS.length);
+    const n = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
+    expect(n('SELECT id AS n FROM change_unit')).toBe(7);
+    expect(n('SELECT count(*) AS n FROM file_change WHERE change_unit_id = 7')).toBe(1);
+    expect(n('SELECT count(*) AS n FROM explanation WHERE change_unit_id = 7')).toBe(1);
+    expect(n('SELECT count(*) AS n FROM unit_event WHERE change_unit_id = 7')).toBe(1);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect((db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys).toBe(1);
+    expect(() => db.exec("INSERT INTO change_unit(repo_id,head_sha,title) VALUES(1,'a','dup')")).toThrow();
   });
 });

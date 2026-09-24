@@ -31,6 +31,7 @@ interface Candidate {
   kind: WorkUnitKind;
   tips: string[]; // branch tips for this unit
   commits: Set<string>;
+  mergeAt?: string; // committed_at of the `Merge DIG-n-…` commit that brought the unit into the base
   baseHint: string | null; // first parent of a `Merge DIG-n-…` commit: where the unit forked from
 }
 
@@ -105,13 +106,14 @@ export async function syncWorkUnits(
   // Merge commits on the base named `Merge DIG-n-…` join the issue unit, along with
   // the side branch they brought in (this recovers units whose branch is gone).
   const merges = db.prepare(
-    "SELECT sha, parents, message FROM commit_ WHERE repo_id = ? AND is_merge = 1 ORDER BY committed_at",
-  ).all(repoId) as { sha: string; parents: string; message: string }[];
+    "SELECT sha, parents, message, committed_at FROM commit_ WHERE repo_id = ? AND is_merge = 1 ORDER BY committed_at",
+  ).all(repoId) as { sha: string; parents: string; message: string; committed_at: string }[];
   for (const m of merges) {
     const key = issueKeyOfMerge(m.message.split('\n')[0]!);
     if (!key || !(await isAncestor(repoPath, m.sha, baseRef))) continue;
     const c = cand(key, 'issue');
     c.commits.add(m.sha);
+    c.mergeAt ??= m.committed_at;
     const [p0, p1] = JSON.parse(m.parents) as string[];
     if (p1) {
       for (const sha of await revList(repoPath, [p1, `^${p0}`])) c.commits.add(sha);
@@ -209,10 +211,14 @@ export async function syncWorkUnits(
       const to: WorkUnitState = p.reachable ? 'merged'
         : now.getTime() - Date.parse(last) >= quietMs ? 'handoff' : 'active';
       if (to !== (from ?? 'active')) {
+        // First seen already merged (history backfill): stamp the merge commit's time, not now,
+        // so old units do not look freshly merged.
+        const backfill = to === 'merged' && from === null;
+        const at = backfill ? (p.c.mergeAt ?? last) : nowIso;
         db.prepare('UPDATE work_unit SET state = ?, merged_at = ? WHERE id = ?')
-          .run(to, to === 'merged' ? nowIso : null, id);
+          .run(to, to === 'merged' ? at : null, id);
         const kind = to === 'merged' ? 'merged' : to === 'handoff' ? 'handoff' : 'resumed';
-        event.run(repoId, id, kind, nowIso, JSON.stringify({ from: from ?? 'active', to, tip: p.tip }));
+        event.run(repoId, id, kind, at, JSON.stringify({ from: from ?? 'active', to, tip: p.tip, ...(backfill ? { backfill: true } : {}) }));
         transitions.push({ key: p.c.key, from, to });
       } else if (from === null) {
         transitions.push({ key: p.c.key, from, to });
