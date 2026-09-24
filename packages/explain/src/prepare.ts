@@ -112,7 +112,9 @@ export function prepareInput(
     }
   });
 
-  candidates.sort((a, b) => a.patch.length - b.patch.length || raw.files[a.idx]!.path.localeCompare(raw.files[b.idx]!.path));
+  // Plain code-unit order for ties: localeCompare depends on the ICU locale and would make the hash host-dependent.
+  const pathOf = (c: { idx: number }) => raw.files[c.idx]!.path;
+  candidates.sort((a, b) => a.patch.length - b.patch.length || (pathOf(a) < pathOf(b) ? -1 : pathOf(a) > pathOf(b) ? 1 : 0));
 
   let remaining = opt.tokenBudget;
   let exhausted = false;

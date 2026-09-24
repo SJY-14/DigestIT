@@ -17,9 +17,13 @@ const TOKENS: RegExp[] = [
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:[^\s@/]+@/gi, // user:pass@ in URLs (replaced with scheme kept below)
 ];
 
-/** `name = value` assignments where the name looks secret; only the value is replaced. */
+/**
+ * `name = value` assignments where the name looks secret; only the value is replaced.
+ * The value must look like a literal (quoted, or a bare token not followed by `.`/`(`),
+ * so code such as `author: c.authorName` or `tokenizer = makeTokenizer()` is left alone.
+ */
 const ASSIGNMENT =
-  /((?:secret|token|passw(?:or)?d|passwd|api[_-]?key|access[_-]?key|private[_-]?key|auth|credential)[A-Za-z0-9_.-]*["']?\s*[:=]\s*["']?)([^\s"',;]{8,})/gi;
+  /(\b[A-Za-z0-9_.-]*?(?:secret|token|passw(?:or)?d|passwd|pwd|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?token|credentials?)[A-Za-z0-9_.-]*["']?\s*[:=]\s*)(?:(["'`])([^"'`\s]{8,})\2|([A-Za-z0-9_+/=-]{8,})(?![A-Za-z0-9_+/=.(-]))/gi;
 
 const BEARER = /(\bBearer\s+)[A-Za-z0-9._~+/=-]{16,}/g;
 
@@ -32,6 +36,6 @@ export function redact(text: string): string {
     });
   }
   out = out.replace(BEARER, `$1${REDACTED}`);
-  out = out.replace(ASSIGNMENT, (_m, k: string, v: string) => (v.includes(REDACTED) ? _m : `${k}${REDACTED}`));
+  out = out.replace(ASSIGNMENT, (_m, k: string, q: string | undefined) => `${k}${q ?? ''}${REDACTED}${q ?? ''}`);
   return out;
 }
