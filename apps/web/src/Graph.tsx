@@ -1,8 +1,8 @@
 import type { LaneRow } from './lanes.js';
 
 export const LANE_W = 16;
-export const ROW_H = 64;
-const NODE_R = 5;
+export const ROW_H = 56;
+const NODE_R = 4;
 const PALETTE = 8;
 
 const x = (lane: number) => lane * LANE_W + LANE_W / 2;

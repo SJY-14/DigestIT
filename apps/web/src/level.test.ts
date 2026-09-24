@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { levelForKey, loadLevel, parseLevel, saveLevel } from './level.js';
+import { levelForKey, loadLevel, parseLevel, saveLevel, stepForKey } from './level.js';
 
 const ev = (key: string, extra = {}) => ({ key, ctrlKey: false, metaKey: false, altKey: false, target: { tagName: 'BODY' }, ...extra });
 
@@ -20,5 +20,15 @@ describe('level', () => {
     m.set('digestit.level', '9');
     expect(loadLevel(s)).toBe(0);
     expect(parseLevel(undefined)).toBeNull();
+  });
+});
+
+describe('stepForKey', () => {
+  it('maps j/k and ignores modified keys and form fields', () => {
+    expect(stepForKey(ev('j'))).toBe(1);
+    expect(stepForKey(ev('k'))).toBe(-1);
+    expect(stepForKey(ev('x'))).toBeNull();
+    expect(stepForKey(ev('j', { ctrlKey: true }))).toBeNull();
+    expect(stepForKey(ev('j', { target: { tagName: 'SELECT' } }))).toBeNull();
   });
 });

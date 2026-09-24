@@ -59,7 +59,7 @@ function Structure({ e }: { e: Explanation }) {
       <ul className="items">
         {items.map((it, i) => (
           <li key={i}>
-            <code>{String(it.path ?? '')}</code> <span className="muted">{String(it.role ?? '')}</span>
+            <code>{String(it.path ?? '')}</code> <span className="muted role">{String(it.role ?? '')}</span>
             <div>{String(it.change ?? '')}</div>
           </li>
         ))}
@@ -183,7 +183,7 @@ export function Panel({ changeId, sha, title, level, onLevel, onClose }: {
       <div className="panel-head">
         <div>
           <h2>{title}</h2>
-          <span className="muted"><code>{shortSha(sha)}</code>{change.data?.commit ? ` · ${change.data.commit.authorName}` : ''}</span>
+          <span className="panel-meta"><code>{shortSha(sha)}</code>{change.data?.commit ? ` · ${change.data.commit.authorName}` : ''}</span>
         </div>
         <button type="button" className="close" onClick={onClose} aria-label="Close explanation">×</button>
       </div>

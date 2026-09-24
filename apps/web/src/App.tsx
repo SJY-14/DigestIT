@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Level } from './api.js';
-import { levelForKey, loadLevel, saveLevel } from './level.js';
+import { levelForKey, loadLevel, saveLevel, stepForKey } from './level.js';
 import { Panel } from './Panel.js';
-import { commitLabel, formatDate, shortSha } from './format.js';
+import { commitLabel, formatDate, relativeTime, shortSha } from './format.js';
 import { Graph } from './Graph.js';
 import { useTimeline } from './useTimeline.js';
 
 export function App() {
   const { repos, repoId, setRepoId, rows, done, loading, error, loadMore } = useTimeline();
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(() => location.hash.slice(1) || null);
   const [level, setLevelState] = useState<Level>(() => loadLevel());
   const setLevel = useCallback((l: Level) => {
     setLevelState(l);
@@ -27,15 +27,29 @@ export function App() {
     return () => io.disconnect();
   }, [done, error, loadMore, rows.length]);
 
+  // Keep the URL hash on the open commit so a view can be linked and survives reload.
+  useEffect(() => {
+    history.replaceState(null, '', selected ? `#${selected}` : location.pathname + location.search);
+  }, [selected]);
+
+  const shas = rows.map((r) => r.commit.sha);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') return setSelected(null);
       const l = levelForKey(e);
-      if (l !== null && selected) setLevel(l);
+      if (l !== null && selected) return setLevel(l);
+      const step = stepForKey(e);
+      if (step === null || shas.length === 0) return;
+      const i = selected ? shas.indexOf(selected) : -1;
+      const next = shas[Math.min(shas.length - 1, Math.max(0, i === -1 ? 0 : i + step))];
+      if (next) {
+        setSelected(next);
+        document.querySelector(`[data-sha="${next}"]`)?.scrollIntoView({ block: 'nearest' });
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selected, setLevel]);
+  }, [selected, setLevel, shas.join()]);
 
   const selectedRow = rows.find((r) => r.commit.sha === selected)?.commit;
   const gutter = rows.reduce((m, r) => Math.max(m, r.lanes.width), 1);
@@ -65,7 +79,9 @@ export function App() {
             </button>
           </p>
         )}
-        {done && rows.length === 0 && !error && <p className="muted">No commits ingested yet. Run <code>digest ingest</code>.</p>}
+        <div className="box">
+        <h2 className="box-head">Changes{rows.length > 0 && <span className="count">{rows.length}{done ? '' : '+'}</span>}</h2>
+        {done && rows.length === 0 && !error && <p className="empty">No commits ingested yet. Run <code>digest ingest</code>.</p>}
         <ol className="timeline" aria-label="Commits, newest first">
           {rows.map(({ commit: c, lanes }) => {
             const label = commitLabel(c);
@@ -75,6 +91,7 @@ export function App() {
                 <button
                   type="button"
                   className="commit"
+                  data-sha={c.sha}
                   aria-current={selected === c.sha ? 'true' : undefined}
                   onClick={() => setSelected(c.sha)}
                 >
@@ -87,21 +104,22 @@ export function App() {
                     ))}
                   </span>
                   <span className="meta">
-                    <time dateTime={c.committedAt}>{formatDate(c.committedAt)}</time>
                     <span>{c.authorName}</span>
-                    <code>{shortSha(c.sha)}</code>
+                    <time dateTime={c.committedAt} title={formatDate(c.committedAt)}>{relativeTime(c.committedAt)}</time>
                     {c.isMerge && <span>merge</span>}
-                    {!label.explained && <span>L0 pending</span>}
+                    {!label.explained && <span>not explained</span>}
                     <span className="stats">
                       {c.stats.files} {c.stats.files === 1 ? 'file' : 'files'}{' '}
                       <span className="add">+{c.stats.additions}</span> <span className="del">−{c.stats.deletions}</span>
                     </span>
+                    <code className="sha">{shortSha(c.sha)}</code>
                   </span>
                 </button>
               </li>
             );
           })}
         </ol>
+        </div>
         <div ref={sentinel} className="sentinel" aria-live="polite">
           {loading && <span className="muted">Loading…</span>}
           {!loading && !done && !error && (
@@ -109,8 +127,9 @@ export function App() {
               Load more
             </button>
           )}
-          {done && rows.length > 0 && <span className="muted">{rows.length} commits, start of history</span>}
+          {done && rows.length > 0 && <span>Start of history</span>}
         </div>
+        <p className="hint"><kbd>j</kbd> <kbd>k</kbd> move · <kbd>0</kbd>–<kbd>3</kbd> level · <kbd>Esc</kbd> close</p>
       </main>
       {selectedRow && (
         <Panel

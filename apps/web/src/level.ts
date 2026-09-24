@@ -37,10 +37,22 @@ function safeStorage(): Storage | undefined {
   }
 }
 
-/** Level for a 0–3 key press, ignoring modified keys and typing in form fields. */
-export function levelForKey(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; target: unknown }): Level | null {
-  if (e.ctrlKey || e.metaKey || e.altKey) return null;
+type KeyEvent = { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; target: unknown };
+
+/** True for modified keys and typing in form fields, which shortcuts must ignore. */
+function ignored(e: KeyEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey) return true;
   const t = e.target as { tagName?: string; isContentEditable?: boolean } | null;
-  if (t?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t?.tagName ?? '')) return null;
-  return parseLevel(e.key);
+  return Boolean(t?.isContentEditable) || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t?.tagName ?? '');
+}
+
+/** Level for a 0–3 key press, ignoring modified keys and typing in form fields. */
+export function levelForKey(e: KeyEvent): Level | null {
+  return ignored(e) ? null : parseLevel(e.key);
+}
+
+/** +1 for `j` (next, older commit), -1 for `k` (previous), else null. */
+export function stepForKey(e: KeyEvent): 1 | -1 | null {
+  if (ignored(e)) return null;
+  return e.key === 'j' ? 1 : e.key === 'k' ? -1 : null;
 }
