@@ -60,9 +60,12 @@ timeline and can open any commit at L0, L1, L2 or L3. Design: [architecture.md](
 - L3 renders the unified diff with annotations inline at their anchored lines; filtered files are listed as "not analysed".
 - Generated text is rendered escaped (no raw HTML); a strict CSP header is set.
 
-## Later (not in MVP)
+## Milestone 2 — real-time tracking of agent work (proposed)
 
-- Group commits into change units (PR / agent session / time window).
-- Watch mode: explain new commits automatically.
+Watch mode, issue-level work units, quota-guarded explanation timing and digest-speed metrics.
+Proposal and build issues: [milestone-2.md](milestone-2.md). Pending Board approval (DIG-12).
+
+## Later
+
 - Other repos (each needs a Board decision on data leaving the server).
 - Anthropic API provider for throughput; access control if more than one user.
