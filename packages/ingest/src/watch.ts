@@ -8,6 +8,7 @@ import { createProvider } from '@digestit/explain';
 import { dirtyStat, listRefs, listWorktrees, type Worktree } from './git.js';
 import { ingestRepo } from './ingest.js';
 import { DEFAULT_DAILY_BUDGET, ExplainScheduler, stubCommits } from './scheduler.js';
+import { RollupPlanner } from './rollup.js';
 import { syncWorkUnits, type WorkUnitOptions } from './workunits.js';
 
 export interface WatchState { refHash: string | null }
@@ -93,6 +94,10 @@ export interface WatchOptions {
   /** Runs after each poll, in the background (a slow explanation never delays polling). */
   scheduler?: ExplainScheduler;
   workUnits?: WorkUnitOptions;
+  /** Hourly roll-up job; on by default with a scheduler. */
+  rollup?: boolean;
+  /** Injected clock for the roll-up gate (tests). */
+  now?: () => Date;
   signal?: AbortSignal;
   onPoll?: (r: PollResult) => void;
   onError?: (e: unknown) => void;
@@ -103,6 +108,9 @@ export async function watchRepo(db: DatabaseSync, repoPath: string, opts: WatchO
   const interval = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const { signal } = opts;
   const state: WatchState = { refHash: null };
+  const rollups = opts.scheduler && opts.rollup !== false
+    ? new RollupPlanner(db, opts.scheduler, repoPath, { now: opts.now, onError: opts.onError })
+    : null;
   let lastSync = 0;
   while (!signal?.aborted) {
     try {
@@ -112,6 +120,7 @@ export async function watchRepo(db: DatabaseSync, repoPath: string, opts: WatchO
         await syncWorkUnits(db, realpathSync(resolve(repoPath)), opts.workUnits);
         lastSync = Date.now();
       }
+      rollups?.maybeEnqueue();
       if (opts.scheduler) void opts.scheduler.tick().catch((e) => opts.onError?.(e));
     } catch (e) {
       opts.onError?.(e); // transient git/db errors must not kill the watcher

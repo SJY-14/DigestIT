@@ -1,6 +1,7 @@
 import type { ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { pendingBudgetUnitIds } from '@digestit/ingest';
 import { CSP } from './csp.js';
 
 // M2-5 (docs/milestone-2.md, M3): read-only work-unit endpoints, the SSE change stream and metrics.
@@ -78,6 +79,10 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
       }));
   };
 
+  /** Units waiting on the daily call budget; computed per request from the explain_call log (read-only). */
+  let pending = new Set<number>();
+  const refreshPending = () => { pending = new Set(pendingBudgetUnitIds(db)); };
+
   const summary = (w: Row) => ({
     id: w.id,
     repoId: w.repo_id,
@@ -93,6 +98,7 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
     latestRangeUnitId: w.latest_range_unit_id,
     commitCount: w.commit_count,
     l0: l0Of(w.latest_range_unit_id),
+    pendingBudget: pending.has(w.id as number),
     dirty: dirtyFor(w.repo_id as number, w.key as string, w.kind as string),
   });
 
@@ -102,6 +108,7 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
   app.get<{ Querystring: { cursor?: string; limit?: string; state?: string; repoId?: string } }>(
     '/api/work-units',
     async (req, reply) => {
+      refreshPending();
       const q = req.query;
       let limit = DEFAULT_LIMIT;
       if (q.limit !== undefined) {
@@ -142,6 +149,7 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
   );
 
   app.get<{ Params: { key: string }; Querystring: { repoId?: string } }>('/api/work-units/:key', async (req, reply) => {
+    refreshPending();
     let repoFilter = '';
     const params: (string | number)[] = [req.params.key];
     if (req.query.repoId !== undefined) {
@@ -220,6 +228,7 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
   });
 
   app.get<{ Querystring: { since?: string } }>('/api/window', async (req, reply) => {
+    refreshPending();
     if (req.query.since === undefined) return reply.code(400).send({ error: 'since_required' });
     const since = parseSince(req.query.since);
     if (since === null) return reply.code(400).send({ error: 'bad_since' });
@@ -236,7 +245,6 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
       )
       .all(since, since, since) as Row[];
     let rollup: unknown = null;
-    // The rollup table arrives with the explain scheduler; absent until then.
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'rollup'").get()) {
       const r = db
         .prepare('SELECT * FROM rollup WHERE unixepoch(window_end) >= ? ORDER BY window_end DESC, id DESC LIMIT 1')

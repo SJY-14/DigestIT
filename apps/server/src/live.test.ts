@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '@digestit/core';
+import { RANGE_PROMPT_VERSION } from '@digestit/explain';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
 import { computeMetrics, parseSince } from './live.js';
@@ -93,8 +94,25 @@ describe('work units', () => {
   });
 });
 
+describe('pending (budget)', () => {
+  it('flags units the scheduler left waiting on the budget, in list and detail', async () => {
+    const db = seed();
+    // DIG-1's latest range (11) has an L0 in seed; drop it so the unit counts as unexplained.
+    db.prepare('DELETE FROM explanation WHERE change_unit_id = 11').run();
+    db.prepare("INSERT INTO explain_call (at, change_unit_id, reason, outcome) VALUES (?, 11, 'handoff', 'budget')").run(new Date().toISOString());
+    const app = make(db);
+    const list = (await app.inject('/api/work-units')).json().workUnits as { key: string; pendingBudget: boolean }[];
+    expect(Object.fromEntries(list.map((u) => [u.key, u.pendingBudget]))).toEqual({ 'feature/x': false, 'DIG-1': true, 'DIG-3': false });
+    expect((await app.inject('/api/work-units/DIG-1')).json().pendingBudget).toBe(true);
+    expect((await app.inject('/api/work-units/DIG-3')).json().pendingBudget).toBe(false);
+    // Explained since: no longer pending.
+    db.prepare("INSERT INTO explanation VALUES (11, 0, '{\"text\":\"why\"}', 'ok', 'stub', 'm', ?, 'h', '2026-09-24')").run(RANGE_PROMPT_VERSION);
+    expect((await app.inject('/api/work-units/DIG-1')).json().pendingBudget).toBe(false);
+  });
+});
+
 describe('window', () => {
-  it('lists units that moved since, with a null roll-up before the table exists', async () => {
+  it('lists units that moved since, with a null roll-up before any exists', async () => {
     const app = make();
     const w = (await app.inject('/api/window?since=2026-09-24T10:02:00Z')).json();
     expect(w.workUnits.map((x: { key: string }) => x.key)).toEqual(['feature/x', 'DIG-1']);
@@ -112,8 +130,8 @@ describe('window', () => {
 
   it('includes the roll-up when present and validates since', async () => {
     const db = seed();
-    db.exec(`CREATE TABLE rollup (id INTEGER PRIMARY KEY, window_start TEXT, window_end TEXT, work_unit_ids TEXT, content TEXT);
-      INSERT INTO rollup VALUES (1, '2026-09-24T09:00:00Z', '2026-09-24T10:30:00Z', '[1,2]', '{"l0":"busy hour"}')`);
+    db.exec(`INSERT INTO rollup (id, window_start, window_end, work_unit_ids, content, created_at)
+      VALUES (1, '2026-09-24T09:00:00Z', '2026-09-24T10:30:00Z', '[1,2]', '{"l0":"busy hour"}', '2026-09-24T10:30:00Z')`);
     const app = make(db);
     expect((await app.inject('/api/window?since=2026-09-24T10:00:00Z')).json().rollup)
       .toMatchObject({ id: 1, workUnitIds: [1, 2], content: { l0: 'busy hour' } });

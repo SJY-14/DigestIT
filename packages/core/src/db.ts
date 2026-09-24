@@ -157,6 +157,19 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX explain_call_at ON explain_call(at);
   CREATE INDEX explain_call_unit ON explain_call(change_unit_id, at);
   `,
+  // M2-3b: hourly roll-up over the units that moved in a window (text-only, L0/L1).
+  `
+  CREATE TABLE rollup (
+    id            INTEGER PRIMARY KEY,
+    repo_id       INTEGER REFERENCES repo(id),
+    window_start  TEXT NOT NULL,
+    window_end    TEXT NOT NULL,
+    work_unit_ids TEXT NOT NULL DEFAULT '[]',
+    content       TEXT NOT NULL DEFAULT '{}',
+    created_at    TEXT NOT NULL
+  );
+  CREATE INDEX rollup_window_end ON rollup(window_end);
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {

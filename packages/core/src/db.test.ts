@@ -13,7 +13,7 @@ const tables = (db: ReturnType<typeof openDb>) =>
 describe('migrate', () => {
   it('creates the architecture tables', () => {
     const db = openDb(':memory:');
-    expect(tables(db)).toEqual(['change_unit', 'commit_', 'explain_call', 'explanation', 'file_change', 'repo', 'unit_commit', 'unit_event', 'work_unit', 'worktree_state']);
+    expect(tables(db)).toEqual(['change_unit', 'commit_', 'explain_call', 'explanation', 'file_change', 'repo', 'rollup', 'unit_commit', 'unit_event', 'work_unit', 'worktree_state']);
   });
 
   it('is idempotent and records the version', () => {
