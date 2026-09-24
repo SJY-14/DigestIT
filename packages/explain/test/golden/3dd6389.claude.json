@@ -1,0 +1,77 @@
+{
+  "changeUnit": "3dd6389",
+  "provider": "claude-code",
+  "model": "claude-sonnet-5",
+  "promptVersion": "p2",
+  "levels": {
+    "L0": {
+      "status": "ok",
+      "content": {
+        "text": "Sets the project's licensing terms so individuals and companies can use it freely, while blocking competing hosted resale."
+      }
+    },
+    "L1": {
+      "status": "ok",
+      "content": {
+        "userVisible": false,
+        "bullets": [
+          "No user-visible change",
+          "Adds a license and README documenting usage rights; no application behavior is touched."
+        ]
+      }
+    },
+    "L2": {
+      "status": "ok",
+      "content": {
+        "items": [
+          {
+            "path": "LICENSE",
+            "role": "Legal terms governing use of the project",
+            "change": "New Business Source License 1.1 with a no-competing-hosted-service grant, converting to Apache 2.0 on 2030-09-24."
+          },
+          {
+            "path": "README.md",
+            "role": "Project introduction for readers",
+            "change": "New file describing the project's purpose and summarizing the license: free internal use, no competing SaaS, Apache 2.0 conversion."
+          }
+        ],
+        "notAnalysed": []
+      }
+    },
+    "L3": {
+      "status": "ok",
+      "content": {
+        "annotations": [
+          {
+            "path": "LICENSE",
+            "side": "new",
+            "startLine": 8,
+            "endLine": 21,
+            "note": "Additional Use Grant: production use is free, including internal use, but offering it to third parties as a competing hosted or managed service is barred."
+          },
+          {
+            "path": "LICENSE",
+            "side": "new",
+            "startLine": 23,
+            "endLine": 25,
+            "note": "Change Date 2030-09-24 and Apache 2.0 as the Change License; the terms say each version converts on this date or four years after its release, whichever is first."
+          },
+          {
+            "path": "LICENSE",
+            "side": "new",
+            "startLine": 95,
+            "endLine": 100,
+            "note": "Boilerplate covenant requires the Change License to be GPL 2.0-compatible; Apache 2.0 is chosen. Worth confirming that this compatibility claim holds."
+          },
+          {
+            "path": "README.md",
+            "side": "new",
+            "startLine": 10,
+            "endLine": 15,
+            "note": "Plain-language license summary; it must stay consistent with the LICENSE grant and dates."
+          }
+        ]
+      }
+    }
+  }
+}
