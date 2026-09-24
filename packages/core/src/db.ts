@@ -61,6 +61,33 @@ export const MIGRATIONS: readonly string[] = [
     UNIQUE (change_unit_id, level, prompt_version)
   );
   `,
+  // M2-1: watch mode. work_unit_id is nullable until work units exist (DIG-14).
+  `
+  CREATE TABLE unit_event (
+    id             INTEGER PRIMARY KEY,
+    repo_id        INTEGER NOT NULL REFERENCES repo(id),
+    work_unit_id   INTEGER,
+    change_unit_id INTEGER REFERENCES change_unit(id),
+    kind           TEXT NOT NULL CHECK (kind IN
+                   ('landed','explained','opened','level_viewed','reviewed','merged')),
+    at             TEXT NOT NULL,
+    detail         TEXT NOT NULL DEFAULT '{}'
+  );
+  CREATE INDEX unit_event_repo_at ON unit_event(repo_id, at);
+  CREATE UNIQUE INDEX unit_event_landed ON unit_event(change_unit_id) WHERE kind = 'landed';
+  CREATE TABLE worktree_state (
+    repo_id    INTEGER NOT NULL REFERENCES repo(id),
+    path       TEXT NOT NULL,
+    branch     TEXT,
+    head_sha   TEXT,
+    files      INTEGER NOT NULL,
+    additions  INTEGER NOT NULL,
+    deletions  INTEGER NOT NULL,
+    untracked  INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (repo_id, path)
+  );
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {

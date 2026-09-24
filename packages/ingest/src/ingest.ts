@@ -7,6 +7,13 @@ export interface IngestResult {
   commitsAdded: number;
   fileChangesAdded: number;
   refsUpdated: number;
+  /** Commits stored by this run, parents first. */
+  newCommits: string[];
+}
+
+export interface IngestOptions {
+  /** Append a `landed` unit_event per new commit, in the same transaction. */
+  landedEvents?: boolean;
 }
 
 function ensureRepo(db: DatabaseSync, path: string): number {
@@ -25,7 +32,7 @@ function ensureRepo(db: DatabaseSync, path: string): number {
  * Stores every commit reachable from any local branch. Commits are immutable,
  * so known SHAs are skipped; only `branch_refs`/`head_sha` are refreshed.
  */
-export async function ingestRepo(db: DatabaseSync, repoPath: string): Promise<IngestResult> {
+export async function ingestRepo(db: DatabaseSync, repoPath: string, opts: IngestOptions = {}): Promise<IngestResult> {
   const path = resolve(repoPath);
   const branches = await listBranches(path);
   const repoId = ensureRepo(db, path);
@@ -63,6 +70,11 @@ export async function ingestRepo(db: DatabaseSync, repoPath: string): Promise<In
     `INSERT INTO file_change (change_unit_id, path, old_path, status, additions, deletions, patch, filtered_reason)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  const insLanded = db.prepare(
+    "INSERT OR IGNORE INTO unit_event (repo_id, change_unit_id, kind, at, detail) VALUES (?, ?, 'landed', ?, ?)",
+  );
+  const backfill = (db.prepare('SELECT ingested_at FROM repo WHERE id = ?').get(repoId) as { ingested_at: string | null })
+    .ingested_at === null;
   const updRefs = db.prepare('UPDATE commit_ SET branch_refs = ? WHERE sha = ? AND branch_refs != ?');
 
   let commitsAdded = 0, fileChangesAdded = 0, refsUpdated = 0;
@@ -87,6 +99,9 @@ export async function ingestRepo(db: DatabaseSync, repoPath: string): Promise<In
           f.status === 'B' ? 'binary' : null);
         fileChangesAdded++;
       }
+      if (opts.landedEvents) {
+        insLanded.run(repoId, unitId, new Date().toISOString(), JSON.stringify({ sha: c.sha, ...(backfill ? { backfill: true } : {}) }));
+      }
       commitsAdded++;
     }
     for (const sha of known) {
@@ -100,5 +115,5 @@ export async function ingestRepo(db: DatabaseSync, repoPath: string): Promise<In
     db.exec('ROLLBACK');
     throw e;
   }
-  return { repoId, commitsAdded, fileChangesAdded, refsUpdated };
+  return { repoId, commitsAdded, fileChangesAdded, refsUpdated, newCommits: fresh.map((f) => f.c.sha) };
 }

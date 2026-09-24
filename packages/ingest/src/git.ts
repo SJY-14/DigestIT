@@ -170,3 +170,52 @@ export function splitPatch(text: string): string[] {
   if (cur) out.push(cur.join('\n').replace(/\n+$/, '\n'));
   return out;
 }
+
+export interface Worktree {
+  path: string;
+  head: string | null;
+  branch: string | null;
+  bare: boolean;
+}
+
+/** Parses `git worktree list --porcelain` (blank-line separated records). */
+export function parseWorktrees(text: string): Worktree[] {
+  const out: Worktree[] = [];
+  for (const block of text.split('\n\n')) {
+    const wt: Worktree = { path: '', head: null, branch: null, bare: false };
+    for (const line of block.split('\n')) {
+      if (line.startsWith('worktree ')) wt.path = line.slice(9);
+      else if (line.startsWith('HEAD ')) wt.head = /^0+$/.test(line.slice(5)) ? null : line.slice(5);
+      else if (line.startsWith('branch ')) wt.branch = line.slice(7).replace(/^refs\/heads\//, '');
+      else if (line === 'bare') wt.bare = true;
+    }
+    if (wt.path) out.push(wt);
+  }
+  return out;
+}
+
+export async function listWorktrees(repo: string): Promise<Worktree[]> {
+  return parseWorktrees(await git(repo, ['worktree', 'list', '--porcelain']));
+}
+
+/** Every ref and its object id, sorted by ref name by git. */
+export async function listRefs(repo: string): Promise<string> {
+  return git(repo, ['for-each-ref', '--format=%(refname) %(objectname)']);
+}
+
+export interface DirtyStat { files: number; additions: number; deletions: number; untracked: number }
+
+/** Uncommitted changes in a worktree: tracked diff vs HEAD (numstat) plus a count of untracked files. */
+export async function dirtyStat(worktree: string): Promise<DirtyStat> {
+  let files = 0, additions = 0, deletions = 0;
+  try {
+    for (const rec of nul(await git(worktree, ['diff', '--no-ext-diff', '--no-textconv', '--numstat', '-z', 'HEAD']))) {
+      const m = /^(-|\d+)\t(-|\d+)\t/.exec(rec);
+      if (!m) continue; // rename path fields
+      files++;
+      if (m[1] !== '-') { additions += Number(m[1]); deletions += Number(m[2]); }
+    }
+  } catch { /* unborn HEAD: only untracked files below */ }
+  const untracked = nul(await git(worktree, ['ls-files', '--others', '--exclude-standard', '-z'])).length;
+  return { files: files + untracked, additions, deletions, untracked };
+}
