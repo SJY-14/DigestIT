@@ -84,6 +84,8 @@ export class ExplainScheduler {
   private readonly now: () => Date;
   private readonly repoPath: string;
   private extras: ExtraJob[] = [];
+  /** Snapshots the allowlist refused; reported once, not on every poll. */
+  private readonly refused = new Set<string>();
   private tail: Promise<unknown> = Promise.resolve();
   private tickP: Promise<TickResult> | null = null;
 
@@ -187,7 +189,7 @@ export class ExplainScheduler {
         .all(repoId) as unknown as UnitRow[];
       for (const wu of rows) {
         const id = `unit:${wu.id}:${wu.tip_sha}`;
-        if (seen.has(id) || this.isCurrentExplained(wu)) continue;
+        if (seen.has(id) || this.refused.has(id) || this.isCurrentExplained(wu)) continue;
         if (this.autoExplainCount(wu.id) >= this.maxExplains) continue;
         const reason = this.reasonOf(wu);
         picks.push({ id, unit: wu, reason, rank: PRIORITY[reason as keyof typeof PRIORITY], order: wu.merged_at ?? wu.last_commit_at });
@@ -222,6 +224,7 @@ export class ExplainScheduler {
         if (outcome === 'budget') res.pendingBudget.push(wu.key);
         else res.ran.push({ key: wu.key, reason: pick.reason, outcome });
       } catch (e) {
+        if (e instanceof RepoNotAllowedError) this.refused.add(pick.id);
         this.opts.onError?.(e);
       }
     }

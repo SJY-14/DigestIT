@@ -3,20 +3,37 @@ import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { CSP } from './csp.js';
+import { registerLive, type LiveOptions } from './live.js';
+import { registerUiEvents, UI_EVENTS_PATH, type UiEventsOptions } from './uievents.js';
+
+export { CSP };
 
 export interface AppOptions {
   db: DatabaseSync;
   /** Built apps/web bundle; served at / when the directory exists. */
   webDir?: string;
+  live?: LiveOptions;
+  uiEvents?: UiEventsOptions;
+  /** Called for every registered route (used by the route-enumeration test). */
+  onRoute?: (method: string, url: string) => void;
 }
 
 export const DEFAULT_WEB_DIR = resolve(import.meta.dirname, '../../web/dist');
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** True when the Host header names this loopback server (any port). */
+export function isLoopbackHost(host: string | undefined): boolean {
+  if (!host) return false;
+  try {
+    return LOOPBACK_HOSTNAMES.has(new URL(`http://${host}`).hostname);
+  } catch {
+    return false;
+  }
+}
+
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
-
-export const CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; " +
-  "object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 type Row = Record<string, unknown>;
 
@@ -45,12 +62,18 @@ const LATEST_EXPLANATION = `SELECT content, status, provider, model, prompt_vers
   FROM explanation WHERE change_unit_id = ? AND level = ?
   ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`;
 
-export function buildApp({ db, webDir = DEFAULT_WEB_DIR }: AppOptions): FastifyInstance {
+export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, onRoute }: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const latest = db.prepare(LATEST_EXPLANATION);
+  if (onRoute) app.addHook('onRoute', (r) => [r.method].flat().forEach((m) => onRoute(m, r.url)));
 
-  // Read-only surface: anything but GET/HEAD is rejected before routing.
+  // Loopback only (architecture §6): the listener is 127.0.0.1, and rejecting any other Host
+  // also closes DNS rebinding, where a foreign name resolves to us and Origin == Host.
+  // Read-only surface: anything but GET/HEAD is rejected before routing, except the single
+  // append-only viewer-event endpoint (M8).
   app.addHook('onRequest', async (req, reply) => {
+    if (!isLoopbackHost(req.headers.host)) return reply.code(421).send({ error: 'bad_host' });
+    if (req.method === 'POST' && req.url.split('?', 1)[0] === UI_EVENTS_PATH) return;
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return reply.code(405).header('allow', 'GET, HEAD').send({ error: 'method_not_allowed' });
     }
@@ -204,7 +227,10 @@ export function buildApp({ db, webDir = DEFAULT_WEB_DIR }: AppOptions): FastifyI
     },
   );
 
-  app.all('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
+  registerLive(app, db, live);
+  registerUiEvents(app, db, uiEvents);
+
+  app.get('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
 
   if (existsSync(resolve(webDir, 'index.html'))) {
     app.register(fastifyStatic, { root: resolve(webDir) });

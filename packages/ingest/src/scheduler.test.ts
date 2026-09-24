@@ -260,5 +260,7 @@ describe('explain_call log and errors', () => {
     await s.tick();
     expect(errors).toHaveLength(1);
     expect(calls()).toEqual([]);
+    await s.tick(); // reported once per snapshot, not on every poll
+    expect(errors).toHaveLength(1);
   });
 });
