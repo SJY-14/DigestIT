@@ -3,20 +3,21 @@ import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { CSP } from './csp.js';
+import { registerLive, type LiveOptions } from './live.js';
+
+export { CSP };
 
 export interface AppOptions {
   db: DatabaseSync;
   /** Built apps/web bundle; served at / when the directory exists. */
   webDir?: string;
+  live?: LiveOptions;
 }
 
 export const DEFAULT_WEB_DIR = resolve(import.meta.dirname, '../../web/dist');
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
-
-export const CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; " +
-  "object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 type Row = Record<string, unknown>;
 
@@ -45,7 +46,7 @@ const LATEST_EXPLANATION = `SELECT content, status, provider, model, prompt_vers
   FROM explanation WHERE change_unit_id = ? AND level = ?
   ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`;
 
-export function buildApp({ db, webDir = DEFAULT_WEB_DIR }: AppOptions): FastifyInstance {
+export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live }: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const latest = db.prepare(LATEST_EXPLANATION);
 
@@ -203,6 +204,8 @@ export function buildApp({ db, webDir = DEFAULT_WEB_DIR }: AppOptions): FastifyI
       return body;
     },
   );
+
+  registerLive(app, db, live);
 
   app.all('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
 
