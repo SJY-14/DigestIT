@@ -224,12 +224,14 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
     const since = parseSince(req.query.since);
     if (since === null) return reply.code(400).send({ error: 'bad_since' });
     const until = Math.floor(Date.now() / 1000);
-    // "Moved" = a commit landed on it, or it changed state (handoff/resumed/merged) inside the window.
+    // "Moved" = a commit landed on it, it was explained, or it changed state (handoff/resumed/merged)
+    // inside the window. Viewer events (opened/level_viewed/reviewed) do not count as movement.
     const rows = db
       .prepare(
         `${WU_SELECT}
          WHERE unixepoch(w.last_commit_at) >= ? OR unixepoch(w.merged_at) >= ?
-            OR EXISTS (SELECT 1 FROM unit_event e WHERE e.work_unit_id = w.id AND unixepoch(e.at) >= ?)
+            OR EXISTS (SELECT 1 FROM unit_event e WHERE e.work_unit_id = w.id AND unixepoch(e.at) >= ?
+                       AND e.kind IN ('landed', 'explained', 'handoff', 'resumed', 'merged'))
          ORDER BY MAX(unixepoch(w.last_commit_at), COALESCE(unixepoch(w.merged_at), 0)) DESC, w.id DESC`,
       )
       .all(since, since, since) as Row[];
@@ -284,12 +286,18 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
     for (const s of streams) s.write(chunk);
   };
 
+  // Runs on a timer, so it must never throw: a transient SQLite error is retried on the next tick.
   const tick = () => {
     let v: number;
-    try { v = dataVersion(); } catch { return; }
-    if (v === version) return;
+    let next: Map<number, string>;
+    try {
+      v = dataVersion();
+      if (v === version) return;
+      next = snapshot();
+    } catch {
+      return;
+    }
     version = v;
-    const next = snapshot();
     const unitIds = [...next].filter(([id, f]) => fingerprints.get(id) !== f).map(([id]) => id);
     fingerprints = next;
     send(`id: ${++seq}\nevent: changed\ndata: ${JSON.stringify({ unitIds })}\n\n`);
@@ -336,6 +344,7 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
     };
     req.raw.on('close', drop);
     raw.on('close', drop);
+    raw.on('error', drop);
   });
 
   app.addHook('onClose', async () => {

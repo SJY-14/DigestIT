@@ -104,6 +104,8 @@ describe('window', () => {
     // A state change inside the window counts as movement even without new commits.
     const db = seed();
     db.prepare("INSERT INTO unit_event (repo_id, work_unit_id, kind, at) VALUES (1, 3, 'merged', '2026-09-24T12:00:00Z')").run();
+    // Viewer events are not movement.
+    db.prepare("INSERT INTO unit_event (repo_id, work_unit_id, kind, at) VALUES (1, 1, 'opened', '2026-09-24T12:00:00Z')").run();
     const moved = (await make(db).inject('/api/window?since=2026-09-24T11:00:00Z')).json();
     expect(moved.workUnits.map((x: { key: string }) => x.key)).toEqual(['DIG-3']);
   });
