@@ -1,0 +1,205 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
+import fastifyStatic from '@fastify/static';
+import Fastify, { type FastifyInstance } from 'fastify';
+
+export interface AppOptions {
+  db: DatabaseSync;
+  /** Built apps/web bundle; served at / when the directory exists. */
+  webDir?: string;
+}
+
+export const DEFAULT_WEB_DIR = resolve(import.meta.dirname, '../../web/dist');
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+
+type Row = Record<string, unknown>;
+
+function encodeCursor(committedAt: string, sha: string): string {
+  return Buffer.from(JSON.stringify([committedAt, sha])).toString('base64url');
+}
+
+function decodeCursor(cursor: string): [string, string] | null {
+  try {
+    const v = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    if (Array.isArray(v) && typeof v[0] === 'string' && typeof v[1] === 'string') return [v[0], v[1]];
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
+function parseId(raw: string): number | null {
+  return /^\d+$/.test(raw) ? Number(raw) : null;
+}
+
+/** Latest explanation row for a change unit + level (newest prompt version wins). */
+const LATEST_EXPLANATION = `SELECT content, status, provider, model, prompt_version, created_at
+  FROM explanation WHERE change_unit_id = ? AND level = ?
+  ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`;
+
+export function buildApp({ db, webDir = DEFAULT_WEB_DIR }: AppOptions): FastifyInstance {
+  const app = Fastify({ logger: false });
+  const latest = db.prepare(LATEST_EXPLANATION);
+
+  // Read-only surface: anything but GET/HEAD is rejected before routing.
+  app.addHook('onRequest', async (req, reply) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      return reply.code(405).header('allow', 'GET, HEAD').send({ error: 'method_not_allowed' });
+    }
+  });
+
+  app.get('/api/repos', async () => {
+    const rows = db.prepare('SELECT id, name, path, head_sha, ingested_at FROM repo ORDER BY id').all() as Row[];
+    return {
+      repos: rows.map((r) => ({ id: r.id, name: r.name, headSha: r.head_sha, ingestedAt: r.ingested_at })),
+    };
+  });
+
+  app.get<{ Params: { id: string }; Querystring: { cursor?: string; limit?: string } }>(
+    '/api/repos/:id/timeline',
+    async (req, reply) => {
+      const repoId = parseId(req.params.id);
+      if (repoId === null || !db.prepare('SELECT 1 FROM repo WHERE id = ?').get(repoId)) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      let limit = DEFAULT_LIMIT;
+      if (req.query.limit !== undefined) {
+        limit = Number(req.query.limit);
+        if (!Number.isInteger(limit) || limit < 1) return reply.code(400).send({ error: 'bad_limit' });
+        limit = Math.min(limit, MAX_LIMIT);
+      }
+      const params: (string | number)[] = [repoId];
+      let where = 'c.repo_id = ?';
+      if (req.query.cursor !== undefined) {
+        const cur = decodeCursor(req.query.cursor);
+        if (!cur) return reply.code(400).send({ error: 'bad_cursor' });
+        where += ' AND (c.committed_at < ? OR (c.committed_at = ? AND c.sha < ?))';
+        params.push(cur[0], cur[0], cur[1]);
+      }
+      params.push(limit + 1);
+      const rows = db
+        .prepare(
+          `SELECT c.*, u.id AS change_id FROM commit_ c
+           LEFT JOIN change_unit u ON u.repo_id = c.repo_id AND u.kind = 'commit' AND u.head_sha = c.sha
+           WHERE ${where} ORDER BY c.committed_at DESC, c.sha DESC LIMIT ?`,
+        )
+        .all(...params) as Row[];
+      const page = rows.slice(0, limit);
+      const commits = page.map((r) => {
+        const l0 = r.change_id === null ? undefined : (latest.get(r.change_id as number, 0) as Row | undefined);
+        return {
+          sha: r.sha,
+          changeId: r.change_id,
+          parents: JSON.parse(r.parents as string),
+          authorName: r.author_name,
+          authoredAt: r.authored_at,
+          committedAt: r.committed_at,
+          title: (r.message as string).split('\n', 1)[0],
+          branchRefs: JSON.parse(r.branch_refs as string),
+          isMerge: r.is_merge === 1,
+          stats: JSON.parse(r.stats as string),
+          l0: l0 ? { status: l0.status, content: JSON.parse(l0.content as string) } : { status: 'pending', content: null },
+        };
+      });
+      const last = page[page.length - 1];
+      const nextCursor =
+        rows.length > limit && last ? encodeCursor(last.committed_at as string, last.sha as string) : null;
+      return { commits, nextCursor };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>('/api/changes/:id', async (req, reply) => {
+    const id = parseId(req.params.id);
+    const unit = id === null ? undefined : (db.prepare('SELECT * FROM change_unit WHERE id = ?').get(id) as Row | undefined);
+    if (!unit) return reply.code(404).send({ error: 'not_found' });
+    const commit = db.prepare('SELECT * FROM commit_ WHERE sha = ?').get(unit.head_sha as string) as Row | undefined;
+    const files = db
+      .prepare(
+        `SELECT path, old_path, status, additions, deletions, filtered_reason
+         FROM file_change WHERE change_unit_id = ? ORDER BY path`,
+      )
+      .all(id as number) as Row[];
+    return {
+      id: unit.id,
+      repoId: unit.repo_id,
+      kind: unit.kind,
+      headSha: unit.head_sha,
+      baseSha: unit.base_sha,
+      title: unit.title,
+      commit: commit && {
+        authorName: commit.author_name,
+        authoredAt: commit.authored_at,
+        committedAt: commit.committed_at,
+        message: commit.message,
+        parents: JSON.parse(commit.parents as string),
+        branchRefs: JSON.parse(commit.branch_refs as string),
+        isMerge: commit.is_merge === 1,
+        stats: JSON.parse(commit.stats as string),
+      },
+      files: files.map((f) => ({
+        path: f.path,
+        oldPath: f.old_path,
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions,
+        filteredReason: f.filtered_reason,
+      })),
+    };
+  });
+
+  app.get<{ Params: { id: string; level: string } }>(
+    '/api/changes/:id/explanations/:level',
+    async (req, reply) => {
+      const id = parseId(req.params.id);
+      const unit = id === null ? undefined : db.prepare('SELECT id FROM change_unit WHERE id = ?').get(id);
+      if (!unit) return reply.code(404).send({ error: 'not_found' });
+      if (!/^[0-3]$/.test(req.params.level)) return reply.code(404).send({ error: 'unknown_level' });
+      const level = Number(req.params.level);
+      const row = latest.get(id as number, level) as Row | undefined;
+      const body: Row = row
+        ? {
+            changeId: id,
+            level,
+            status: row.status,
+            content: JSON.parse(row.content as string),
+            provider: row.provider,
+            model: row.model,
+            promptVersion: row.prompt_version,
+            createdAt: row.created_at,
+          }
+        : { changeId: id, level, status: 'pending', content: null };
+      if (level === 3) {
+        const files = db
+          .prepare(
+            `SELECT path, old_path, status, additions, deletions, patch, filtered_reason
+             FROM file_change WHERE change_unit_id = ? ORDER BY path`,
+          )
+          .all(id as number) as Row[];
+        body.files = files.map((f) => ({
+          path: f.path,
+          oldPath: f.old_path,
+          status: f.status,
+          additions: f.additions,
+          deletions: f.deletions,
+          patch: f.patch,
+          filteredReason: f.filtered_reason,
+        }));
+      }
+      return body;
+    },
+  );
+
+  app.all('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
+
+  if (existsSync(resolve(webDir, 'index.html'))) {
+    app.register(fastifyStatic, { root: resolve(webDir) });
+    app.setNotFoundHandler((req, reply) => {
+      if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'not_found' });
+      return reply.sendFile('index.html'); // SPA fallback
+    });
+  }
+
+  return app;
+}

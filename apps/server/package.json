@@ -5,6 +5,21 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "scripts": { "build": "tsc -p tsconfig.json", "test": "vitest run --passWithNoTests" }, "dependencies": { "@digestit/core": "workspace:*", "@digestit/ingest": "workspace:*", "@digestit/explain": "workspace:*" }
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@digestit/core": "workspace:*",
+    "@digestit/explain": "workspace:*",
+    "@digestit/ingest": "workspace:*",
+    "@fastify/static": "^8.3.0",
+    "fastify": "^5.12.5"
+  }
 }
