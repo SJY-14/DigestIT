@@ -6,16 +6,16 @@ Done when the owner opens the dashboard over Tailscale (port 4780), sees this re
 timeline and can open any commit at L0, L1, L2 or L3. Design: [architecture.md](architecture.md),
 [abstraction-levels.md](abstraction-levels.md). Architecture approved by the Board on 2026-09-24 (DIG-1).
 
-| # | Issue | Owner | Depends on |
-|---|---|---|---|
-| 1 | Monorepo scaffold, core types, SQLite schema | Diff engineer | — |
-| 2 | Git ingestion | Diff engineer | 1 |
-| 3 | Diff preparation (filter, budget, redact) | Diff engineer | 2 |
-| 4 | Explanation providers (interface, stub, Claude Code) | Summarization engineer | 1 |
-| 5 | L0–L3 prompt, validation, cache and backfill | Summarization engineer | 3, 4 |
-| 6 | Read-only API server | Frontend engineer | 2 |
-| 7 | Timeline dashboard | Frontend engineer | 6 |
-| 8 | Explanation panel with level picker + annotated diff | Frontend engineer | 5, 7 |
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 1 | DIG-2 | Monorepo scaffold, core types, SQLite schema | Diff engineer | — |
+| 2 | DIG-3 | Git ingestion | Diff engineer | 1 |
+| 3 | DIG-4 | Diff preparation (filter, budget, redact) | Diff engineer | 2 |
+| 4 | DIG-5 | Explanation providers (interface, stub, Claude Code) | Summarization engineer | 1 |
+| 5 | DIG-6 | L0–L3 prompt, validation, cache and backfill | Summarization engineer | 3, 4 |
+| 6 | DIG-7 | Read-only API server | Frontend engineer | 2 |
+| 7 | DIG-8 | Timeline dashboard | Frontend engineer | 6 |
+| 8 | DIG-9 | Explanation panel with level picker + annotated diff | Frontend engineer | 5, 7 |
 
 ### Acceptance criteria
 
