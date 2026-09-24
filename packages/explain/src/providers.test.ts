@@ -55,7 +55,7 @@ describe('StubProvider', () => {
     const a = await p.explain(input);
     expect(a).toEqual(await p.explain(input));
     expect(a.levels.l0.text).toBe('Add parser');
-    expect(a.levels.l1.bullets[0]).toContain('+12 / -10');
+    expect(a.levels.l1.bullets[1]).toContain('+12 / -10');
     expect(a.levels.l2.items.map((i) => i.path)).toEqual(['a.ts']);
     expect(a.levels.l2.notAnalysed).toEqual(['pnpm-lock.yaml (lockfile)']);
   });

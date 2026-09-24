@@ -1,0 +1,46 @@
+[
+ {
+  "level": 0,
+  "status": "ok",
+  "content": {
+   "text": "Add Business Source License 1.1 and README"
+  }
+ },
+ {
+  "level": 1,
+  "status": "ok",
+  "content": {
+   "userVisible": false,
+   "bullets": [
+    "No user-visible change",
+    "Touches 2 file(s): +124 / -0 lines."
+   ]
+  }
+ },
+ {
+  "level": 2,
+  "status": "ok",
+  "content": {
+   "items": [
+    {
+     "path": "LICENSE",
+     "role": "file",
+     "change": "A +108 -0"
+    },
+    {
+     "path": "README.md",
+     "role": "file",
+     "change": "A +16 -0"
+    }
+   ],
+   "notAnalysed": []
+  }
+ },
+ {
+  "level": 3,
+  "status": "ok",
+  "content": {
+   "annotations": []
+  }
+ }
+]

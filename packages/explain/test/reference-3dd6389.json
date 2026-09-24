@@ -1,0 +1,28 @@
+{
+  "l0": { "text": "Makes DigestIT source-available: free to use internally, but nobody may offer it as a competing hosted service." },
+  "l1": {
+    "userVisible": true,
+    "bullets": [
+      "Visitors to the repository now see what DigestIT is and a plain-language license summary.",
+      "Anyone may run DigestIT free of charge, including in production for internal use; offering it as competing SaaS is not allowed.",
+      "Each version becomes Apache 2.0 four years after release (first date: 2030-09-24)."
+    ]
+  },
+  "l2": {
+    "items": [
+      { "path": "LICENSE", "role": "legal source of truth", "change": "new: BSL 1.1 text plus parameters (licensor, Additional Use Grant, Change Date, Change License)." },
+      { "path": "README.md", "role": "project front page", "change": "new: one-paragraph pitch and a license summary that links to LICENSE." }
+    ],
+    "notAnalysed": []
+  },
+  "l3": {
+    "annotations": [
+      { "path": "LICENSE", "side": "new", "startLine": 5, "endLine": 7, "note": "Licensor and copyright holder: SJY-14; Licensed Work: DigestIT." },
+      { "path": "LICENSE", "side": "new", "startLine": 8, "endLine": 17, "note": "Additional Use Grant, the key clause: production and internal use are free; competing hosted/managed/\"as-a-service\" offerings are excluded." },
+      { "path": "LICENSE", "side": "new", "startLine": 19, "endLine": 21, "note": "Clarifies that giving your own employees and contractors access counts as internal use." },
+      { "path": "LICENSE", "side": "new", "startLine": 23, "endLine": 25, "note": "Change Date 2030-09-24 → the work converts to Apache 2.0 on that date." },
+      { "path": "README.md", "side": "new", "startLine": 3, "endLine": 6, "note": "Product pitch: multi-level explanations of diffs on a timeline dashboard." },
+      { "path": "README.md", "side": "new", "startLine": 12, "endLine": 14, "note": "Plain-language summary of the license; it restates the LICENSE parameters, so both files must change together." }
+    ]
+  }
+}

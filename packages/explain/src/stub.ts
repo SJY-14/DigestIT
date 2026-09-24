@@ -1,3 +1,4 @@
+import { NO_CHANGE, truncateWords } from './validate.js';
 import type { ExplanationInput, ExplanationProvider, ProviderResult } from './provider.js';
 
 /** Deterministic placeholder built from the commit message and diffstat. No network, no process. */
@@ -14,15 +15,16 @@ export class StubProvider implements ExplanationProvider {
       provider: this.id,
       model: this.model,
       levels: {
-        l0: { text: input.title },
+        l0: { text: truncateWords(input.title, 20) },
         l1: {
           userVisible: false,
           bullets: [
+            NO_CHANGE,
             `Touches ${input.files.length} file(s): +${additions} / -${deletions} lines.`,
           ],
         },
         l2: {
-          items: analysed.map((f) => ({
+          items: analysed.slice(0, 8).map((f) => ({
             path: f.path,
             role: 'file',
             change: `${f.status} +${f.additions} -${f.deletions}`,

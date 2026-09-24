@@ -4,3 +4,7 @@ export * from './claude-code.js';
 export * from './config.js';
 export * from './redact.js';
 export * from './prepare.js';
+export * from './prompt.js';
+export * from './difflines.js';
+export * from './validate.js';
+export * from './pipeline.js';
