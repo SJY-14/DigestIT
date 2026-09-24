@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { annotate, keyLineSet, parsePatch } from './diff.js';
+import { annotate, keyLineSet, lineRange, parsePatch } from './diff.js';
 
 const patch = ['@@ -1,3 +1,3 @@ fn', ' a', '-b', '+B', '+c', ' d', '\\ No newline at end of file', ''].join('\n');
 
@@ -33,13 +33,21 @@ describe('annotate', () => {
       { path: 'x', side: 'old', startLine: 2, endLine: 2, note: 'o1' },
       { path: 'x', side: 'new', startLine: 99, endLine: 99, note: 'gone' },
     ]);
-    expect(l.find((x) => x.newNo === 3)?.notes).toEqual(['n1']);
-    expect(l.find((x) => x.kind === 'del')?.notes).toEqual(['o1']);
+    expect(l.find((x) => x.newNo === 3)?.notes.map((n) => n.note)).toEqual(['n1']);
+    expect(l.find((x) => x.kind === 'del')?.notes.map((n) => n.note)).toEqual(['o1']);
     expect(un.map((a) => a.note)).toEqual(['gone']);
   });
   it('marks key lines across the range', () => {
     const l = parsePatch(patch);
     const k = keyLineSet(l, [{ path: 'x', side: 'new', startLine: 2, endLine: 3, note: '' }]);
     expect(k.size).toBe(2);
+  });
+});
+
+describe('lineRange', () => {
+  it('labels single lines, ranges and the old side', () => {
+    expect(lineRange({ side: 'new', startLine: 4, endLine: 4 })).toBe('Line 4');
+    expect(lineRange({ side: 'new', startLine: 11, endLine: 13 })).toBe('Lines 11–13');
+    expect(lineRange({ side: 'old', startLine: 2, endLine: 5 })).toBe('Lines 2–5 (old)');
   });
 });

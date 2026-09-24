@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchChange, fetchExplanation, type ChangeDetail, type Explanation, type Level } from './api.js';
-import { annotate, keyLineSet, parsePatch, type Annotation } from './diff.js';
+import { annotate, keyLineSet, lineRange, parsePatch, type Annotation } from './diff.js';
 import { shortSha } from './format.js';
 import { LEVELS } from './level.js';
 
@@ -109,7 +109,7 @@ function FileDiff({ file, annotations }: { file: NonNullable<Explanation['files'
           </tbody>
         </table>
       )}
-      {unplaced.map((a, i) => <p key={i} className="note loose">{a.note}</p>)}
+      {unplaced.map((a, i) => <div key={i} className="loose"><Note a={a} /></div>)}
     </details>
   );
 }
@@ -125,10 +125,19 @@ function DiffRow({ line: l, key_ }: { line: ReturnType<typeof parsePatch>[number
       </tr>
       {l.notes.map((n, i) => (
         <tr key={i} className="annotation">
-          <td colSpan={3}><p className="note" role="note">{n}</p></td>
+          <td colSpan={3}><Note a={n} /></td>
         </tr>
       ))}
     </>
+  );
+}
+
+function Note({ a }: { a: Annotation }) {
+  return (
+    <div className="note" role="note">
+      <div className="note-head">{lineRange(a)}</div>
+      <p>{a.note}</p>
+    </div>
   );
 }
 
@@ -199,8 +208,14 @@ export function Panel({ changeId, sha, title, level, onLevel, onClose }: {
             tabIndex={level === l.level ? 0 : -1}
             onClick={() => onLevel(l.level)}
             onKeyDown={(e) => {
-              if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-              const next = ((level + (e.key === 'ArrowRight' ? 1 : 3)) % 4) as Level;
+              const next: Level | null =
+                e.key === 'ArrowRight' ? (((level + 1) % 4) as Level)
+                : e.key === 'ArrowLeft' ? (((level + 3) % 4) as Level)
+                : e.key === 'Home' ? 0
+                : e.key === 'End' ? 3
+                : null;
+              if (next === null) return;
+              e.preventDefault();
               onLevel(next);
               document.getElementById(`tab-${next}`)?.focus();
             }}

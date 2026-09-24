@@ -20,8 +20,6 @@
   --del-no: #ffd7d5;
   --hunk-bg: #ddf4ff;
   --hunk-fg: #0550ae;
-  --note-bg: #fff8c5;
-  --note-border: #d4a72c;
   --lane-0: #0969da;
   --lane-1: #bf3989;
   --lane-2: #1a7f37;
@@ -53,8 +51,6 @@
     --del-no: rgba(248, 81, 73, 0.3);
     --hunk-bg: rgba(56, 139, 253, 0.15);
     --hunk-fg: #9ecbff;
-    --note-bg: #272115;
-    --note-border: #9e6a03;
     --lane-0: #4493f8;
     --lane-1: #db61a2;
     --lane-2: #3fb950;
@@ -145,7 +141,7 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .file { margin: 0 0 16px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .file > summary { padding: 8px 12px; cursor: pointer; overflow-wrap: anywhere; background: var(--bg-inset); }
 .file[open] > summary { border-bottom: 1px solid var(--border); }
-.file > .muted, .file > .note { margin: 8px 12px; }
+.file > .muted, .file > .loose { margin: 8px 12px; }
 .diff { width: 100%; border-collapse: collapse; font: 12px/20px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; }
 .diff .no { width: 1%; min-width: 40px; padding: 0 8px; text-align: right; color: var(--muted); user-select: none; white-space: nowrap; vertical-align: top; }
 .diff .code { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 8px; }
@@ -157,5 +153,6 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .dl.hunk .no { background: var(--hunk-bg); }
 .dl.key .code { box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
 .annotation td { padding: 8px 8px 8px 96px; background: var(--bg); border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted); }
-.note { margin: 0; padding: 8px 12px; border: 1px solid var(--note-border); background: var(--note-bg); border-radius: 6px; font-family: inherit; font-size: 13px; line-height: 1.5; white-space: normal; }
-.note.loose { margin: 8px 12px; }
+.note { border: 1px solid var(--border); background: var(--bg); border-radius: 6px; overflow: hidden; font-family: inherit; font-size: 13px; line-height: 1.5; white-space: normal; }
+.note-head { padding: 4px 12px; background: var(--bg-inset); border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.note p { margin: 0; padding: 8px 12px; }

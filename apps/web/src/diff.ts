@@ -14,8 +14,8 @@ export interface DiffLine {
   text: string;
   oldNo: number | null;
   newNo: number | null;
-  /** Notes anchored to end at this line; rendered right below it. */
-  notes: string[];
+  /** Annotations whose range ends at this line; rendered right below it. */
+  notes: Annotation[];
 }
 
 const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
@@ -53,10 +53,16 @@ export function annotate(lines: DiffLine[], annotations: Annotation[]): Annotati
   const unplaced: Annotation[] = [];
   for (const a of annotations) {
     const target = lines.find((l) => (a.side === 'new' ? l.newNo : l.oldNo) === a.endLine);
-    if (target) target.notes.push(a.note);
+    if (target) target.notes.push(a);
     else unplaced.push(a);
   }
   return unplaced;
+}
+
+/** Card header for an annotation, e.g. "Lines 11–13" or "Line 4 (old)". */
+export function lineRange(a: Pick<Annotation, 'side' | 'startLine' | 'endLine'>): string {
+  const r = a.startLine === a.endLine ? `Line ${a.startLine}` : `Lines ${a.startLine}–${a.endLine}`;
+  return a.side === 'old' ? `${r} (old)` : r;
 }
 
 /** True when a line falls inside any annotated range for the file (used for highlighting key lines). */
