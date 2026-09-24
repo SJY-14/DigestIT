@@ -20,6 +20,18 @@ export interface AppOptions {
 }
 
 export const DEFAULT_WEB_DIR = resolve(import.meta.dirname, '../../web/dist');
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** True when the Host header names this loopback server (any port). */
+export function isLoopbackHost(host: string | undefined): boolean {
+  if (!host) return false;
+  try {
+    return LOOPBACK_HOSTNAMES.has(new URL(`http://${host}`).hostname);
+  } catch {
+    return false;
+  }
+}
+
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
@@ -55,9 +67,12 @@ export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, onRoute
   const latest = db.prepare(LATEST_EXPLANATION);
   if (onRoute) app.addHook('onRoute', (r) => [r.method].flat().forEach((m) => onRoute(m, r.url)));
 
+  // Loopback only (architecture §6): the listener is 127.0.0.1, and rejecting any other Host
+  // also closes DNS rebinding, where a foreign name resolves to us and Origin == Host.
   // Read-only surface: anything but GET/HEAD is rejected before routing, except the single
   // append-only viewer-event endpoint (M8).
   app.addHook('onRequest', async (req, reply) => {
+    if (!isLoopbackHost(req.headers.host)) return reply.code(421).send({ error: 'bad_host' });
     if (req.method === 'POST' && req.url.split('?', 1)[0] === UI_EVENTS_PATH) return;
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return reply.code(405).header('allow', 'GET, HEAD').send({ error: 'method_not_allowed' });

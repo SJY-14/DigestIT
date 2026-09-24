@@ -84,6 +84,16 @@ describe('POST /api/ui-events', () => {
       await run('missing', 403, (m) => post(m.app, ok, { host: good.host, 'x-digestit': '1', 'content-type': good['content-type'] }));
       await run('null', 403, (m) => post(m.app, ok, { ...good, origin: 'null' }));
     });
+    it('DNS rebinding (foreign Host that matches Origin)', async () => {
+      const h = { ...good, origin: 'http://evil.example:4780', host: 'evil.example:4780', 'sec-fetch-site': 'same-origin' };
+      await run('rebind', 421, (m) => post(m.app, ok, h));
+      await run('userinfo', 421, (m) => post(m.app, ok, { ...h, host: 'localhost:4780@evil.example' }));
+      const m = make();
+      expect((await m.app.inject({ url: '/api/repos', headers: { host: 'evil.example' } })).statusCode).toBe(421);
+      for (const host of ['127.0.0.1:4780', '[::1]:4780']) {
+        expect((await post(m.app, ok, { ...good, host, origin: `http://${host}` })).statusCode, host).toBe(201);
+      }
+    });
     it('cross-site Sec-Fetch-Site', async () => {
       for (const site of ['cross-site', 'same-site', 'none']) {
         await run(site, 403, (m) => post(m.app, ok, { ...good, 'sec-fetch-site': site }));
