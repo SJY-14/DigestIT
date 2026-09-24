@@ -373,7 +373,7 @@ const DAYS = 14;
 
 /**
  * Digest-speed metrics (milestone-2 "Metrics"), derived only from `unit_event` + work_unit.
- * Until the writers exist (DIG-18), the viewer events are absent and the derived fields are null.
+ * Viewer events come from POST /api/ui-events (DIG-18); a merge counts as decided.
  */
 export function computeMetrics(db: DatabaseSync, now = new Date()) {
   const units = db.prepare('SELECT id, key, title, state, first_commit_at FROM work_unit ORDER BY id').all() as Row[];

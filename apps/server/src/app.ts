@@ -5,6 +5,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { CSP } from './csp.js';
 import { registerLive, type LiveOptions } from './live.js';
+import { registerUiEvents, UI_EVENTS_PATH, type UiEventsOptions } from './uievents.js';
 
 export { CSP };
 
@@ -13,6 +14,9 @@ export interface AppOptions {
   /** Built apps/web bundle; served at / when the directory exists. */
   webDir?: string;
   live?: LiveOptions;
+  uiEvents?: UiEventsOptions;
+  /** Called for every registered route (used by the route-enumeration test). */
+  onRoute?: (method: string, url: string) => void;
 }
 
 export const DEFAULT_WEB_DIR = resolve(import.meta.dirname, '../../web/dist');
@@ -46,12 +50,15 @@ const LATEST_EXPLANATION = `SELECT content, status, provider, model, prompt_vers
   FROM explanation WHERE change_unit_id = ? AND level = ?
   ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`;
 
-export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live }: AppOptions): FastifyInstance {
+export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, onRoute }: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const latest = db.prepare(LATEST_EXPLANATION);
+  if (onRoute) app.addHook('onRoute', (r) => [r.method].flat().forEach((m) => onRoute(m, r.url)));
 
-  // Read-only surface: anything but GET/HEAD is rejected before routing.
+  // Read-only surface: anything but GET/HEAD is rejected before routing, except the single
+  // append-only viewer-event endpoint (M8).
   app.addHook('onRequest', async (req, reply) => {
+    if (req.method === 'POST' && req.url.split('?', 1)[0] === UI_EVENTS_PATH) return;
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return reply.code(405).header('allow', 'GET, HEAD').send({ error: 'method_not_allowed' });
     }
@@ -206,8 +213,9 @@ export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live }: AppOptions): Fa
   );
 
   registerLive(app, db, live);
+  registerUiEvents(app, db, uiEvents);
 
-  app.all('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
+  app.get('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
 
   if (existsSync(resolve(webDir, 'index.html'))) {
     app.register(fastifyStatic, { root: resolve(webDir) });
