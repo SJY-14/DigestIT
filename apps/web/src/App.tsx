@@ -52,6 +52,9 @@ export function App() {
   const live = useLive(repoId);
   const reviews = reviewStates(live.metrics);
   const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null);
+  // A unit drilled into from a chart may not be on the live list's first page; keep the summary
+  // DrillList already fetched as a fallback so the panel still opens and `opened` still fires.
+  const [fallbackUnit, setFallbackUnit] = useState<WorkUnitSummary | null>(null);
   const [member, setMember] = useState<WorkUnitMember | null>(null);
   const [via, setVia] = useState<OpenedVia | undefined>(undefined);
   const [selected, setSelectedRaw] = useState<string | null>(() => (location.hash.startsWith(UNIT_HASH) ? null : location.hash.slice(1) || null));
@@ -59,6 +62,7 @@ export function App() {
     setSelectedRaw(sha);
     if (sha) {
       setSelectedUnitId(null);
+      setFallbackUnit(null);
       setMember(null);
       setVia(undefined);
     }
@@ -66,6 +70,7 @@ export function App() {
   const closeAll = () => {
     setSelectedRaw(null);
     setSelectedUnitId(null);
+    setFallbackUnit(null);
     setMember(null);
     setVia(undefined);
   };
@@ -73,15 +78,20 @@ export function App() {
     setSelectedRaw(null);
     setMember(null);
     setSelectedUnitId(u.id);
+    setFallbackUnit(u);
     setVia(v);
   }, []);
   const openMember = useCallback((m: WorkUnitMember, v?: OpenedVia) => {
     setSelectedRaw(null);
     setSelectedUnitId(null);
+    setFallbackUnit(null);
     setMember(m);
     setVia(v);
   }, []);
-  const selectedUnit = live.units.find((u) => u.id === selectedUnitId) ?? live.digestUnits.find((u) => u.id === selectedUnitId) ?? null;
+  const selectedUnit =
+    live.units.find((u) => u.id === selectedUnitId) ??
+    live.digestUnits.find((u) => u.id === selectedUnitId) ??
+    (fallbackUnit?.id === selectedUnitId ? fallbackUnit : null);
   const initialHash = useRef(location.hash).current;
   const restored = useRef(!initialHash.startsWith(UNIT_HASH));
   const anySelected = Boolean(selected || selectedUnit || member);
