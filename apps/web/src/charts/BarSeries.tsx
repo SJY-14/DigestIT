@@ -19,7 +19,8 @@ export interface BarSeriesProps {
   formatValue?: (v: number) => string;
   /** Axis label text, kept separate from the category identity used for drill/tooltip/table. */
   formatCategory?: (category: string) => string;
-  onDrill?: (category: string) => void;
+  /** Drills a single bar: the category (e.g. a day) and which series it belongs to. */
+  onDrill?: (category: string, seriesKey: string) => void;
 }
 
 const W = 720, H = 220, PAD = { l: 32, r: 8, t: 8, b: 24 };
@@ -41,9 +42,14 @@ export function BarSeries({
   const groupWidth = mode === 'stacked' ? barWidth : barWidth * series.length + 2 * (series.length - 1);
   const y0 = linearY(0, max, PAD.t, ih);
   const tickVals = ticks(max);
-  const { tabIndex, onKeyDown, ref } = useRovingIndex(categories.length, (i) => onDrill?.(categories[i]!));
+  const marks = categories.length * series.length;
+  const { tabIndex, onKeyDown, ref } = useRovingIndex(marks, (m) => {
+    const ci = Math.floor(m / series.length), si = m % series.length;
+    onDrill?.(categories[ci]!, series[si]!.key);
+  });
 
   const summary = (i: number) => `${categories[i]}: ${series.map((s) => `${s.label} ${formatValue(s.values[i] ?? 0)}`).join(', ')}`;
+  const markSummary = (i: number, si: number) => `${categories[i]}: ${series[si]!.label} ${formatValue(series[si]!.values[i] ?? 0)}`;
 
   return (
     <div className="chart-wrap">
@@ -82,20 +88,7 @@ export function BarSeries({
               const gx = x(i) + (slot - groupWidth) / 2;
               let stackY = y0;
               return (
-                <g
-                  key={c}
-                  ref={ref(i)}
-                  tabIndex={tabIndex(i)}
-                  role="button"
-                  aria-label={summary(i)}
-                  className="mark-group"
-                  onKeyDown={(e) => onKeyDown(e, i)}
-                  onFocus={() => setHover(i)}
-                  onBlur={() => setHover((h) => (h === i ? null : h))}
-                  onMouseEnter={() => setHover(i)}
-                  onMouseLeave={() => setHover(null)}
-                  onClick={() => onDrill?.(c)}
-                >
+                <g key={c}>
                   <rect x={x(i)} y={PAD.t} width={slot} height={ih} className="hit" />
                   {series.map((s, si) => {
                     const v = s.values[i] ?? 0;
@@ -103,8 +96,27 @@ export function BarSeries({
                     const bx = mode === 'stacked' ? gx : gx + si * (barWidth + 2);
                     const by = mode === 'stacked' ? stackY - barH : linearY(v, max, PAD.t, ih);
                     if (mode === 'stacked') stackY -= barH;
+                    const m = i * series.length + si;
                     return (
-                      <rect key={s.key} className={`bar ${s.className}`} x={bx} y={by} width={barWidth} height={barH} rx={2}>
+                      <rect
+                        key={s.key}
+                        ref={ref(m)}
+                        tabIndex={tabIndex(m)}
+                        role="button"
+                        aria-label={markSummary(i, si)}
+                        className={`bar ${s.className}`}
+                        x={bx}
+                        y={by}
+                        width={barWidth}
+                        height={barH}
+                        rx={2}
+                        onKeyDown={(e) => onKeyDown(e, m)}
+                        onFocus={() => setHover(i)}
+                        onBlur={() => setHover((h) => (h === i ? null : h))}
+                        onMouseEnter={() => setHover(i)}
+                        onMouseLeave={() => setHover(null)}
+                        onClick={() => onDrill?.(c, s.key)}
+                      >
                         <title>{`${c}: ${s.label} ${formatValue(v)}`}</title>
                       </rect>
                     );
