@@ -201,11 +201,21 @@ export interface UiEvent {
 
 // --- insights (M3): drill-down from a chart mark to its work units -----------------------------
 
+export type InsightsWindow = '7d' | '30d' | '90d';
+export type DrillMetric = 'landed' | 'decided' | 'unreadBacklog' | 'undecidedBacklog';
+export type DrillBucket = 'reviewed' | 'deep' | 'opened' | 'notOpened';
+
+/** Mirrors the server's `/api/insights/drill` query modes (area+day, area+week, area+window, day+metric, week+bucket, ids). */
 export interface DrillQuery {
   area?: string;
   day?: string;
   week?: string;
-  metric?: string;
+  bucket?: DrillBucket;
+  metric?: DrillMetric;
+  ids?: number[];
+  window?: InsightsWindow;
+  root?: string;
+  includeFiltered?: boolean;
 }
 
 export interface DrillResult {
@@ -217,7 +227,12 @@ export function fetchInsightsDrill(query: DrillQuery, signal?: AbortSignal): Pro
   if (query.area) q.set('area', query.area);
   if (query.day) q.set('day', query.day);
   if (query.week) q.set('week', query.week);
+  if (query.bucket) q.set('bucket', query.bucket);
   if (query.metric) q.set('metric', query.metric);
+  if (query.ids && query.ids.length > 0) q.set('ids', query.ids.join(','));
+  if (query.window) q.set('window', query.window);
+  if (query.root) q.set('root', query.root);
+  if (query.includeFiltered) q.set('includeFiltered', '1');
   return getJson<DrillResult>(`/api/insights/drill?${q}`, signal);
 }
 

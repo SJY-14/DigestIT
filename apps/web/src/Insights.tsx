@@ -1,9 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { Metrics, OpenedVia, WorkUnitMember, WorkUnitSummary } from './api.js';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import type { DrillMetric, Metrics, OpenedVia, WorkUnitMember, WorkUnitSummary } from './api.js';
 import { BarSeries } from './charts/BarSeries.js';
 import { DrillList } from './DrillList.js';
 import type { ReviewState } from './feed.js';
 import { formatDuration } from './feed.js';
+
+const DRILL_METRICS: readonly DrillMetric[] = ['landed', 'decided', 'unreadBacklog', 'undecidedBacklog'];
+/** The URL's `metric=` is untrusted input (hand-editable/deep-linked); narrow it to the server's enum. */
+function asDrillMetric(v: string | null): DrillMetric | undefined {
+  return v !== null && (DRILL_METRICS as readonly string[]).includes(v) ? (v as DrillMetric) : undefined;
+}
 
 export type InsightsTab = 'digest' | 'map' | 'blindspots';
 
@@ -18,16 +24,17 @@ export interface InsightsUrlState {
   window: string | null;
   area: string | null;
   day: string | null;
+  metric: string | null;
 }
 
 function parseTab(v: string | null): InsightsTab {
   return v === 'map' || v === 'blindspots' ? v : 'digest';
 }
 
-/** `?window=&area=&day=` (plus `tab=`) so a chart selection survives reload and can be linked. */
+/** `?window=&area=&day=&metric=` (plus `tab=`) so a chart drill survives reload and can be linked. */
 export function readInsightsUrlState(search: string): InsightsUrlState {
   const q = new URLSearchParams(search);
-  return { tab: parseTab(q.get('tab')), window: q.get('window'), area: q.get('area'), day: q.get('day') };
+  return { tab: parseTab(q.get('tab')), window: q.get('window'), area: q.get('area'), day: q.get('day'), metric: q.get('metric') };
 }
 
 export function insightsUrlSearch(state: InsightsUrlState): string {
@@ -36,6 +43,7 @@ export function insightsUrlSearch(state: InsightsUrlState): string {
   if (state.window) q.set('window', state.window);
   if (state.area) q.set('area', state.area);
   if (state.day) q.set('day', state.day);
+  if (state.metric) q.set('metric', state.metric);
   const s = q.toString();
   return s ? `?${s}` : '';
 }
@@ -68,28 +76,27 @@ function Tile({ label, value, note }: { label: string; value: string; note?: str
   );
 }
 
-interface Drill {
-  day: string;
-  metric: string;
-  label: string;
-}
-
 const METRIC_LABEL: Record<string, string> = { landed: 'Landed', decided: 'Decided' };
 
-function DigestTab({ metrics, error, reviews, onSelectUnit, onOpenCommit }: {
+function DigestTab({ metrics, error, reviews, onSelectUnit, onOpenCommit, drillDay, drillMetric, onDrill, onCloseDrill }: {
   metrics: Metrics | null;
   error: string | null;
   reviews: Map<number, ReviewState>;
   onSelectUnit: (u: WorkUnitSummary, via: OpenedVia) => void;
   onOpenCommit: (m: WorkUnitMember, via: OpenedVia) => void;
+  /** Drill selection lives in the URL (`?day=&metric=`) so it survives reload and can be linked. */
+  drillDay: string | null;
+  drillMetric: string | null;
+  onDrill: (day: string, metric: string) => void;
+  onCloseDrill: () => void;
 }) {
-  const [drill, setDrill] = useState<Drill | null>(null);
   if (error && !metrics) return <p role="alert" className="error">Could not load metrics: {error}</p>;
   if (!metrics) return <p className="muted">Loading…</p>;
   const g = metrics.global;
   const dp = g.digestVsProduction;
   const ratio = dp.ratio === null ? '–' : dp.ratio.toFixed(2);
   const keeping = dp.ratio === null ? null : dp.ratio >= 1;
+  const drillLabel = drillDay && drillMetric ? `${METRIC_LABEL[drillMetric] ?? drillMetric} on ${drillDay}` : null;
 
   return (
     <div className="insights-tab">
@@ -116,19 +123,19 @@ function DigestTab({ metrics, error, reviews, onSelectUnit, onOpenCommit }: {
               { key: 'landed', label: 'Landed', className: 'series-1', values: dp.perDay.map((d) => d.landed) },
               { key: 'decided', label: 'Decided', className: 'series-2', values: dp.perDay.map((d) => d.decided) },
             ]}
-            onDrill={(day, metric) => setDrill({ day, metric, label: `${METRIC_LABEL[metric] ?? metric} on ${day}` })}
+            onDrill={onDrill}
           />
         </div>
       </section>
 
-      {drill && (
+      {drillDay && drillMetric && (
         <section className="box" aria-labelledby="drill">
           <div className="box-head">
-            <h2 id="drill" className="box-title">{drill.label}</h2>
-            <button type="button" className="btn view-toggle" onClick={() => setDrill(null)}>Close</button>
+            <h2 id="drill" className="box-title">{drillLabel}</h2>
+            <button type="button" className="btn view-toggle" onClick={onCloseDrill}>Close</button>
           </div>
           <div className="box-body">
-            <DrillList query={{ day: drill.day, metric: drill.metric }} via="digest" reviews={reviews} label={drill.label} onSelect={onSelectUnit} onOpenCommit={onOpenCommit} />
+            <DrillList query={{ day: drillDay, metric: asDrillMetric(drillMetric) }} via="digest" reviews={reviews} label={drillLabel!} onSelect={onSelectUnit} onOpenCommit={onOpenCommit} />
           </div>
         </section>
       )}
@@ -177,25 +184,59 @@ export function Insights({ metrics, error, reviews, onSelectUnit, onOpenCommit }
   onOpenCommit: (m: WorkUnitMember, via: OpenedVia) => void;
 }) {
   const [state, setState] = useInsightsUrlState(true);
+  const tabNodes = useRef(new Map<InsightsTab, HTMLButtonElement>());
+  const focusTab = (key: InsightsTab) => {
+    setState({ tab: key });
+    tabNodes.current.get(key)?.focus();
+  };
+  const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const i = TABS.findIndex((t) => t.key === state.tab);
+    if (e.key === 'ArrowRight') { e.preventDefault(); focusTab(TABS[(i + 1) % TABS.length]!.key); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); focusTab(TABS[(i - 1 + TABS.length) % TABS.length]!.key); }
+    else if (e.key === 'Home') { e.preventDefault(); focusTab(TABS[0]!.key); }
+    else if (e.key === 'End') { e.preventDefault(); focusTab(TABS[TABS.length - 1]!.key); }
+  };
   return (
     <div className="insights">
       <div role="tablist" aria-label="Insights" className="tabs">
         {TABS.map((t) => (
           <button
             key={t.key}
+            ref={(el) => {
+              if (el) tabNodes.current.set(t.key, el);
+              else tabNodes.current.delete(t.key);
+            }}
+            id={`insights-tab-${t.key}`}
             type="button"
             role="tab"
             aria-selected={state.tab === t.key}
+            aria-controls={`insights-panel-${t.key}`}
             tabIndex={state.tab === t.key ? 0 : -1}
             onClick={() => setState({ tab: t.key })}
+            onKeyDown={onTabKeyDown}
           >
             {t.label}
           </button>
         ))}
       </div>
-      <div className="insights-body">
+      <div
+        className="insights-body"
+        role="tabpanel"
+        id={`insights-panel-${state.tab}`}
+        aria-labelledby={`insights-tab-${state.tab}`}
+      >
         {state.tab === 'digest' && (
-          <DigestTab metrics={metrics} error={error} reviews={reviews} onSelectUnit={onSelectUnit} onOpenCommit={onOpenCommit} />
+          <DigestTab
+            metrics={metrics}
+            error={error}
+            reviews={reviews}
+            onSelectUnit={onSelectUnit}
+            onOpenCommit={onOpenCommit}
+            drillDay={state.day}
+            drillMetric={state.metric}
+            onDrill={(day, metric) => setState({ day, metric })}
+            onCloseDrill={() => setState({ day: null, metric: null })}
+          />
         )}
         {state.tab === 'map' && <NotAvailable what="The change map" />}
         {state.tab === 'blindspots' && <NotAvailable what="Blind spots" />}
