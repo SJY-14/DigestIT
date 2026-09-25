@@ -1,6 +1,6 @@
 # Milestone 3 — thinking aids (proposal)
 
-**Status:** proposed for Board approval (DIG-22), 2026-09-26. Builds on
+**Status:** approved by the Board on 2026-09-26 (DIG-22), as recommended (T1–T6, scope 1–4). Builds on
 [architecture.md](architecture.md) and [milestone-2.md](milestone-2.md); D1–D3 and M1–M9 still hold.
 
 **Goal:** per-change explanations tell you *what* one change did. Thinking aids help a human
@@ -60,15 +60,15 @@ write route, no new port, no external service, and no data leaves the server bey
 
 ## Build issues
 
-| # | Issue | Owner | Depends on |
-|---|---|---|---|
-| 1 | Insights query layer + read API: area bucketing, map/blind-spot aggregates, digest series, backlog reconstruction, drill endpoint, memo; **90-day synthetic fixture** used by all tests and screenshots; p95 perf test | Diff engineer | — |
-| 2 | Briefing builder: fact rules (a–d), `briefing` table, daily/weekly schedule in `digest watch`, `digest brief` CLI (+ Markdown), `/api/briefings` | Diff engineer | 1 |
-| 3 | Briefing narrative: text-only prompt over facts + L0/L1, citation validation, `briefing` reason and priority in the scheduler, budget fallback, golden test | Summarization engineer | — (wired via 2) |
-| 4 | Chart primitives + drill list + `/insights` shell and nav: bar, line, grid heatmap, dot strip, table toggle, keyboard, light/dark tokens; migrate `PerDayChart` | Frontend engineer | — (fixture JSON) |
-| 5 | Briefing page: latest daily/weekly, history, print stylesheet, key chips → panel, `via` events | Frontend engineer | 2, 3, 4 |
-| 6 | Digest dashboard v2 on Insights → Digest | Frontend engineer | 1, 4 |
-| 7 | Change map + blind spots on Insights → Map / Blind spots | Frontend engineer | 1, 4 |
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 1 | DIG-25 | Insights query layer + read API: area bucketing, map/blind-spot aggregates, digest series, backlog reconstruction, drill endpoint, memo, `via` on `opened`; **90-day synthetic fixture** used by all tests and screenshots; p95 perf test | Diff engineer | — |
+| 2 | DIG-28 | Briefing builder: fact rules (a–d), all M3 migrations (`briefing`, reason `briefing`), daily/weekly schedule and scheduler wiring in `digest watch`, `digest brief` CLI (+ Markdown), `/api/briefings` | Diff engineer | DIG-25, DIG-26 |
+| 3 | DIG-26 | Briefing narrative: pure `explainBriefing(facts, provider)` in `packages/explain` (like `explainRollup`), text-only prompt over facts + L0/L1, citation validation, golden test | Summarization engineer | — |
+| 4 | DIG-27 | Chart primitives + drill list + `/insights` shell and nav: bar, line, grid heatmap, dot strip, table toggle, keyboard, light/dark tokens; migrate `PerDayChart` | Frontend engineer | — (fixture JSON) |
+| 5 | DIG-31 | Briefing page: latest daily/weekly, history, print stylesheet, key chips → panel, `via` events | Frontend engineer | DIG-28, DIG-26, DIG-27 |
+| 6 | DIG-29 | Digest dashboard v2 on Insights → Digest | Frontend engineer | DIG-25, DIG-27 |
+| 7 | DIG-30 | Change map + blind spots on Insights → Map / Blind spots | Frontend engineer | DIG-25, DIG-27 |
 
 Order: 1, 3, 4 start in parallel, then 2, then 5 → 6 → 7 (Board priority). The Frontend engineer is
 the critical path, with about four issues in sequence. If that becomes the bottleneck, the Diff

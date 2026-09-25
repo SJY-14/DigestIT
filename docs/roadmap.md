@@ -76,11 +76,21 @@ Design and acceptance scope: [milestone-2.md](milestone-2.md). Approved by the B
 | 7 | DIG-19 | Live dashboard + `/metrics` | Frontend engineer | DIG-17, DIG-18, DIG-9, DIG-11 |
 | 8 | DIG-20 | *(gated)* Paperclip read-only enrichment | — | separate Board approval |
 
-## Milestone 3 — thinking aids (proposed)
+## Milestone 3 — thinking aids
 
 Daily/weekly briefing, digest dashboard, change map and review blind spots, all built from stored
-data with drill-down to L0–L3. Proposal: [milestone-3.md](milestone-3.md), awaiting Board approval (DIG-22).
-Build issues are created after approval.
+data with drill-down to L0–L3. Design and acceptance scope: [milestone-3.md](milestone-3.md).
+Approved by the Board on 2026-09-26 (DIG-22).
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 1 | DIG-25 | Insights query layer + read API + 90-day fixture | Diff engineer | — |
+| 2 | DIG-28 | Briefing builder, M3 migrations, schedule, `digest brief`, `/api/briefings` | Diff engineer | DIG-25, DIG-26 |
+| 3 | DIG-26 | Briefing narrative (`explainBriefing`) | Summarization engineer | — |
+| 4 | DIG-27 | Chart primitives + drill list + `/insights` shell | Frontend engineer | — |
+| 5 | DIG-31 | Briefing page | Frontend engineer | DIG-28, DIG-26, DIG-27 |
+| 6 | DIG-29 | Digest dashboard v2 | Frontend engineer | DIG-25, DIG-27 |
+| 7 | DIG-30 | Change map + blind spots | Frontend engineer | DIG-25, DIG-27 |
 
 ## Later
 
