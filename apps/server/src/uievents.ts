@@ -6,6 +6,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 export const UI_EVENTS_PATH = '/api/ui-events';
 export const UI_EVENT_KINDS = ['opened', 'level_viewed', 'reviewed'] as const;
+/** M3-1 (docs/milestone-3.md, T6): where an `opened` event was triggered from, for the drill-down contract. */
+export const UI_EVENT_VIAS = ['briefing', 'map', 'digest', 'blindspots'] as const;
 export const UI_EVENTS_BODY_LIMIT = 4096;
 const MAX_MS = 24 * 3_600_000;
 
@@ -89,7 +91,7 @@ export function registerUiEvents(app: FastifyInstance, db: DatabaseSync, opts: U
       const b = req.body;
       if (typeof b !== 'object' || b === null || Array.isArray(b)) return fail(reply, { code: 400, error: 'bad_body' });
       const body = b as Record<string, unknown>;
-      const allowed = ['workUnitId', 'changeId', 'kind', 'level', 'ms'];
+      const allowed = ['workUnitId', 'changeId', 'kind', 'level', 'ms', 'via'];
       if (Object.keys(body).some((k) => !allowed.includes(k))) return fail(reply, { code: 400, error: 'unknown_field' });
       const kind = body.kind;
       if (typeof kind !== 'string' || !(UI_EVENT_KINDS as readonly string[]).includes(kind)) {
@@ -99,7 +101,7 @@ export function registerUiEvents(app: FastifyInstance, db: DatabaseSync, opts: U
       if (body.changeId !== undefined && !isInt(body.changeId, 1, Number.MAX_SAFE_INTEGER)) {
         return fail(reply, { code: 400, error: 'bad_change_id' });
       }
-      const detail: Record<string, number> = {};
+      const detail: Record<string, number | string> = {};
       if (kind === 'level_viewed') {
         if (!isInt(body.level, 0, 3)) return fail(reply, { code: 400, error: 'bad_level' });
         detail.level = body.level;
@@ -108,6 +110,16 @@ export function registerUiEvents(app: FastifyInstance, db: DatabaseSync, opts: U
           detail.ms = body.ms;
         }
       } else if (body.level !== undefined || body.ms !== undefined) {
+        return fail(reply, { code: 400, error: 'unexpected_detail' });
+      }
+      if (kind === 'opened') {
+        if (body.via !== undefined) {
+          if (typeof body.via !== 'string' || !(UI_EVENT_VIAS as readonly string[]).includes(body.via)) {
+            return fail(reply, { code: 400, error: 'bad_via' });
+          }
+          detail.via = body.via;
+        }
+      } else if (body.via !== undefined) {
         return fail(reply, { code: 400, error: 'unexpected_detail' });
       }
 

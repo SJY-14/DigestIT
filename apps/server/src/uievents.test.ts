@@ -58,6 +58,13 @@ describe('POST /api/ui-events', () => {
     expect(Number.isNaN(Date.parse(rows[0]!.at as string))).toBe(false);
   });
 
+  it('accepts an optional via on opened (M3-1)', async () => {
+    const { app, db } = make();
+    expect((await post(app, { workUnitId: 1, kind: 'opened', via: 'blindspots' })).statusCode).toBe(201);
+    const row = db.prepare("SELECT detail FROM unit_event WHERE kind = 'opened'").get() as { detail: string };
+    expect(row.detail).toBe('{"via":"blindspots"}');
+  });
+
   it('feeds /api/metrics', async () => {
     const { app, db } = make();
     db.prepare("INSERT INTO unit_event (repo_id, work_unit_id, kind, at) VALUES (1, 1, 'landed', '2026-09-24T10:00:00Z')").run();
@@ -136,6 +143,8 @@ describe('POST /api/ui-events', () => {
       await run('level missing', 400, (m) => post(m.app, { workUnitId: 1, kind: 'level_viewed' }));
       await run('level range', 400, (m) => post(m.app, { workUnitId: 1, kind: 'level_viewed', level: 4 }));
       await run('detail on opened', 400, (m) => post(m.app, { workUnitId: 1, kind: 'opened', level: 1 }));
+      await run('unknown via', 400, (m) => post(m.app, { workUnitId: 1, kind: 'opened', via: 'timeline' }));
+      await run('via on non-opened kind', 400, (m) => post(m.app, { workUnitId: 1, kind: 'reviewed', via: 'map' }));
     });
   });
 
