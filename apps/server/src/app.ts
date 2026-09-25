@@ -32,7 +32,15 @@ export interface AppOptions {
   auth?: AuthOptions;
 }
 
-export const DEFAULT_WEB_DIR = resolve(import.meta.dirname, '../../web/dist');
+// Lazy: a bundled entry point (e.g. the SEA build, see docs/packaging.md) has no meaningful
+// import.meta.dirname, and every real caller passes webDir explicitly anyway — evaluating this
+// eagerly at module scope would crash bundled builds that never use the default. Returns
+// undefined (skip static serving) rather than throwing when dirname isn't available, since a
+// bundle can legitimately be run without ever building apps/web.
+export function defaultWebDir(): string | undefined {
+  const dir = import.meta.dirname;
+  return dir ? resolve(dir, '../../web/dist') : undefined;
+}
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /** True when the Host header names this loopback server (any port). */
@@ -105,7 +113,7 @@ const LATEST_EXPLANATION = `SELECT content, status, provider, model, prompt_vers
   FROM explanation WHERE change_unit_id = ? AND level = ?
   ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`;
 
-export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, insights, onRoute, allowedHosts, auth }: AppOptions): FastifyInstance {
+export function buildApp({ db, webDir = defaultWebDir(), live, uiEvents, insights, onRoute, allowedHosts, auth }: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const latest = db.prepare(LATEST_EXPLANATION);
   const allowed = new Set([...(allowedHosts ?? [])].map((h) => h.trim().toLowerCase()));
@@ -296,7 +304,7 @@ export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, insight
 
   app.get('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
 
-  if (existsSync(resolve(webDir, 'index.html'))) {
+  if (webDir && existsSync(resolve(webDir, 'index.html'))) {
     app.register(fastifyStatic, { root: resolve(webDir) });
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'not_found' });
