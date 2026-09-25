@@ -11,7 +11,7 @@ Work breakdown: [roadmap.md](roadmap.md).
 |---|---|---|---|
 | D1 | Stack | TypeScript end-to-end, pnpm workspaces, SQLite via Node 24 built-in `node:sqlite`, Fastify API, React + Vite UI | Python backend (splits the codebase); Postgres (needs a service to run) |
 | D2 | Where explanations are generated (**code leaves the server**) | **B: Claude Code headless (`claude -p`) on this server** for the MVP, limited to allowlisted repos (initially only DigestIT). Uses the owner's Max subscription limits; keep the provider interface so we can move to A before any external distribution | A: Anthropic API via SDK; C: local model; D: offline stub only |
-| D3 | Exposure (amended by the Board) | Server binds `127.0.0.1:4780` only, no auth in the MVP. Reached only via **Tailscale serve** (tailnet-only) on port **4780**; the tailnet ACL allows only the owner's device to that port. SSH tunnels are not available in this environment | Reverse proxy with SSO (after MVP, only if needed) |
+| D3 | Exposure (amended by the Board) | Server binds `127.0.0.1:4780` only. Reached via **Tailscale serve** (tailnet-only) on port **4780**; the tailnet ACL allows only the owner's device to that port. Because the loopback bind may be shared with other local users on the host, tailnet exposure also requires an access token (`DIGESTIT_ALLOWED_HOSTS` + `DIGESTIT_TOKEN_FILE`, see §6 and [operations.md](operations.md)); loopback-only dev/tests stay unauthenticated. SSH tunnels are not available in this environment | Reverse proxy with SSO (after MVP, only if needed) |
 
 ### D2 options in detail
 
@@ -111,11 +111,31 @@ surface cannot trigger outbound LLM calls.
 ## 6. Security posture
 
 - The server listens on `127.0.0.1:4780` only (port configurable, default
-  4780). Nothing is exposed to the host's network or the internet. The
-  operator publishes it with Tailscale serve, tailnet-only, on port 4780. The
-  tailnet ACL allows only the owner's device to reach that port. Tailscale
-  serve and the ACL are configured by the operator outside the repo and are
-  never changed by agents. No Tailscale Funnel.
+  4780) — always loopback, never configurable to bind elsewhere. Nothing is
+  exposed to the host's network or the internet directly. The operator
+  publishes it with Tailscale serve, tailnet-only, on port 4780. The tailnet
+  ACL allows only the owner's device to reach that port. Tailscale serve and
+  the ACL are configured by the operator outside the repo and are never
+  changed by agents. No Tailscale Funnel.
+- Once published over the tailnet, the Host header the server sees changes
+  (e.g. `dashboard.example.ts.net:4780`), so the loopback-only
+  `Host` check would 421 it. `DIGESTIT_ALLOWED_HOSTS` (comma-separated
+  `host[:port]`) allowlists that exact Host in addition to loopback; anything
+  else still 421s (this is also the DNS-rebinding defense — Host and Origin
+  stay confined to values we chose). The bind address itself is never
+  configurable, so this only widens which Host header is accepted, not what
+  the process listens on.
+- other local users may share the host, so once the server is
+  reachable off-box the loopback bind is no longer an access boundary by
+  itself. Setting `DIGESTIT_ALLOWED_HOSTS` therefore also requires
+  `DIGESTIT_TOKEN_FILE` (a 0600 file holding a random token) — the process
+  refuses to start otherwise (fail closed). When a token is configured, every
+  route (static assets, `/api/*`, the SSE stream, `POST /api/ui-events`)
+  requires it, via an `Authorization: Bearer` header or the `digestit_session`
+  cookie set by visiting `/?token=<t>` once; comparisons are constant-time and
+  the token is never written to a log. Plain loopback access with no
+  `DIGESTIT_ALLOWED_HOSTS` configured (local dev/tests) stays unauthenticated.
+  See [operations.md](operations.md) for the exact operator commands.
 - The only outbound path is the chosen LLM provider (D2), and it only
   processes repos on the allowlist. There is no telemetry, no CDN (UI assets are
   bundled) and no third-party fonts or scripts.

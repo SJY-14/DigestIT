@@ -2,12 +2,14 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import fastifyStatic from '@fastify/static';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import { SESSION_COOKIE, tokensMatch, type AuthOptions } from './auth.js';
 import { CSP } from './csp.js';
 import { registerLive, type LiveOptions } from './live.js';
 import { registerUiEvents, UI_EVENTS_PATH, type UiEventsOptions } from './uievents.js';
 
 export { CSP };
+export type { AuthOptions };
 
 export interface AppOptions {
   db: DatabaseSync;
@@ -17,6 +19,15 @@ export interface AppOptions {
   uiEvents?: UiEventsOptions;
   /** Called for every registered route (used by the route-enumeration test). */
   onRoute?: (method: string, url: string) => void;
+  /** Host header values allowed besides loopback (host[:port], compared case-insensitively). */
+  allowedHosts?: Iterable<string>;
+  /**
+   * Access-token gate. Undefined leaves the server open to any loopback request (local dev/tests).
+   * When set, EVERY request — including ones naming a loopback Host — needs the cookie or bearer
+   * token: other local users on a shared host can also reach the loopback bind directly,
+   * so once the server is reachable off-box (allowedHosts configured) loopback is not a boundary.
+   */
+  auth?: AuthOptions;
 }
 
 export const DEFAULT_WEB_DIR = resolve(import.meta.dirname, '../../web/dist');
@@ -30,6 +41,36 @@ export function isLoopbackHost(host: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+/** True when the Host header is loopback or explicitly allowlisted (exact host[:port] match). */
+export function isAllowedHost(host: string | undefined, allowedHosts: ReadonlySet<string>): boolean {
+  if (isLoopbackHost(host)) return true;
+  if (!host) return false;
+  return allowedHosts.has(host.trim().toLowerCase());
+}
+
+function bearerToken(req: FastifyRequest): string | undefined {
+  const h = req.headers.authorization;
+  return typeof h === 'string' && h.startsWith('Bearer ') ? h.slice(7) : undefined;
+}
+
+/** Hand-rolled `Cookie` header lookup: no request needs more than one cookie, so no library. */
+function cookieValue(req: FastifyRequest, name: string): string | undefined {
+  const header = req.headers.cookie;
+  if (typeof header !== 'string') return undefined;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
 }
 
 const DEFAULT_LIMIT = 50;
@@ -62,21 +103,41 @@ const LATEST_EXPLANATION = `SELECT content, status, provider, model, prompt_vers
   FROM explanation WHERE change_unit_id = ? AND level = ?
   ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`;
 
-export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, onRoute }: AppOptions): FastifyInstance {
+export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, onRoute, allowedHosts, auth }: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const latest = db.prepare(LATEST_EXPLANATION);
+  const allowed = new Set([...(allowedHosts ?? [])].map((h) => h.trim().toLowerCase()));
   if (onRoute) app.addHook('onRoute', (r) => [r.method].flat().forEach((m) => onRoute(m, r.url)));
 
-  // Loopback only (architecture §6): the listener is 127.0.0.1, and rejecting any other Host
-  // also closes DNS rebinding, where a foreign name resolves to us and Origin == Host.
-  // Read-only surface: anything but GET/HEAD is rejected before routing, except the single
-  // append-only viewer-event endpoint (M8).
+  // Loopback-or-allowlisted only (architecture §6): the listener is always 127.0.0.1, and
+  // rejecting any other Host also closes DNS rebinding, where a foreign name resolves to us and
+  // Origin == Host. Read-only surface: anything but GET/HEAD is rejected before routing, except
+  // the single append-only viewer-event endpoint (M8).
   app.addHook('onRequest', async (req, reply) => {
-    if (!isLoopbackHost(req.headers.host)) return reply.code(421).send({ error: 'bad_host' });
-    if (req.method === 'POST' && req.url.split('?', 1)[0] === UI_EVENTS_PATH) return;
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
+    if (!isAllowedHost(req.headers.host, allowed)) return reply.code(421).send({ error: 'bad_host' });
+    const isUiEventsPost = req.method === 'POST' && req.url.split('?', 1)[0] === UI_EVENTS_PATH;
+    if (!isUiEventsPost && req.method !== 'GET' && req.method !== 'HEAD') {
       return reply.code(405).header('allow', 'GET, HEAD').send({ error: 'method_not_allowed' });
     }
+    if (!auth) return;
+
+    // Once DIGESTIT_ALLOWED_HOSTS is set (architecture §6), every route needs the token —
+    // including loopback, since another local user on a shared host can also reach
+    // 127.0.0.1 directly. Bootstrap: GET /?token=<t> sets the cookie and redirects to / with the
+    // query string stripped, so the token never lands in a browser history entry for /.
+    const urlPath = req.url.split('?', 1)[0];
+    const qIndex = req.url.indexOf('?');
+    if (req.method === 'GET' && urlPath === '/' && qIndex !== -1) {
+      const params = new URLSearchParams(req.url.slice(qIndex + 1));
+      const supplied = params.get('token');
+      if (supplied !== null) {
+        if (!tokensMatch(supplied, auth.token)) return reply.code(401).send({ error: 'unauthorized' });
+        reply.header('set-cookie', `${SESSION_COOKIE}=${auth.token}; Path=/; HttpOnly; SameSite=Strict`);
+        return reply.redirect('/');
+      }
+    }
+    const credential = bearerToken(req) ?? cookieValue(req, SESSION_COOKIE);
+    if (!credential || !tokensMatch(credential, auth.token)) return reply.code(401).send({ error: 'unauthorized' });
   });
 
   // Architecture §6: bundled assets only, no inline scripts, LLM output never rendered as HTML.
