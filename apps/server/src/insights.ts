@@ -205,24 +205,19 @@ const percentile = (xs: number[], p: number): number | null => {
   return s[Math.max(0, idx)]!;
 };
 
-export function computeDigest(db: DatabaseSync, params: DigestParams) {
-  const now = params.now ?? new Date();
-  const span = windowSpan(params.window, now);
-  const buckets = dayBuckets(span);
-  const days = WINDOW_DAYS[params.window];
-  const prevSpan: Span = {
-    sinceDay: addDays(span.sinceDay, -days), untilDay: addDays(span.sinceDay, -1),
-    sinceMs: span.sinceMs - days * DAY_MS, untilMs: span.sinceMs - 1,
-  };
-
+/**
+ * Landed / opened / decided timestamps per work unit from the full unit_event history (T2-a, no
+ * snapshot table). Shared by the digest series and the day+metric drill so their counts agree.
+ */
+function unitLifecycles(db: DatabaseSync, repoId: number | undefined) {
   let unitsSql = `SELECT w.id, w.key FROM work_unit w`;
   const unitsArgs: number[] = [];
-  if (params.repoId !== undefined) { unitsSql += ' WHERE w.repo_id = ?'; unitsArgs.push(params.repoId); }
+  if (repoId !== undefined) { unitsSql += ' WHERE w.repo_id = ?'; unitsArgs.push(repoId); }
   const units = db.prepare(unitsSql).all(...unitsArgs) as { id: number; key: string }[];
   const unitIds = new Set(units.map((u) => u.id));
 
   let eventsSql = `SELECT work_unit_id AS unit, kind, at, detail FROM unit_event WHERE work_unit_id IS NOT NULL`;
-  if (params.repoId !== undefined) eventsSql += ' AND repo_id = ?';
+  if (repoId !== undefined) eventsSql += ' AND repo_id = ?';
   eventsSql += ' ORDER BY unixepoch(at), id';
   const events = db.prepare(eventsSql).all(...unitsArgs) as { unit: number; kind: string; at: string; detail: string }[];
   const byUnit = new Map<number, typeof events>();
@@ -254,6 +249,20 @@ export function computeDigest(db: DatabaseSync, params: DigestParams) {
       deepestLevelBeforeDeciding: deepestLevel,
     };
   });
+  return perUnit;
+}
+
+export function computeDigest(db: DatabaseSync, params: DigestParams) {
+  const now = params.now ?? new Date();
+  const span = windowSpan(params.window, now);
+  const buckets = dayBuckets(span);
+  const days = WINDOW_DAYS[params.window];
+  const prevSpan: Span = {
+    sinceDay: addDays(span.sinceDay, -days), untilDay: addDays(span.sinceDay, -1),
+    sinceMs: span.sinceMs - days * DAY_MS, untilMs: span.sinceMs - 1,
+  };
+
+  const perUnit = unitLifecycles(db, params.repoId);
 
   // landed / decided per day.
   const landedByDay = new Map<string, number>();
@@ -343,7 +352,7 @@ const secondsBetween = (a: string | null, b: string | null): number | null => {
 
 export interface DrillParams {
   area?: string; day?: string; window?: Window; metric?: string; week?: string; bucket?: string;
-  ids?: number[]; root?: string | null; repoId?: number; now?: Date;
+  ids?: number[]; root?: string | null; includeFiltered?: boolean; repoId?: number; now?: Date;
 }
 
 const METRICS = ['landed', 'decided', 'unreadBacklog', 'undecidedBacklog'] as const;
@@ -356,6 +365,7 @@ export class DrillValidationError extends Error {}
 
 function unitIdsForAreaInRange(
   db: DatabaseSync, area: string, sinceIso: string, untilIso: string, root: string | null, repoId?: number,
+  includeFiltered = false,
 ): number[] {
   let sql = FILE_CHANGE_QUERY;
   const args: (string | number)[] = [sinceIso, untilIso];
@@ -364,24 +374,23 @@ function unitIdsForAreaInRange(
   const ids = new Set<number>();
   for (const r of rows) {
     if (r.work_unit_id === null) continue;
+    if (r.filtered_reason && !includeFiltered) continue;
     if (areaOf(r.path, prefixesFor(db, r.repo_id), root) !== area) continue;
     ids.add(r.work_unit_id);
   }
   return [...ids];
 }
 
-function unitIdsForDayMetric(db: DatabaseSync, day: string, metric: Metric, repoId: number | undefined, now: Date): number[] {
-  // Backlog metrics need the full unit_event history (as of end of `day`), not just the window
-  // around `day` — reuse computeDigest's reconstruction with a window wide enough to cover it.
-  const wideNow = new Date(Math.max(now.getTime(), Date.parse(`${day}T23:59:59.999Z`)));
-  const digest = computeDigest(db, { window: '90d', repoId, now: wideNow });
+function unitIdsForDayMetric(db: DatabaseSync, day: string, metric: Metric, repoId: number | undefined): number[] {
+  // Same reconstruction as computeDigest's backlog series, over every unit (a unit that landed
+  // before the chart window can still be in that day's backlog).
+  const units = unitLifecycles(db, repoId);
   const endOfDay = Date.parse(`${day}T23:59:59.999Z`);
-  if (metric === 'landed') return digest.units.filter((u) => u.landedAt && dayKey(u.landedAt) === day).map((u) => u.id);
-  if (metric === 'decided') return digest.units.filter((u) => u.decidedAt && dayKey(u.decidedAt) === day).map((u) => u.id);
-  if (metric === 'unreadBacklog') {
-    return digest.units.filter((u) => u.landedAt && Date.parse(u.landedAt) <= endOfDay && (!u.openedAt || Date.parse(u.openedAt) > endOfDay)).map((u) => u.id);
-  }
-  return digest.units.filter((u) => u.landedAt && Date.parse(u.landedAt) <= endOfDay && (!u.decidedAt || Date.parse(u.decidedAt) > endOfDay)).map((u) => u.id);
+  const by = (at: string | null) => at !== null && Date.parse(at) <= endOfDay;
+  if (metric === 'landed') return units.filter((u) => u.landedAt && dayKey(u.landedAt) === day).map((u) => u.id);
+  if (metric === 'decided') return units.filter((u) => u.decidedAt && dayKey(u.decidedAt) === day).map((u) => u.id);
+  if (metric === 'unreadBacklog') return units.filter((u) => by(u.landedAt) && !by(u.openedAt)).map((u) => u.id);
+  return units.filter((u) => by(u.landedAt) && !by(u.decidedAt)).map((u) => u.id);
 }
 
 function unitIdsForWeekBucket(db: DatabaseSync, week: string, bucket: Attention, repoId: number | undefined): number[] {
@@ -403,13 +412,17 @@ export function computeDrill(db: DatabaseSync, params: DrillParams) {
   if (params.ids !== undefined) {
     ids = params.ids;
   } else if (params.area !== undefined && params.day !== undefined) {
-    ids = unitIdsForAreaInRange(db, params.area, `${params.day}T00:00:00.000Z`, `${params.day}T23:59:59.999Z`, root, params.repoId);
+    ids = unitIdsForAreaInRange(db, params.area, `${params.day}T00:00:00.000Z`, `${params.day}T23:59:59.999Z`, root, params.repoId, params.includeFiltered);
+  } else if (params.area !== undefined && params.week !== undefined) {
+    // 90d area series bucket by ISO week (Monday day key), so their cells drill by week.
+    const until = new Date(Date.parse(`${addDays(params.week, 7)}T00:00:00.000Z`) - 1).toISOString();
+    ids = unitIdsForAreaInRange(db, params.area, `${params.week}T00:00:00.000Z`, until, root, params.repoId, params.includeFiltered);
   } else if (params.area !== undefined) {
     const span = windowSpan(params.window ?? '30d', now);
-    ids = unitIdsForAreaInRange(db, params.area, `${span.sinceDay}T00:00:00.000Z`, now.toISOString(), root, params.repoId);
+    ids = unitIdsForAreaInRange(db, params.area, `${span.sinceDay}T00:00:00.000Z`, now.toISOString(), root, params.repoId, params.includeFiltered);
   } else if (params.day !== undefined && params.metric !== undefined) {
     if (!isMetric(params.metric)) throw new DrillValidationError('bad_metric');
-    ids = unitIdsForDayMetric(db, params.day, params.metric, params.repoId, now);
+    ids = unitIdsForDayMetric(db, params.day, params.metric, params.repoId);
   } else if (params.week !== undefined && params.bucket !== undefined) {
     if (!isAttention(params.bucket)) throw new DrillValidationError('bad_bucket');
     ids = unitIdsForWeekBucket(db, params.week, params.bucket, params.repoId);
@@ -428,22 +441,31 @@ export function computeDrill(db: DatabaseSync, params: DrillParams) {
 // --- HTTP --------------------------------------------------------------------------------------
 
 const parseRepoId = (raw: string): number | null => (/^\d+$/.test(raw) ? Number(raw) : null);
+const MAX_DRILL_IDS = 500;
 const parseIdList = (raw: string): number[] | null => {
   const parts = raw.split(',').filter((s) => s.length > 0);
-  if (parts.length === 0) return null;
+  if (parts.length === 0 || parts.length > MAX_DRILL_IDS) return null;
   const ids = parts.map(Number);
   return ids.every((n) => Number.isInteger(n) && n > 0) ? ids : null;
 };
 
-/** Memoises the last response per route, invalidated whenever `PRAGMA data_version` changes. */
-function memoizer(db: DatabaseSync) {
-  let version = -1;
+const MEMO_MAX_ENTRIES = 256;
+
+/**
+ * Memoises responses per query, invalidated whenever `PRAGMA data_version` changes or the UTC day
+ * rolls over (window buckets move at midnight even when the DB is idle). Bounded, since keys come
+ * from arbitrary query strings.
+ */
+function memoizer(db: DatabaseSync, now: () => Date) {
+  const versionStmt = db.prepare('PRAGMA data_version');
+  let version = '';
   let cache = new Map<string, unknown>();
   return (key: string, compute: () => unknown) => {
-    const v = (db.prepare('PRAGMA data_version').get() as { data_version: number }).data_version;
+    const v = `${(versionStmt.get() as { data_version: number }).data_version}@${dayKey(now().toISOString())}`;
     if (v !== version) { version = v; cache = new Map(); }
     if (cache.has(key)) return cache.get(key);
     const result = compute();
+    if (cache.size >= MEMO_MAX_ENTRIES) cache.delete(cache.keys().next().value!);
     cache.set(key, result);
     return result;
   };
@@ -453,7 +475,7 @@ export interface InsightsOptions { now?: () => Date }
 
 export function registerInsights(app: FastifyInstance, db: DatabaseSync, opts: InsightsOptions = {}): void {
   const now = opts.now ?? (() => new Date());
-  const memo = memoizer(db);
+  const memo = memoizer(db, now);
 
   app.get<{ Querystring: { window?: string; root?: string; measure?: string; includeFiltered?: string; repoId?: string } }>(
     '/api/insights/areas',
@@ -498,7 +520,7 @@ export function registerInsights(app: FastifyInstance, db: DatabaseSync, opts: I
   app.get<{
     Querystring: {
       area?: string; day?: string; window?: string; metric?: string; week?: string; bucket?: string;
-      ids?: string; root?: string; repoId?: string;
+      ids?: string; root?: string; includeFiltered?: string; repoId?: string;
     };
   }>('/api/insights/drill', async (req, reply) => {
     const q = req.query;
@@ -512,6 +534,9 @@ export function registerInsights(app: FastifyInstance, db: DatabaseSync, opts: I
     if (q.window !== undefined && !isWindow(q.window)) return reply.code(400).send({ error: 'bad_window' });
     if (q.day !== undefined && !isDayKey(q.day)) return reply.code(400).send({ error: 'bad_day' });
     if (q.week !== undefined && !isDayKey(q.week)) return reply.code(400).send({ error: 'bad_week' });
+    if (q.includeFiltered !== undefined && q.includeFiltered !== '1') {
+      return reply.code(400).send({ error: 'bad_include_filtered' });
+    }
     let ids: number[] | undefined;
     if (q.ids !== undefined) {
       const parsed = parseIdList(q.ids);
@@ -529,7 +554,8 @@ export function registerInsights(app: FastifyInstance, db: DatabaseSync, opts: I
       return memo(`drill:${JSON.stringify(q)}`, () =>
         computeDrill(db, {
           area: q.area, day: q.day, window: q.window as Window | undefined, metric: q.metric,
-          week: q.week, bucket: q.bucket, ids, root: q.root ?? null, repoId, now: now(),
+          week: q.week, bucket: q.bucket, ids, root: q.root ?? null, includeFiltered: q.includeFiltered === '1',
+          repoId, now: now(),
         }));
     } catch (e) {
       if (e instanceof DrillValidationError) return reply.code(400).send({ error: e.message });

@@ -296,4 +296,27 @@ describe('computeDrill', () => {
     const res = computeDrill(db, { ids: [11] });
     expect(res.workUnits.map((u: { key: string }) => u.key)).toEqual(['DIG-11']);
   });
+  it('area+week: drills a 90d (weekly) area cell over the whole ISO week', () => {
+    const db = makeDb();
+    const res = computeDrill(db, { area: 'apps/web', week: '2026-08-31' });
+    expect(res.workUnits.map((u: { key: string }) => u.key)).toEqual(['DIG-10']);
+    expect(computeDrill(db, { area: 'apps/web', week: '2026-09-07' }).workUnits).toEqual([]);
+  });
+
+  it('area drills skip filtered files unless includeFiltered, matching computeAreas', () => {
+    const db = makeDb();
+    db.prepare("UPDATE file_change SET filtered_reason = 'generated' WHERE change_unit_id = 1").run();
+    expect(computeDrill(db, { area: 'apps/web', day: '2026-09-01' }).workUnits).toEqual([]);
+    const res = computeDrill(db, { area: 'apps/web', day: '2026-09-01', includeFiltered: true });
+    expect(res.workUnits.map((u: { key: string }) => u.key)).toEqual(['DIG-10']);
+  });
+
+  it('day+metric backlog includes units that landed before the 90-day digest window', () => {
+    const db = makeDb();
+    const now = new Date('2027-01-15T12:00:00Z'); // DIG-11 landed 2026-09-01, never opened
+    const digest = computeDigest(db, { window: '7d', now });
+    expect(digest.backlog.at(-1)).toMatchObject({ day: '2027-01-15', unread: 1 });
+    const res = computeDrill(db, { day: '2027-01-15', metric: 'unreadBacklog', now });
+    expect(res.workUnits.map((u: { key: string }) => u.key)).toEqual(['DIG-11']);
+  });
 });

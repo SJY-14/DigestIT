@@ -76,6 +76,9 @@ describe('GET /api/insights/drill', () => {
     expect((await app.inject('/api/insights/drill?day=bad-day&metric=landed')).statusCode).toBe(400);
     expect((await app.inject('/api/insights/drill?ids=abc')).statusCode).toBe(400);
     expect((await app.inject('/api/insights/drill?window=7d')).statusCode).toBe(400); // window alone, no area
+    const tooMany = Array.from({ length: 501 }, (_, i) => i + 1).join(',');
+    expect((await app.inject(`/api/insights/drill?ids=${tooMany}`)).statusCode).toBe(400);
+    expect((await app.inject('/api/insights/drill?area=apps&includeFiltered=yes')).statusCode).toBe(400);
   });
 
   it('returns work-unit summaries in the /api/work-units shape', async () => {
@@ -130,5 +133,15 @@ describe('memoisation on PRAGMA data_version', () => {
     const after = await app.inject('/api/insights/digest?window=7d');
     const day = after.json().perDay.find((d: { day: string }) => d.day === '2026-09-02');
     expect(day.decided).toBe(1); // only visible once the cache was invalidated by the version bump
+  });
+
+  it('recomputes when the UTC day rolls over even if the DB is idle', async () => {
+    const { db } = make();
+    let clock = new Date('2026-09-08T23:00:00Z');
+    const app = buildApp({ db, webDir: '/nonexistent', insights: { now: () => clock } });
+    apps.push(app);
+    expect((await app.inject('/api/insights/digest?window=7d')).json().buckets.at(-1)).toBe('2026-09-08');
+    clock = new Date('2026-09-09T01:00:00Z');
+    expect((await app.inject('/api/insights/digest?window=7d')).json().buckets.at(-1)).toBe('2026-09-09');
   });
 });
