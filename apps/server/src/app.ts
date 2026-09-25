@@ -5,6 +5,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { SESSION_COOKIE, tokensMatch, type AuthOptions } from './auth.js';
 import { CSP } from './csp.js';
+import { registerInsights, type InsightsOptions } from './insights.js';
 import { registerLive, type LiveOptions } from './live.js';
 import { registerUiEvents, UI_EVENTS_PATH, type UiEventsOptions } from './uievents.js';
 
@@ -17,6 +18,7 @@ export interface AppOptions {
   webDir?: string;
   live?: LiveOptions;
   uiEvents?: UiEventsOptions;
+  insights?: InsightsOptions;
   /** Called for every registered route (used by the route-enumeration test). */
   onRoute?: (method: string, url: string) => void;
   /** Host header values allowed besides loopback (host[:port], compared case-insensitively). */
@@ -103,7 +105,7 @@ const LATEST_EXPLANATION = `SELECT content, status, provider, model, prompt_vers
   FROM explanation WHERE change_unit_id = ? AND level = ?
   ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`;
 
-export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, onRoute, allowedHosts, auth }: AppOptions): FastifyInstance {
+export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, insights, onRoute, allowedHosts, auth }: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const latest = db.prepare(LATEST_EXPLANATION);
   const allowed = new Set([...(allowedHosts ?? [])].map((h) => h.trim().toLowerCase()));
@@ -290,6 +292,7 @@ export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, onRoute
 
   registerLive(app, db, live);
   registerUiEvents(app, db, uiEvents);
+  registerInsights(app, db, insights);
 
   app.get('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
 

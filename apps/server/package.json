@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "fixture:snapshot": "node scripts/export-insights-snapshot.mjs"
   },
   "dependencies": {
     "@digestit/core": "workspace:*",
