@@ -70,8 +70,11 @@ function Tile({ label, value, note }: { label: string; value: string; note?: str
 
 interface Drill {
   day: string;
+  metric: string;
   label: string;
 }
+
+const METRIC_LABEL: Record<string, string> = { landed: 'Landed', decided: 'Decided' };
 
 function DigestTab({ metrics, error, reviews, onSelectUnit, onOpenCommit }: {
   metrics: Metrics | null;
@@ -113,7 +116,7 @@ function DigestTab({ metrics, error, reviews, onSelectUnit, onOpenCommit }: {
               { key: 'landed', label: 'Landed', className: 'series-1', values: dp.perDay.map((d) => d.landed) },
               { key: 'decided', label: 'Decided', className: 'series-2', values: dp.perDay.map((d) => d.decided) },
             ]}
-            onDrill={(day) => setDrill({ day, label: `Units landed or decided on ${day}` })}
+            onDrill={(day, metric) => setDrill({ day, metric, label: `${METRIC_LABEL[metric] ?? metric} on ${day}` })}
           />
         </div>
       </section>
@@ -125,7 +128,7 @@ function DigestTab({ metrics, error, reviews, onSelectUnit, onOpenCommit }: {
             <button type="button" className="btn view-toggle" onClick={() => setDrill(null)}>Close</button>
           </div>
           <div className="box-body">
-            <DrillList query={{ day: drill.day }} via="digest" reviews={reviews} label={drill.label} onSelect={onSelectUnit} onOpenCommit={onOpenCommit} />
+            <DrillList query={{ day: drill.day, metric: drill.metric }} via="digest" reviews={reviews} label={drill.label} onSelect={onSelectUnit} onOpenCommit={onOpenCommit} />
           </div>
         </section>
       )}
