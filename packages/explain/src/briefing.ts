@@ -1,14 +1,23 @@
 import { createHash } from 'node:crypto';
 import type { BriefingDecisionFact, BriefingFacts, BriefingSentence, BriefingUnreviewedFact, ExplanationProvider } from './provider.js';
 import { RepoNotAllowedError } from './config.js';
+import { estimateTokens } from './prepare.js';
 import { redact } from './redact.js';
-import { clean, strings, truncateWords, unsafe, words } from './validate.js';
+import { BudgetTracker } from './pipeline.js';
+import { cleanText, hasUnsafeMarkup, stringArray, truncateWords, wordCount } from './validate.js';
 
 /** Bump whenever the instructions or the rendering below change; see PROMPT_VERSION for the commit prompt. */
 export const BRIEFING_PROMPT_VERSION = 'b1';
 
 export const MAX_SENTENCES = 5;
 export const MAX_SENTENCE_WORDS = 40;
+/** Units shown in the prompt; the rest are summarised as a count, same as roll-up's MAX_ROLLUP_UNITS. */
+const MAX_BRIEFING_UNITS = 50;
+
+/** Escapes the two characters that could close the `<facts>` data block early. */
+function escapeAngles(s: string): string {
+  return s.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 const BRIEFING_INSTRUCTIONS = `You write a short narrative for a human deciding what to look at in a repository, from facts about a time window: what deserves their attention and why. You get only the facts below (counts and each unit's own one-line summary), no diffs or code. Reply with ONLY one JSON object, no prose, no code fence:
 {"sentences":[{"text":string,"units":string[]}]}
@@ -23,19 +32,21 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 
 function renderUnits(units: BriefingFacts['units']): string {
   if (units.length === 0) return '(none)';
-  return units
-    .map((u) => `- ${u.key} [${u.userVisible ? 'user-visible' : 'internal'}] ${u.l0}${u.userVisible && u.bullets.length > 0 ? `\n  ${u.bullets.join('; ')}` : ''}`)
+  const shown = units.slice(0, MAX_BRIEFING_UNITS);
+  const rendered = shown
+    .map((u) => `- ${escapeAngles(u.key)} [${u.userVisible ? 'user-visible' : 'internal'}] ${escapeAngles(u.l0)}${u.userVisible && u.bullets.length > 0 ? `\n  ${u.bullets.map(escapeAngles).join('; ')}` : ''}`)
     .join('\n');
+  return units.length > shown.length ? `${rendered}\n- (+${units.length - shown.length} more units not shown)` : rendered;
 }
 
 function renderUnreviewed(unreviewed: BriefingUnreviewedFact[]): string {
   if (unreviewed.length === 0) return '(none)';
-  return unreviewed.map((u) => `- ${u.unit} size=${u.size} deepestLevelViewed=${u.deepestLevelViewed ?? 'none'}`).join('\n');
+  return unreviewed.map((u) => `- ${escapeAngles(u.unit)} size=${u.size} deepestLevelViewed=${u.deepestLevelViewed ?? 'none'}`).join('\n');
 }
 
 function renderNeedsDecision(needsDecision: BriefingDecisionFact[]): string {
   if (needsDecision.length === 0) return '(none)';
-  return needsDecision.map((d) => `- ${d.unit} (${d.reason})`).join('\n');
+  return needsDecision.map((d) => `- ${escapeAngles(d.unit)} (${escapeAngles(d.reason)})`).join('\n');
 }
 
 export function buildBriefingPrompt(input: BriefingFacts): string {
@@ -44,7 +55,7 @@ export function buildBriefingPrompt(input: BriefingFacts): string {
     input.retryFeedback && input.retryFeedback.length > 0
       ? `\nYour previous answer was rejected for these reasons; fix them and answer again:\n${input.retryFeedback.map((r) => `- ${r}`).join('\n')}\n`
       : '';
-  return `${BRIEFING_INSTRUCTIONS}\n${retry}\n<facts repo="${input.repoName}" from="${input.windowStart}" to="${input.windowEnd}">\nNumbers: landed=${numbers.landed} decided=${numbers.decided} backlogDelta=${numbers.backlogDelta} llmCalls=${numbers.llmCalls}\n\nNeeds a decision:\n${renderNeedsDecision(input.needsDecision)}\n\nUnreviewed:\n${renderUnreviewed(input.unreviewed)}\n\nWhat happened:\n${renderUnits(input.units)}\n</facts>\n`;
+  return `${BRIEFING_INSTRUCTIONS}\n${retry}\n<facts repo="${escapeAngles(input.repoName)}" from="${input.windowStart}" to="${input.windowEnd}">\nNumbers: landed=${numbers.landed} decided=${numbers.decided} backlogDelta=${numbers.backlogDelta} llmCalls=${numbers.llmCalls}\n\nNeeds a decision:\n${renderNeedsDecision(input.needsDecision)}\n\nUnreviewed:\n${renderUnreviewed(input.unreviewed)}\n\nWhat happened:\n${renderUnits(input.units)}\n</facts>\n`;
 }
 
 const sha256 = (v: unknown): string => createHash('sha256').update(JSON.stringify(v)).digest('hex');
@@ -79,7 +90,10 @@ export interface CheckBriefingResult {
 /**
  * Validates provider output against the sentence/word limits and the facts.
  * Returns `null` when the shape is unusable; otherwise the sanitised sentences
- * (unknown-only citations dropped entirely) plus any violations found.
+ * plus any violations found. A sentence is dropped entirely (not just its bad
+ * citations) if it cites no unit key, or cites any key absent from the facts:
+ * a sentence citing an unknown unit may still be narrating that unit's
+ * behaviour, which we cannot verify, so partial citations are not trusted.
  */
 export function checkBriefing(raw: unknown, facts: BriefingFacts): CheckBriefingResult | null {
   if (!isObj(raw) || !Array.isArray(raw.sentences)) return null;
@@ -92,23 +106,30 @@ export function checkBriefing(raw: unknown, facts: BriefingFacts): CheckBriefing
       v.push(`sentence ${i} is malformed`);
       return;
     }
-    const unitsIn = strings(s.units) ?? [];
-    if (unsafe(s.text)) v.push(`sentence ${i} contains HTML or a link`);
-    let text = clean(s.text);
+    const rawUnits = Array.isArray(s.units) ? (s.units as unknown[]) : [];
+    if (s.units !== undefined && !Array.isArray(s.units)) v.push(`sentence ${i} units is not an array`);
+    if (rawUnits.some((u) => typeof u !== 'string')) v.push(`sentence ${i} units contains a non-string entry`);
+    const unitsIn = [...new Set(rawUnits.filter((u): u is string => typeof u === 'string'))];
+    if (hasUnsafeMarkup(s.text)) v.push(`sentence ${i} contains HTML or a link`);
+    let text = cleanText(s.text);
     if (text === '') {
       v.push(`sentence ${i} is empty`);
       return;
     }
-    if (words(text) > MAX_SENTENCE_WORDS) {
-      v.push(`sentence ${i}: ${words(text)} words, limit ${MAX_SENTENCE_WORDS}`);
+    if (wordCount(text) > MAX_SENTENCE_WORDS) {
+      v.push(`sentence ${i}: ${wordCount(text)} words, limit ${MAX_SENTENCE_WORDS}`);
       text = truncateWords(text, MAX_SENTENCE_WORDS);
     }
-    const cited = unitsIn.filter((k) => keys.has(k));
-    if (cited.length === 0) {
+    if (unitsIn.length === 0) {
       v.push(`sentence ${i} cites no unit key present in the facts; dropped`);
       return;
     }
-    sentences.push({ text, units: cited });
+    const unknown = unitsIn.filter((k) => !keys.has(k));
+    if (unknown.length > 0) {
+      v.push(`sentence ${i} cites unknown unit key(s) ${unknown.join(', ')}; dropped`);
+      return;
+    }
+    sentences.push({ text, units: unitsIn });
   });
 
   if (sentences.length > MAX_SENTENCES) {
@@ -118,11 +139,11 @@ export function checkBriefing(raw: unknown, facts: BriefingFacts): CheckBriefing
   return { sentences, violations: v };
 }
 
-export type BriefingOutcome = 'ok' | 'truncated' | 'error';
+export type BriefingOutcome = 'ok' | 'truncated' | 'error' | 'budget' | 'empty';
 
 export interface BriefingResultOut {
   outcome: BriefingOutcome;
-  /** `null` only on 'error': no sentence survived validation after the retry. */
+  /** `null` on 'error', 'budget' and 'empty': no sentence was produced. */
   sentences: BriefingSentence[] | null;
   calls: number;
   promptVersion: string;
@@ -142,11 +163,13 @@ export interface BriefingResultOut {
 export async function explainBriefing(
   facts: BriefingFacts,
   provider: ExplanationProvider,
+  budget: BudgetTracker,
   options: { promptVersion?: string } = {},
 ): Promise<BriefingResultOut> {
   const promptVersion = options.promptVersion ?? BRIEFING_PROMPT_VERSION;
   const prepared = prepareBriefing(facts);
   const base = { promptVersion, inputHash: prepared.inputHash };
+  if (knownKeys(prepared.input).size === 0) return { outcome: 'empty', sentences: null, calls: 0, ...base };
   if (!provider.briefing) throw new Error(`provider ${provider.id} does not support briefings`);
 
   let calls = 0;
@@ -156,6 +179,11 @@ export async function explainBriefing(
   let used = { provider: provider.id, model: provider.model };
   for (let attempt = 0; attempt < 2; attempt++) {
     const input = feedback ? { ...prepared.input, retryFeedback: feedback } : prepared.input;
+    if (!budget.tryReserve(estimateTokens(buildBriefingPrompt(input)))) {
+      if (calls === 0) return { outcome: 'budget', sentences: null, calls, ...base };
+      lastError ||= 'budget exhausted before retry';
+      break;
+    }
     calls++;
     try {
       const res = await provider.briefing(input);
