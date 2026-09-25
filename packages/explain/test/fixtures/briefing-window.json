@@ -1,0 +1,46 @@
+{
+  "repoName": "DigestIT",
+  "windowStart": "2026-09-25T00:00:00Z",
+  "windowEnd": "2026-09-26T00:00:00Z",
+  "numbers": { "landed": 4, "decided": 1, "backlogDelta": 2, "llmCalls": 9 },
+  "units": [
+    {
+      "key": "DIG-19",
+      "l0": "Adds a live dashboard so the team can watch work move without refreshing.",
+      "userVisible": true,
+      "bullets": [
+        "Timeline and unit panel update live over a streamed connection.",
+        "Falls back to 30-second polling if the stream drops."
+      ]
+    },
+    {
+      "key": "DIG-21",
+      "l0": "Rolls up quiet hours into one summary instead of per-commit noise.",
+      "userVisible": true,
+      "bullets": ["A rolled-up summary appears on the timeline for hours with no activity."]
+    },
+    {
+      "key": "DIG-24",
+      "l0": "Lets the owner reach the dashboard from another device on the tailnet.",
+      "userVisible": true,
+      "bullets": [
+        "Requires an access token unless the request is local.",
+        "Refuses requests from hosts outside the allowed list."
+      ]
+    },
+    {
+      "key": "DIG-18",
+      "l0": "Adds a private record of what the owner actually looked at.",
+      "userVisible": false,
+      "bullets": ["No user-visible change", "Viewer actions are now logged for later review."]
+    }
+  ],
+  "unreviewed": [
+    { "unit": "DIG-21", "size": 180, "deepestLevelViewed": null },
+    { "unit": "DIG-19", "size": 640, "deepestLevelViewed": 0 }
+  ],
+  "needsDecision": [
+    { "unit": "DIG-24", "reason": "handoff_not_reviewed" },
+    { "unit": "DIG-18", "reason": "merged_never_opened" }
+  ]
+}

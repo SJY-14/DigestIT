@@ -9,6 +9,7 @@ import type { BriefingFacts, BriefingResult, BriefingSentence, ExplanationProvid
 
 const here = dirname(fileURLToPath(import.meta.url));
 const golden = (name: string) => join(here, '../test/golden', name);
+const fixture = (name: string) => join(here, '../test/fixtures', name);
 
 function checkGolden(name: string, value: unknown): void {
   if (process.env.UPDATE_GOLDEN) {
@@ -136,6 +137,13 @@ describe('explainBriefing', () => {
     const r = await explainBriefing(facts, new StubProvider());
     expect(r).toMatchObject({ outcome: 'ok', calls: 1, promptVersion: BRIEFING_PROMPT_VERSION });
     checkGolden('briefing-sample.stub.json', r.sentences);
+  });
+
+  it('stub path: the checked-in repo-history fixture (pending its real-provider golden) also passes end to end', async () => {
+    const windowFacts = JSON.parse(readFileSync(fixture('briefing-window.json'), 'utf8')) as BriefingFacts;
+    const r = await explainBriefing(windowFacts, new StubProvider());
+    expect(r.outcome).toBe('ok');
+    expect(r.sentences!.length).toBeGreaterThan(0);
   });
 
   it('makes exactly one call when the first reply is already valid', async () => {
