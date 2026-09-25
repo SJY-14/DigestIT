@@ -76,7 +76,14 @@ Design and acceptance scope: [milestone-2.md](milestone-2.md). Approved by the B
 | 7 | DIG-19 | Live dashboard + `/metrics` | Frontend engineer | DIG-17, DIG-18, DIG-9, DIG-11 |
 | 8 | DIG-20 | *(gated)* Paperclip read-only enrichment | — | separate Board approval |
 
+## Milestone 3 — thinking aids (proposed)
+
+Daily/weekly briefing, digest dashboard, change map and review blind spots, all built from stored
+data with drill-down to L0–L3. Proposal: [milestone-3.md](milestone-3.md), awaiting Board approval (DIG-22).
+Build issues are created after approval.
+
 ## Later
 
 - Other repos (each needs a Board decision on data leaving the server).
 - Anthropic API provider for throughput; access control if more than one user.
+- Co-change map and work-flow view (M3b; work-flow needs DIG-20).
