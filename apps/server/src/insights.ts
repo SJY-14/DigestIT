@@ -205,8 +205,6 @@ const percentile = (xs: number[], p: number): number | null => {
   return s[Math.max(0, idx)]!;
 };
 
-interface UnitTimelineRow { id: number; key: string; landedAt: string | null }
-
 export function computeDigest(db: DatabaseSync, params: DigestParams) {
   const now = params.now ?? new Date();
   const span = windowSpan(params.window, now);
@@ -356,24 +354,11 @@ export function isDayKey(v: unknown): v is string { return typeof v === 'string'
 
 export class DrillValidationError extends Error {}
 
-function unitIdsForAreaDay(db: DatabaseSync, area: string, day: string, root: string | null, repoId?: number): number[] {
+function unitIdsForAreaInRange(
+  db: DatabaseSync, area: string, sinceIso: string, untilIso: string, root: string | null, repoId?: number,
+): number[] {
   let sql = FILE_CHANGE_QUERY;
-  const args: (string | number)[] = [`${day}T00:00:00.000Z`, `${day}T23:59:59.999Z`];
-  if (repoId !== undefined) { sql += ' AND c.repo_id = ?'; args.push(repoId); }
-  const rows = db.prepare(sql).all(...args) as unknown as FileChangeRow[];
-  const ids = new Set<number>();
-  for (const r of rows) {
-    if (r.work_unit_id === null) continue;
-    if (areaOf(r.path, prefixesFor(db, r.repo_id), root) !== area) continue;
-    ids.add(r.work_unit_id);
-  }
-  return [...ids];
-}
-
-function unitIdsForAreaWindow(db: DatabaseSync, area: string, window: Window, root: string | null, repoId: number | undefined, now: Date): number[] {
-  const span = windowSpan(window, now);
-  let sql = FILE_CHANGE_QUERY;
-  const args: (string | number)[] = [`${span.sinceDay}T00:00:00.000Z`, now.toISOString()];
+  const args: (string | number)[] = [sinceIso, untilIso];
   if (repoId !== undefined) { sql += ' AND c.repo_id = ?'; args.push(repoId); }
   const rows = db.prepare(sql).all(...args) as unknown as FileChangeRow[];
   const ids = new Set<number>();
@@ -418,9 +403,10 @@ export function computeDrill(db: DatabaseSync, params: DrillParams) {
   if (params.ids !== undefined) {
     ids = params.ids;
   } else if (params.area !== undefined && params.day !== undefined) {
-    ids = unitIdsForAreaDay(db, params.area, params.day, root, params.repoId);
+    ids = unitIdsForAreaInRange(db, params.area, `${params.day}T00:00:00.000Z`, `${params.day}T23:59:59.999Z`, root, params.repoId);
   } else if (params.area !== undefined) {
-    ids = unitIdsForAreaWindow(db, params.area, params.window ?? '30d', root, params.repoId, now);
+    const span = windowSpan(params.window ?? '30d', now);
+    ids = unitIdsForAreaInRange(db, params.area, `${span.sinceDay}T00:00:00.000Z`, now.toISOString(), root, params.repoId);
   } else if (params.day !== undefined && params.metric !== undefined) {
     if (!isMetric(params.metric)) throw new DrillValidationError('bad_metric');
     ids = unitIdsForDayMetric(db, params.day, params.metric, params.repoId, now);
