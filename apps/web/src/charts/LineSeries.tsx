@@ -18,7 +18,8 @@ export interface LineSeriesProps {
   formatValue?: (v: number) => string;
   /** Axis label text, kept separate from the category identity used for drill/tooltip/table. */
   formatCategory?: (category: string) => string;
-  onDrill?: (category: string) => void;
+  /** Drills a single point: the category (e.g. a day) and which series it belongs to. */
+  onDrill?: (category: string, seriesKey: string) => void;
 }
 
 const W = 720, H = 220, PAD = { l: 32, r: 12, t: 8, b: 24 };
@@ -34,8 +35,11 @@ export function LineSeries({ categories, series, ariaLabel, formatValue = String
   const px = (i: number) => PAD.l + (categories.length <= 1 ? iw / 2 : (iw / n) * i);
   const py = (v: number) => linearY(v, max, PAD.t, ih);
   const tickVals = ticks(max);
-  const { hitWidth } = { hitWidth: categories.length > 0 ? iw / categories.length : iw };
-  const { tabIndex, onKeyDown, ref } = useRovingIndex(categories.length, (i) => onDrill?.(categories[i]!));
+  const marks = categories.length * series.length;
+  const { tabIndex, onKeyDown, ref } = useRovingIndex(marks, (m) => {
+    const ci = Math.floor(m / series.length), si = m % series.length;
+    onDrill?.(categories[ci]!, series[si]!.key);
+  });
 
   const summary = (i: number) => `${categories[i]}: ${series.map((s) => `${s.label} ${formatValue(s.values[i] ?? 0)}`).join(', ')}`;
 
@@ -81,26 +85,31 @@ export function LineSeries({ categories, series, ariaLabel, formatValue = String
               />
             ))}
             {categories.map((c, i) => (
-              <g
-                key={c}
-                ref={ref(i)}
-                tabIndex={tabIndex(i)}
-                role="button"
-                aria-label={summary(i)}
-                className="mark-group"
-                onKeyDown={(e) => onKeyDown(e, i)}
-                onFocus={() => setHover(i)}
-                onBlur={() => setHover((h) => (h === i ? null : h))}
-                onMouseEnter={() => setHover(i)}
-                onMouseLeave={() => setHover(null)}
-                onClick={() => onDrill?.(c)}
-              >
-                <rect x={px(i) - hitWidth / 2} y={PAD.t} width={hitWidth} height={ih} className="hit" />
-                {series.map((s) => (
-                  <circle key={s.key} className={`dot ${s.className}`} cx={px(i)} cy={py(s.values[i] ?? 0)} r={4}>
-                    <title>{`${c}: ${s.label} ${formatValue(s.values[i] ?? 0)}`}</title>
-                  </circle>
-                ))}
+              <g key={c}>
+                {series.map((s, si) => {
+                  const m = i * series.length + si;
+                  return (
+                    <circle
+                      key={s.key}
+                      ref={ref(m)}
+                      tabIndex={tabIndex(m)}
+                      role="button"
+                      aria-label={`${c}: ${s.label} ${formatValue(s.values[i] ?? 0)}`}
+                      className={`dot ${s.className}`}
+                      cx={px(i)}
+                      cy={py(s.values[i] ?? 0)}
+                      r={4}
+                      onKeyDown={(e) => onKeyDown(e, m)}
+                      onFocus={() => setHover(i)}
+                      onBlur={() => setHover((h) => (h === i ? null : h))}
+                      onMouseEnter={() => setHover(i)}
+                      onMouseLeave={() => setHover(null)}
+                      onClick={() => onDrill?.(c, s.key)}
+                    >
+                      <title>{`${c}: ${s.label} ${formatValue(s.values[i] ?? 0)}`}</title>
+                    </circle>
+                  );
+                })}
                 {(i % 2 === categories.length % 2 || categories.length < 8) && (
                   <text className="axis" x={px(i)} y={H - 6} textAnchor="middle">{formatCategory(c)}</text>
                 )}
