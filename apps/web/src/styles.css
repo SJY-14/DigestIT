@@ -268,7 +268,7 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .chart .line { fill: none; stroke-width: 2; }
 .chart .dot { stroke: var(--bg); stroke-width: 2; }
 .chart .median-tick { stroke: var(--fg); stroke-width: 2; }
-.chart .mark-group, .chart .cell, .chart .bar { cursor: pointer; }
+.chart .mark-group, .chart .cell, .chart .bar, .chart .dot { cursor: pointer; }
 .chart .cell.heat-0 { fill: var(--heat-0); stroke: var(--border-muted); stroke-width: 1; }
 .chart .cell.heat-1 { fill: var(--heat-1); }
 .chart .cell.heat-2 { fill: var(--heat-2); }
