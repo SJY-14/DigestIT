@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   fetchUnit, postUiEvent,
-  type Level, type UnitState, type WorkUnitDetail, type WorkUnitMember, type WorkUnitSummary,
+  type Level, type OpenedVia, type UnitState, type WorkUnitDetail, type WorkUnitMember, type WorkUnitSummary,
 } from './api.js';
 import { formatDate, relativeTime, shortSha } from './format.js';
 import { unitText, type ReviewState } from './feed.js';
@@ -176,17 +176,17 @@ function useLevelTracking(unitId: number, changeId: number | null, level: Level)
 }
 
 /** Sends `opened` once per unit opened (StrictMode's double effect is deduped by the ref). */
-function useOpened(unitId: number, onSent: () => void) {
+function useOpened(unitId: number, via: OpenedVia | undefined, onSent: () => void) {
   const last = useRef<number | null>(null);
   useEffect(() => {
     if (last.current === unitId) return;
     last.current = unitId;
-    void postUiEvent({ kind: 'opened', workUnitId: unitId }).then((ok) => ok && onSent());
+    void postUiEvent({ kind: 'opened', workUnitId: unitId, ...(via ? { via } : {}) }).then((ok) => ok && onSent());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unitId]);
 }
 
-export function UnitPanel({ unit, review, level, onLevel, onClose, onEvent }: {
+export function UnitPanel({ unit, review, level, onLevel, onClose, onEvent, via }: {
   unit: WorkUnitSummary;
   review?: ReviewState | undefined;
   level: Level;
@@ -194,11 +194,13 @@ export function UnitPanel({ unit, review, level, onLevel, onClose, onEvent }: {
   onClose: () => void;
   /** Called after an event was recorded so unread/decided state can be refetched. */
   onEvent: () => void;
+  /** How the unit was opened, e.g. from a chart drill; tags the `opened` event. */
+  via?: OpenedVia;
 }) {
   const changeId = unit.latestRangeUnitId;
   const [detail, setDetail] = useState<WorkUnitDetail | null>(null);
   const [marking, setMarking] = useState<'idle' | 'busy' | 'failed'>('idle');
-  useOpened(unit.id, onEvent);
+  useOpened(unit.id, via, onEvent);
   useLevelTracking(unit.id, changeId, level);
   useEffect(() => {
     const ac = new AbortController();
