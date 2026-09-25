@@ -62,7 +62,7 @@ export function DotStrip({ groups, ariaLabel, formatValue = String, formatGroup 
         </table>
       ) : (
         <>
-          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={ariaLabel} className="chart">
+          <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label={ariaLabel} className="chart">
             {tickVals.map((t) => (
               <g key={t}>
                 <line className="grid" x1={PAD.l} x2={W - PAD.r} y1={linearY(t, max, PAD.t, ih)} y2={linearY(t, max, PAD.t, ih)} />

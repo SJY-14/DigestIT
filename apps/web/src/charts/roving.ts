@@ -11,6 +11,13 @@ export function useRovingIndex(count: number, onActivate: (i: number) => void) {
   const pendingFocus = useRef(false);
   const clamp = (i: number) => Math.min(Math.max(count - 1, 0), Math.max(0, i));
 
+  // Re-clamp when the mark count shrinks (e.g. a filter narrows the data), so a stale index
+  // doesn't leave no tab stop in the roving set.
+  useEffect(() => {
+    setFocused((f) => clamp(f));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [count]);
+
   useEffect(() => {
     if (!pendingFocus.current) return;
     pendingFocus.current = false;

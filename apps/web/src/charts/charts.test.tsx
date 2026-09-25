@@ -38,12 +38,12 @@ describe('BarSeries', () => {
     { key: 'decided', label: 'Decided', className: 'series-2', values: [1, 1, 2] },
   ];
 
-  it('renders a mark per category per series with a title and a role=img svg', async () => {
+  it('renders a mark per category per series with a title and a role=group svg', async () => {
     await render(<BarSeries categories={categories} series={series} ariaLabel="Units per day" />);
-    expect(host.querySelector('svg[role="img"]')?.getAttribute('aria-label')).toBe('Units per day');
+    expect(host.querySelector('svg[role="group"]')?.getAttribute('aria-label')).toBe('Units per day');
     expect(host.querySelectorAll('.bar.series-1')).toHaveLength(3);
     expect(host.querySelectorAll('.bar.series-2')).toHaveLength(3);
-    expect(host.querySelectorAll('.bar title')).toHaveLength(6);
+    expect(host.querySelectorAll('.mark-group title')).toHaveLength(6);
     expect(host.textContent).toContain('Landed');
     expect(host.textContent).toContain('Decided');
   });
@@ -51,7 +51,7 @@ describe('BarSeries', () => {
   it('roves focus with the arrow keys and drills the category+series on Enter', async () => {
     const onDrill = vi.fn();
     await render(<BarSeries categories={categories} series={series} ariaLabel="a" onDrill={onDrill} />);
-    const bars = () => [...host.querySelectorAll('.bar')];
+    const bars = () => [...host.querySelectorAll('.mark-group')];
     expect(bars()[0]?.getAttribute('tabindex')).toBe('0');
     expect(bars()[1]?.getAttribute('tabindex')).toBe('-1');
     await key(bars()[0], 'ArrowRight');
@@ -68,7 +68,7 @@ describe('BarSeries', () => {
   it('drills on click and toggles the table view', async () => {
     const onDrill = vi.fn();
     await render(<BarSeries categories={categories} series={series} ariaLabel="a" onDrill={onDrill} />);
-    await click(host.querySelector('.bar'));
+    await click(host.querySelector('.mark-group'));
     expect(onDrill).toHaveBeenCalledWith('Mon', 'landed');
     await click(host.querySelector('.view-toggle'));
     expect(host.querySelector('svg')).toBeNull();
@@ -77,9 +77,28 @@ describe('BarSeries', () => {
     expect(table?.textContent).toContain('3');
   });
 
+  it('a zero-value bar is still clickable via its full-height hit target', async () => {
+    const onDrill = vi.fn();
+    const zeroSeries = [{ key: 'landed', label: 'Landed', className: 'series-1', values: [0, 1, 2] }];
+    await render(<BarSeries categories={categories} series={zeroSeries} ariaLabel="a" onDrill={onDrill} />);
+    await click(host.querySelector('.mark-group'));
+    expect(onDrill).toHaveBeenCalledWith('Mon', 'landed');
+  });
+
   it('stacks bar heights instead of grouping them side by side', async () => {
     await render(<BarSeries categories={categories} series={series} mode="stacked" ariaLabel="a" />);
     expect(host.querySelectorAll('.bar.series-1')).toHaveLength(3);
+  });
+
+  it('re-clamps the roving tab stop when the mark count shrinks', async () => {
+    const single = [{ key: 'landed', label: 'Landed', className: 'series-1', values: [3, 1, 2] }];
+    await render(<BarSeries categories={categories} series={single} ariaLabel="a" />);
+    const marks = () => [...host.querySelectorAll('.mark-group')];
+    await key(marks()[0], 'End');
+    expect(marks()[2]?.getAttribute('tabindex')).toBe('0');
+    await render(<BarSeries categories={['Mon']} series={single} ariaLabel="a" />);
+    expect(marks()).toHaveLength(1);
+    expect(marks()[0]?.getAttribute('tabindex')).toBe('0');
   });
 });
 

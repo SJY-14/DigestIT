@@ -35,7 +35,7 @@ export function jitter(rank: number): number {
   return seq[rank % seq.length]!;
 }
 
-/** Bucket a value into the heatmap's 5 steps (0 = no data, 1-4 = quartiles of positive values). */
+/** Bucket a value into the heatmap's 5 steps (0 = no data, 1-4 = quarters of the way to `max`). */
 export function heatStep(value: number, max: number): 0 | 1 | 2 | 3 | 4 {
   if (value <= 0 || max <= 0) return 0;
   const frac = value / max;

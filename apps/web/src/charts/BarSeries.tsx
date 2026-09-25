@@ -77,7 +77,7 @@ export function BarSeries({
         </table>
       ) : (
         <>
-          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={ariaLabel} className="chart">
+          <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label={ariaLabel} className="chart">
             {tickVals.map((t) => (
               <g key={t}>
                 <line className="grid" x1={PAD.l} x2={W - PAD.r} y1={linearY(t, max, PAD.t, ih)} y2={linearY(t, max, PAD.t, ih)} />
@@ -89,7 +89,6 @@ export function BarSeries({
               let stackY = y0;
               return (
                 <g key={c}>
-                  <rect x={x(i)} y={PAD.t} width={slot} height={ih} className="hit" />
                   {series.map((s, si) => {
                     const v = s.values[i] ?? 0;
                     const barH = Math.max(0, y0 - linearY(v, max, PAD.t, ih));
@@ -98,18 +97,15 @@ export function BarSeries({
                     if (mode === 'stacked') stackY -= barH;
                     const m = i * series.length + si;
                     return (
-                      <rect
+                      // A zero-value bar has no rendered height to click, so the hit target
+                      // (full column height) carries the interaction, not the visible bar.
+                      <g
                         key={s.key}
                         ref={ref(m)}
                         tabIndex={tabIndex(m)}
                         role="button"
                         aria-label={markSummary(i, si)}
-                        className={`bar ${s.className}`}
-                        x={bx}
-                        y={by}
-                        width={barWidth}
-                        height={barH}
-                        rx={2}
+                        className="mark-group"
                         onKeyDown={(e) => onKeyDown(e, m)}
                         onFocus={() => setHover(i)}
                         onBlur={() => setHover((h) => (h === i ? null : h))}
@@ -117,8 +113,10 @@ export function BarSeries({
                         onMouseLeave={() => setHover(null)}
                         onClick={() => onDrill?.(c, s.key)}
                       >
+                        <rect x={bx} y={PAD.t} width={barWidth} height={ih} className="hit" />
+                        <rect className={`bar ${s.className}`} x={bx} y={by} width={barWidth} height={barH} rx={2} />
                         <title>{`${c}: ${s.label} ${formatValue(v)}`}</title>
-                      </rect>
+                      </g>
                     );
                   })}
                   {(i % 2 === categories.length % 2 || categories.length < 8) && (

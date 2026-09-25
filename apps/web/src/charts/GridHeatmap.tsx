@@ -59,7 +59,7 @@ export function GridHeatmap({ rows, columns, values, ariaLabel, formatValue = St
         </div>
       ) : (
         <>
-          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={ariaLabel} className="chart heatmap">
+          <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label={ariaLabel} className="chart heatmap">
             {rows.map((r, ri) => (
               <text key={r} className="axis" x={PAD.l - 8} y={PAD.t + ri * step + CELL - 2} textAnchor="end">{r}</text>
             ))}
