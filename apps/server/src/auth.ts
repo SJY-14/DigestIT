@@ -1,4 +1,4 @@
-import { chmodSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { parseArgs } from 'node:util';
 
@@ -88,8 +88,19 @@ export function runTokenCli(argv: string[]): number {
     return 2;
   }
   const token = generateToken();
-  writeFileSync(file, `${token}\n`, { mode: 0o600 });
-  chmodSync(file, 0o600); // writeFileSync's mode only applies when the file is newly created
+  // Write a fresh 0600 file and rename it over the target, so the new token is never written
+  // into an existing file that still has looser permissions (writeFileSync's mode only applies
+  // on create; a later chmod would leave a window where another user could read it).
+  const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    writeFileSync(tmp, `${token}\n`, { mode: 0o600, flag: 'wx' });
+    chmodSync(tmp, 0o600); // exact mode regardless of umask; loadTokenFile requires 0600
+    renameSync(tmp, file);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    console.error(`token init failed: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
   const port = values.port ?? process.env.DIGESTIT_PORT ?? String(DEFAULT_PORT);
   const host = values.host.includes(':') ? values.host : `${values.host}:${port}`;
   console.log(`wrote token to ${file} (mode 0600)`);

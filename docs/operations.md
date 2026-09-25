@@ -44,8 +44,8 @@ pnpm digest token init \
 ```
 
 This writes a fresh random token to `--file` (mode `0600`, owner read/write
-only — the command re-chmods it even if the path already existed with looser
-permissions) and prints a one-time login URL:
+only — it writes a new file and renames it over any existing one, so the
+token is never written into a file with looser permissions) and prints a one-time login URL:
 
 ```
 login URL: http://dashboard.example.ts.net:4780/?token=<token>
