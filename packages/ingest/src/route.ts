@@ -1,7 +1,7 @@
 import { runExplainCli } from '@digestit/explain';
 import { runManualExplainCli, runWatchCli } from './watch.js';
 
-export const INGEST_USAGE = 'usage: digest ingest <path> [--db <file>]\n       digest watch <path> [--interval <seconds>] [--db <file>] [--provider <name>] [--budget <calls/day>] [--no-explain]\n       digest explain --unit <work-unit key>   (on demand, counts toward the daily budget)\n       digest explain --all|--unit <id> [--concurrency N] [--max-calls N] [--budget-tokens N]';
+export const INGEST_USAGE = 'usage: digest ingest <path> [--db <file>]\n       digest watch <path> [--interval <seconds>] [--db <file>] [--provider <name>] [--budget <calls/day>] [--no-explain]\n       digest explain --unit <work-unit key>   (on demand, counts toward the daily budget)\n       digest explain --all|--unit <id> [--concurrency N] [--max-calls N] [--budget-tokens N]\n       digest serve [--port <n>] [--db <file>]\n       digest token init --host <host[:port]> [--file <path>]   (see docs/operations.md)';
 
 /** Returns an exit code if the command was handled here (explain or usage error), or undefined for `ingest`. */
 export async function routeDigest(argv: string[]): Promise<number | undefined> {

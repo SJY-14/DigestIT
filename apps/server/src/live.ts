@@ -55,10 +55,16 @@ const LATEST_EXPLANATION = `SELECT content, status, provider, model, prompt_vers
 
 const iso = (epoch: number) => new Date(epoch * 1000).toISOString();
 
-export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveOptions = {}): void {
-  const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
-  const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
-  const maxStreams = opts.maxStreams ?? DEFAULT_MAX_STREAMS;
+/** SELECT behind every work-unit summary; `epoch`/`commit_count` back the list's sort and cursor. */
+export const WU_SELECT = `SELECT w.*, unixepoch(w.last_commit_at) AS epoch,
+    (SELECT COUNT(*) FROM unit_commit m WHERE m.work_unit_id = w.id) AS commit_count FROM work_unit w`;
+
+/**
+ * The `/api/work-units` row shape, shared with `/api/insights/drill` (M3-1) so both surfaces
+ * render through the same unit-list UI. `refreshPending` re-reads the call-budget log; call it
+ * once per request before `summary`.
+ */
+export function createWorkUnitSummarizer(db: DatabaseSync) {
   const latest = db.prepare(LATEST_EXPLANATION);
 
   const l0Of = (changeId: unknown) => {
@@ -102,8 +108,15 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
     dirty: dirtyFor(w.repo_id as number, w.key as string, w.kind as string),
   });
 
-  const WU_SELECT = `SELECT w.*, unixepoch(w.last_commit_at) AS epoch,
-      (SELECT COUNT(*) FROM unit_commit m WHERE m.work_unit_id = w.id) AS commit_count FROM work_unit w`;
+  return { summary, refreshPending, dirtyFor };
+}
+
+export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveOptions = {}): void {
+  const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
+  const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+  const maxStreams = opts.maxStreams ?? DEFAULT_MAX_STREAMS;
+  const { summary, refreshPending, dirtyFor } = createWorkUnitSummarizer(db);
+  const latest = db.prepare(LATEST_EXPLANATION);
 
   app.get<{ Querystring: { cursor?: string; limit?: string; state?: string; repoId?: string } }>(
     '/api/work-units',

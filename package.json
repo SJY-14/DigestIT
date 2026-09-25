@@ -5,7 +5,7 @@
   "engines": { "node": ">=24" },
   "scripts": {
     "build": "pnpm -r build",
-    "digest": "node packages/ingest/dist/cli.js",
+    "digest": "node bin/digest.js",
     "test": "pnpm -r test"
   },
   "devDependencies": {
