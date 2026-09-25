@@ -4,6 +4,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { CSP } from './csp.js';
+import { registerInsights, type InsightsOptions } from './insights.js';
 import { registerLive, type LiveOptions } from './live.js';
 import { registerUiEvents, UI_EVENTS_PATH, type UiEventsOptions } from './uievents.js';
 
@@ -15,6 +16,7 @@ export interface AppOptions {
   webDir?: string;
   live?: LiveOptions;
   uiEvents?: UiEventsOptions;
+  insights?: InsightsOptions;
   /** Called for every registered route (used by the route-enumeration test). */
   onRoute?: (method: string, url: string) => void;
 }
@@ -62,7 +64,7 @@ const LATEST_EXPLANATION = `SELECT content, status, provider, model, prompt_vers
   FROM explanation WHERE change_unit_id = ? AND level = ?
   ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`;
 
-export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, onRoute }: AppOptions): FastifyInstance {
+export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, insights, onRoute }: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const latest = db.prepare(LATEST_EXPLANATION);
   if (onRoute) app.addHook('onRoute', (r) => [r.method].flat().forEach((m) => onRoute(m, r.url)));
@@ -229,6 +231,7 @@ export function buildApp({ db, webDir = DEFAULT_WEB_DIR, live, uiEvents, onRoute
 
   registerLive(app, db, live);
   registerUiEvents(app, db, uiEvents);
+  registerInsights(app, db, insights);
 
   app.get('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
 
