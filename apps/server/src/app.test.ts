@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '@digestit/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildApp } from './app.js';
+import { buildApp, isAllowedHost } from './app.js';
+import { SESSION_COOKIE } from './auth.js';
 import { DEFAULT_HOST, DEFAULT_PORT, resolvePort, startServer } from './serve.js';
 
 function seed() {
@@ -120,6 +121,102 @@ describe('api', () => {
   });
 });
 
+describe('isAllowedHost', () => {
+  it('allows loopback always, and allowlisted hosts case-insensitively', () => {
+    const allowed = new Set(['dashboard.example.ts.net:4780']);
+    expect(isAllowedHost('127.0.0.1:4780', allowed)).toBe(true);
+    expect(isAllowedHost('localhost', allowed)).toBe(true);
+    expect(isAllowedHost('dashboard.example.ts.net:4780', allowed)).toBe(true);
+    expect(isAllowedHost('dashboard.example.ts.net:4780', allowed)).toBe(true);
+    expect(isAllowedHost('evil.example:4780', allowed)).toBe(false);
+    expect(isAllowedHost(undefined, allowed)).toBe(false);
+  });
+});
+
+describe('allowed hosts + access token', () => {
+  const TOKEN = 'test-token-value';
+  const HOST = 'dashboard.example.ts.net:4780';
+
+  const makeGated = (webDir?: string) => {
+    const app = buildApp({
+      db: seed(),
+      webDir: webDir ?? '/nonexistent',
+      allowedHosts: [HOST],
+      auth: { token: TOKEN },
+    });
+    apps.push(app);
+    return app;
+  };
+
+  it('421s any Host not loopback or allowlisted, auth aside', async () => {
+    const app = makeGated();
+    const res = await app.inject({ url: '/api/repos', headers: { host: 'evil.example' } });
+    expect(res.statusCode).toBe(421);
+  });
+
+  it('401s every route type without a credential once a token is configured, even for loopback', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'web-'));
+    writeFileSync(join(dir, 'index.html'), '<html>ui</html>');
+    const app = makeGated(dir);
+    const noCred = { host: HOST };
+    expect((await app.inject({ url: '/api/repos', headers: noCred })).statusCode).toBe(401);
+    expect((await app.inject({ url: '/', headers: noCred })).statusCode).toBe(401);
+    expect((await app.inject({ url: '/api/stream', headers: noCred })).statusCode).toBe(401);
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/ui-events', headers: noCred, payload: {} })).statusCode,
+    ).toBe(401);
+    // Loopback is not a boundary once a token is required: another local job can also reach it.
+    expect((await app.inject({ url: '/api/repos', headers: { host: '127.0.0.1:4780' } })).statusCode).toBe(401);
+  });
+
+  it('sets a cookie and redirects to / without the query string on a valid ?token= visit', async () => {
+    const app = makeGated();
+    const res = await app.inject({ url: `/?token=${TOKEN}`, headers: { host: HOST } });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe('/');
+    const cookie = res.headers['set-cookie'];
+    expect(cookie).toContain(`${SESSION_COOKIE}=${TOKEN}`);
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Strict');
+    expect(cookie).toContain('Path=/');
+    expect(cookie).not.toContain('Secure');
+  });
+
+  it('401s a bad ?token= visit without leaking whether the format was right', async () => {
+    const app = makeGated();
+    const res = await app.inject({ url: '/?token=wrong', headers: { host: HOST } });
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('accepts the session cookie set by the token visit', async () => {
+    const app = makeGated();
+    const headers = { host: HOST, cookie: `${SESSION_COOKIE}=${TOKEN}` };
+    expect((await app.inject({ url: '/api/repos', headers })).statusCode).toBe(200);
+  });
+
+  it('accepts Authorization: Bearer <token> as an alternative to the cookie', async () => {
+    const app = makeGated();
+    const headers = { host: HOST, authorization: `Bearer ${TOKEN}` };
+    expect((await app.inject({ url: '/api/repos', headers })).statusCode).toBe(200);
+  });
+
+  it('rejects a wrong cookie or bearer token', async () => {
+    const app = makeGated();
+    expect(
+      (await app.inject({ url: '/api/repos', headers: { host: HOST, cookie: `${SESSION_COOKIE}=nope` } })).statusCode,
+    ).toBe(401);
+    expect(
+      (await app.inject({ url: '/api/repos', headers: { host: HOST, authorization: 'Bearer nope' } })).statusCode,
+    ).toBe(401);
+  });
+
+  it('leaves loopback-only requests unauthenticated when no allowedHosts/token is configured', async () => {
+    const app = make();
+    expect((await app.inject('/api/repos')).statusCode).toBe(200);
+  });
+});
+
 describe('serve', () => {
   it('defaults to port 4780 and validates DIGESTIT_PORT', () => {
     expect(resolvePort({})).toBe(DEFAULT_PORT);
@@ -133,5 +230,29 @@ describe('serve', () => {
     const app = await startServer({ dbPath: ':memory:', port: 0, webDir: '/nonexistent' });
     apps.push(app);
     expect(app.server.address()).toMatchObject({ address: '127.0.0.1' });
+  });
+
+  it('refuses to start when DIGESTIT_ALLOWED_HOSTS is set without a valid token file', async () => {
+    await expect(
+      startServer({ dbPath: ':memory:', port: 0, webDir: '/nonexistent', env: { DIGESTIT_ALLOWED_HOSTS: 'h:4780' } }),
+    ).rejects.toThrow(/DIGESTIT_TOKEN_FILE/);
+  });
+
+  it('starts and requires the token when properly configured', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'digestit-token-'));
+    const file = join(dir, 'token');
+    writeFileSync(file, 'good-token\n', { mode: 0o600 });
+    const app = await startServer({
+      dbPath: ':memory:',
+      port: 0,
+      webDir: '/nonexistent',
+      env: { DIGESTIT_ALLOWED_HOSTS: 'h:4780', DIGESTIT_TOKEN_FILE: file },
+    });
+    apps.push(app);
+    expect((await app.inject({ url: '/api/repos', headers: { host: 'h:4780' } })).statusCode).toBe(401);
+    expect(
+      (await app.inject({ url: '/api/repos', headers: { host: 'h:4780', authorization: 'Bearer good-token' } }))
+        .statusCode,
+    ).toBe(200);
   });
 });
