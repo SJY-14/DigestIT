@@ -21,7 +21,7 @@ export interface CheckResult {
   violations: string[];
 }
 
-const words = (s: string): number => (s.trim() === '' ? 0 : s.trim().split(/\s+/).length);
+export const words = (s: string): number => (s.trim() === '' ? 0 : s.trim().split(/\s+/).length);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const HTML = /<\/?[a-zA-Z][^>]*>/g;
 const URL_RE = /\bhttps?:\/\/\S+/gi;
@@ -32,16 +32,16 @@ export function truncateWords(s: string, n: number): string {
   return parts.length <= n ? s.trim() : `${parts.slice(0, n).join(' ')}…`;
 }
 
-function clean(s: string): string {
+export function clean(s: string): string {
   return s.replace(HTML, '').replace(URL_RE, '').replace(/[ \t]+/g, ' ').trim();
 }
 
-function unsafe(s: string): boolean {
+export function unsafe(s: string): boolean {
   HTML.lastIndex = 0;
   return HTML.test(s) || /\bhttps?:\/\//i.test(s);
 }
 
-function strings(v: unknown): string[] | null {
+export function strings(v: unknown): string[] | null {
   return Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null;
 }
 
