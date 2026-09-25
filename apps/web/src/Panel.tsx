@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { fetchChange, fetchExplanation, type ChangeDetail, type Explanation, type Level } from './api.js';
 import { annotate, keyLineSet, lineRange, parsePatch, type Annotation } from './diff.js';
 import { shortSha } from './format.js';
@@ -178,13 +178,16 @@ function Body({ changeId, level }: { changeId: number; level: Level }) {
   );
 }
 
-export function Panel({ changeId, sha, title, level, onLevel, onClose }: {
+export function Panel({ changeId, sha, title, level, onLevel, onClose, children, emptyNote }: {
   changeId: number | null;
   sha: string;
   title: string;
   level: Level;
   onLevel: (l: Level) => void;
   onClose: () => void;
+  /** Extra content between the header and the level tabs (used by the work-unit panel). */
+  children?: ReactNode;
+  emptyNote?: string;
 }) {
   const change = useFetched<ChangeDetail | null>(`c${changeId}`, (s) => (changeId === null ? Promise.resolve(null) : fetchChange(changeId, s)));
   return (
@@ -192,10 +195,11 @@ export function Panel({ changeId, sha, title, level, onLevel, onClose }: {
       <div className="panel-head">
         <div>
           <h2>{title}</h2>
-          <span className="panel-meta"><code>{shortSha(sha)}</code>{change.data?.commit ? ` · ${change.data.commit.authorName}` : ''}</span>
+          <span className="panel-meta">{sha && <code>{shortSha(sha)}</code>}{change.data?.commit ? ` · ${change.data.commit.authorName}` : ''}</span>
         </div>
         <button type="button" className="close" onClick={onClose} aria-label="Close explanation">×</button>
       </div>
+      {children}
       <div role="tablist" aria-label="Explanation level" className="tabs">
         {LEVELS.map((l) => (
           <button
@@ -225,7 +229,7 @@ export function Panel({ changeId, sha, title, level, onLevel, onClose }: {
         ))}
       </div>
       <div id="level-panel" role="tabpanel" aria-labelledby={`tab-${level}`} className="level-body">
-        {changeId === null ? <p className="muted">This commit has not been ingested as a change yet.</p> : <Body changeId={changeId} level={level} />}
+        {changeId === null ? <p className="muted">{emptyNote ?? 'This commit has not been ingested as a change yet.'}</p> : <Body changeId={changeId} level={level} />}
       </div>
     </aside>
   );

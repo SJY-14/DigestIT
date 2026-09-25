@@ -77,3 +77,134 @@ export function fetchChange(id: number, signal?: AbortSignal): Promise<ChangeDet
 export function fetchExplanation(id: number, level: Level, signal?: AbortSignal): Promise<Explanation> {
   return getJson<Explanation>(`/api/changes/${id}/explanations/${level}`, signal);
 }
+
+// --- work units, window digest, metrics (M2) ---------------------------------------------------
+
+export type UnitState = 'active' | 'handoff' | 'merged';
+
+export interface Dirty {
+  branch: string;
+  files: number;
+  additions: number;
+  deletions: number;
+  untracked: number;
+  updatedAt: string;
+}
+
+export interface WorkUnitSummary {
+  id: number;
+  repoId: number;
+  key: string;
+  kind: 'issue' | 'branch';
+  title: string;
+  state: UnitState;
+  tipSha: string | null;
+  firstCommitAt: string;
+  lastCommitAt: string;
+  mergedAt: string | null;
+  latestRangeUnitId: number | null;
+  commitCount: number;
+  // Untrusted LLM output inside content: validated by the renderers.
+  l0: { status: ExplanationStatus; content: unknown };
+  pendingBudget: boolean;
+  dirty: Dirty[];
+}
+
+export interface WorkUnitMember {
+  sha: string;
+  changeId: number | null;
+  authorName: string;
+  committedAt: string;
+  title: string;
+  isMerge: boolean;
+}
+
+export interface WorkUnitDetail extends WorkUnitSummary {
+  members: WorkUnitMember[];
+  ranges: { id: number; headSha: string; isLatest: boolean }[];
+  explanation: { changeUnitId: number; stale: boolean } | null;
+}
+
+export interface WindowDigest {
+  since: string;
+  until: string;
+  workUnits: WorkUnitSummary[];
+  rollup: { id: number; windowEnd: string; workUnitIds: number[]; content: unknown } | null;
+}
+
+export interface UnitMetrics {
+  id: number;
+  key: string;
+  state: UnitState;
+  landedAt: string | null;
+  timeToLandSec: number | null;
+  timeToExplainSec: number | null;
+  timeToOpenSec: number | null;
+  timeToDecideSec: number | null;
+  decidedBy: 'reviewed' | 'merged' | null;
+  levelsViewedBeforeDeciding: number[];
+  reopens: number;
+}
+
+export interface Metrics {
+  generatedAt: string;
+  global: {
+    unreadBacklog: number;
+    undecidedBacklog: number;
+    medianTimeToOpenSec: number | null;
+    medianTimeToDecideSec: number | null;
+    digestVsProduction: {
+      windowDays: number;
+      landed: number;
+      decided: number;
+      ratio: number | null;
+      perDay: { day: string; landed: number; decided: number }[];
+    };
+  };
+  units: UnitMetrics[];
+}
+
+export interface UnitsPage {
+  workUnits: WorkUnitSummary[];
+  nextCursor: string | null;
+}
+
+export function fetchUnits(repoId: number, cursor: string | null, signal?: AbortSignal): Promise<UnitsPage> {
+  const q = new URLSearchParams({ limit: String(PAGE_SIZE), repoId: String(repoId) });
+  if (cursor) q.set('cursor', cursor);
+  return getJson<UnitsPage>(`/api/work-units?${q}`, signal);
+}
+
+export function fetchUnit(key: string, repoId: number, signal?: AbortSignal): Promise<WorkUnitDetail> {
+  return getJson<WorkUnitDetail>(`/api/work-units/${encodeURIComponent(key)}?repoId=${repoId}`, signal);
+}
+
+export function fetchWindow(since: string, signal?: AbortSignal): Promise<WindowDigest> {
+  return getJson<WindowDigest>(`/api/window?since=${encodeURIComponent(since)}`, signal);
+}
+
+export function fetchMetrics(signal?: AbortSignal): Promise<Metrics> {
+  return getJson<Metrics>('/api/metrics', signal);
+}
+
+export interface UiEvent {
+  kind: 'opened' | 'level_viewed' | 'reviewed';
+  workUnitId: number;
+  changeId?: number;
+  level?: Level;
+  ms?: number;
+}
+
+/** The only write the client does. The server requires same-origin plus this custom header (CSRF). */
+export async function postUiEvent(ev: UiEvent): Promise<boolean> {
+  try {
+    const res = await fetch('/api/ui-events', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-digestit': '1' },
+      body: JSON.stringify(ev),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

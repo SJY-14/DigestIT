@@ -5,10 +5,55 @@ import { Panel } from './Panel.js';
 import { commitLabel, formatDate, relativeTime, shortSha } from './format.js';
 import { Graph } from './Graph.js';
 import { useTimeline } from './useTimeline.js';
+import { useLive } from './useLive.js';
+import { reviewStates } from './feed.js';
+import { MetricsPage } from './MetricsPage.js';
+import { NewPill, Rollup, UnitList, UnitPanel } from './Units.js';
+import type { WorkUnitMember } from './api.js';
+
+const UNIT_HASH = '#unit=';
+type View = 'units' | 'commits';
+type Page = 'dashboard' | 'metrics';
+const pageFor = (path: string): Page => (path.replace(/\/+$/, '') === '/metrics' ? 'metrics' : 'dashboard');
+
+function usePage(): [Page, (p: Page) => void] {
+  const [page, setPage] = useState<Page>(() => pageFor(location.pathname));
+  useEffect(() => {
+    const on = () => setPage(pageFor(location.pathname));
+    window.addEventListener('popstate', on);
+    return () => window.removeEventListener('popstate', on);
+  }, []);
+  return [page, (p) => {
+    history.pushState(null, '', p === 'metrics' ? '/metrics' : '/');
+    setPage(p);
+  }];
+}
 
 export function App() {
   const { repos, repoId, setRepoId, rows, done, loading, error, loadMore } = useTimeline();
-  const [selected, setSelected] = useState<string | null>(() => location.hash.slice(1) || null);
+  const [page, setPage] = usePage();
+  const live = useLive(repoId);
+  const reviews = reviewStates(live.metrics);
+  const [view, setView] = useState<View>(() => (location.hash.length > 1 && !location.hash.startsWith(UNIT_HASH) ? 'commits' : 'units'));
+  const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null);
+  const [member, setMember] = useState<WorkUnitMember | null>(null);
+  const [selected, setSelectedRaw] = useState<string | null>(() => (location.hash.startsWith(UNIT_HASH) ? null : location.hash.slice(1) || null));
+  const setSelected = useCallback((sha: string | null) => {
+    setSelectedRaw(sha);
+    if (sha) {
+      setSelectedUnitId(null);
+      setMember(null);
+    }
+  }, []);
+  const closeAll = () => {
+    setSelectedRaw(null);
+    setSelectedUnitId(null);
+    setMember(null);
+  };
+  const selectedUnit = live.units.find((u) => u.id === selectedUnitId) ?? live.digestUnits.find((u) => u.id === selectedUnitId) ?? null;
+  const initialHash = useRef(location.hash).current;
+  const restored = useRef(!initialHash.startsWith(UNIT_HASH));
+  const anySelected = Boolean(selected || selectedUnit || member);
   const [level, setLevelState] = useState<Level>(() => loadLevel());
   const setLevel = useCallback((l: Level) => {
     setLevelState(l);
@@ -29,17 +74,31 @@ export function App() {
 
   // Keep the URL hash on the open commit so a view can be linked and survives reload.
   useEffect(() => {
-    history.replaceState(null, '', selected ? `#${selected}` : location.pathname + location.search);
-  }, [selected]);
+    const hash = selected ? `#${selected}` : selectedUnit ? `${UNIT_HASH}${selectedUnit.key}` : '';
+    if (page === 'dashboard' && (hash || restored.current)) {
+      history.replaceState(null, '', hash || location.pathname + location.search);
+    }
+  }, [selected, selectedUnit?.key, page, live.loaded]);
+
+  // Deep link to a work unit: restore it from the hash once the list has loaded.
+  useEffect(() => {
+    if (restored.current || !live.loaded) return;
+    restored.current = true;
+    if (!initialHash.startsWith(UNIT_HASH)) return;
+    const key = decodeURIComponent(initialHash.slice(UNIT_HASH.length));
+    const u = live.units.find((x) => x.key === key);
+    if (u) setSelectedUnitId(u.id);
+  }, [live.loaded, live.units]);
 
   const shas = rows.map((r) => r.commit.sha);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') return setSelected(null);
+      if (page !== 'dashboard') return;
+      if (e.key === 'Escape') return closeAll();
       const l = levelForKey(e);
-      if (l !== null && selected) return setLevel(l);
+      if (l !== null && anySelected) return setLevel(l);
       const step = stepForKey(e);
-      if (step === null || shas.length === 0) return;
+      if (step === null || shas.length === 0 || view !== 'commits') return;
       const i = selected ? shas.indexOf(selected) : -1;
       const next = shas[Math.min(shas.length - 1, Math.max(0, i === -1 ? 0 : i + step))];
       if (next) {
@@ -49,13 +108,18 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selected, setLevel, shas.join()]);
+  }, [selected, setLevel, shas.join(), page, view, anySelected]);
 
+  const openMember = (m: WorkUnitMember) => {
+    setSelectedRaw(null);
+    setSelectedUnitId(null);
+    setMember(m);
+  };
   const selectedRow = rows.find((r) => r.commit.sha === selected)?.commit;
   const gutter = rows.reduce((m, r) => Math.max(m, r.lanes.width), 1);
 
   return (
-    <div className={selectedRow ? 'app with-panel' : 'app'}>
+    <div className={anySelected && page === 'dashboard' ? 'app with-panel' : 'app'}>
       <header className="top">
         <h1>DigestIT</h1>
         {repos.length > 1 && (
@@ -68,9 +132,48 @@ export function App() {
           </select>
         )}
         {repos.length === 1 && <span className="repo-name">{repos[0]?.name}</span>}
+        <nav className="nav" aria-label="Pages">
+          <a href="/" aria-current={page === 'dashboard' ? 'page' : undefined} onClick={(e) => { e.preventDefault(); setPage('dashboard'); }}>Dashboard</a>
+          <a href="/metrics" aria-current={page === 'metrics' ? 'page' : undefined} onClick={(e) => { e.preventDefault(); setPage('metrics'); }}>Metrics</a>
+        </nav>
+        <span className="conn muted" title={live.transport === 'live' ? 'Live updates' : 'Live stream unavailable; refreshing every 30 s'}>
+          {live.transport === 'live' ? 'Live' : 'Polling'}
+        </span>
       </header>
+      {page === 'metrics' ? <main><MetricsPage /></main> : (
       <div className="split">
       <main>
+        <section className="box digest" aria-labelledby="digest-h">
+          <h2 id="digest-h" className="box-head">Last hour
+            <span className="count">{live.digestUnits.length} {live.digestUnits.length === 1 ? 'unit' : 'units'} moved</span>
+            {live.metrics && live.metrics.global.unreadBacklog > 0 && <span className="badge unread">{live.metrics.global.unreadBacklog} unread</span>}
+          </h2>
+          {live.rollup && <Rollup content={live.rollup.content} />}
+          {live.loaded && live.digestUnits.length === 0 && <p className="empty">Nothing moved in the last hour.</p>}
+          <UnitList label="Units that moved in the last hour" units={live.digestUnits} reviews={reviews} compact
+            selectedId={selectedUnitId} onSelect={(u) => { setSelectedRaw(null); setMember(null); setSelectedUnitId(u.id); }} onOpenCommit={openMember} />
+        </section>
+        <div className="viewbar">
+          <div role="tablist" aria-label="View" className="tabs view-tabs">
+            {(['units', 'commits'] as const).map((v) => (
+              <button key={v} type="button" role="tab" aria-selected={view === v} tabIndex={view === v ? 0 : -1} onClick={() => setView(v)}>
+                {v === 'units' ? 'Work units' : 'Commits'}
+              </button>
+            ))}
+          </div>
+          <NewPill count={live.newCount} onClick={live.showNew} />
+        </div>
+        {live.error && view === 'units' && <p role="alert" className="error">Could not refresh work units: {live.error}</p>}
+        {view === 'units' && (
+          <div className="box">
+            <h2 className="box-head">Work units{live.units.length > 0 && <span className="count">{live.units.length}{live.hasMore ? '+' : ''}</span>}</h2>
+            {live.loaded && live.units.length === 0 && <p className="empty">No work units yet. Run <code>digest watch</code>.</p>}
+            <UnitList label="Work units, most recently active first" units={live.units} reviews={reviews} selectedId={selectedUnitId}
+              onSelect={(u) => { setSelectedRaw(null); setMember(null); setSelectedUnitId(u.id); }} onOpenCommit={openMember} />
+            {live.hasMore && <div className="sentinel"><button type="button" onClick={() => void live.loadMore()}>Load more</button></div>}
+          </div>
+        )}
+        {view === 'commits' && <>
         {error && (
           <p role="alert" className="error">
             Could not load the timeline: {error}{' '}
@@ -130,8 +233,16 @@ export function App() {
           {done && rows.length > 0 && <span>Start of history</span>}
         </div>
         <p className="hint"><kbd>j</kbd> <kbd>k</kbd> move · <kbd>0</kbd>–<kbd>3</kbd> level · <kbd>Esc</kbd> close</p>
+        </>}
       </main>
-      {selectedRow && (
+      {selectedUnit && (
+        <UnitPanel unit={selectedUnit} review={reviews.get(selectedUnit.id)} level={level} onLevel={setLevel}
+          onClose={closeAll} onEvent={() => void live.refresh()} />
+      )}
+      {!selectedUnit && member && (
+        <Panel changeId={member.changeId} sha={member.sha} title={member.title} level={level} onLevel={setLevel} onClose={closeAll} />
+      )}
+      {!selectedUnit && !member && selectedRow && (
         <Panel
           changeId={selectedRow.changeId}
           sha={selectedRow.sha}
@@ -142,6 +253,7 @@ export function App() {
         />
       )}
       </div>
+      )}
     </div>
   );
 }
