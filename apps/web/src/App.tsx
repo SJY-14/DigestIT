@@ -140,7 +140,7 @@ export function App() {
           {live.transport === 'live' ? 'Live' : 'Polling'}
         </span>
       </header>
-      {page === 'metrics' ? <main><MetricsPage /></main> : (
+      {page === 'metrics' ? <main><MetricsPage metrics={live.metrics} error={live.error} /></main> : (
       <div className="split">
       <main>
         <section className="box digest" aria-labelledby="digest-h">

@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
-import { fetchMetrics, type Metrics } from './api.js';
+import { useState } from 'react';
+import type { Metrics } from './api.js';
 import { formatDuration } from './feed.js';
-import { startLive } from './liveClient.js';
 
 // Two series, categorical slots 1 and 2 of the validated dataviz palette (blue, orange), stepped
 // per color scheme in styles.css. Identity is never color alone: legend + table view + bar titles.
@@ -66,25 +65,12 @@ export function PerDayChart({ days }: { days: Metrics['global']['digestVsProduct
   );
 }
 
-export function MetricsPage() {
-  const [m, setM] = useState<Metrics | null>(null);
-  const [error, setError] = useState<string | null>(null);
+/**
+ * Metrics come from the app's live feed (useLive), so this page opens no second /api/stream:
+ * browsers allow only ~6 HTTP/1.1 connections per origin, and each open SSE stream holds one.
+ */
+export function MetricsPage({ metrics: m, error }: { metrics: Metrics | null; error: string | null }) {
   const [table, setTable] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      fetchMetrics().then(
-        (x) => alive && (setM(x), setError(null)),
-        (e: unknown) => alive && setError(e instanceof Error ? e.message : String(e)),
-      );
-    void load();
-    const stop = startLive({ onChange: () => void load(), onTransport: () => undefined });
-    return () => {
-      alive = false;
-      stop();
-    };
-  }, []);
 
   if (error && !m) return <p role="alert" className="error">Could not load metrics: {error}</p>;
   if (!m) return <p className="muted">Loading…</p>;

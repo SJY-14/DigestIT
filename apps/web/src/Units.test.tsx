@@ -2,7 +2,7 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WorkUnitSummary } from './api.js';
+import type { Metrics, WorkUnitSummary } from './api.js';
 import { MetricsPage } from './MetricsPage.js';
 import { NewPill, UnitList, UnitPanel } from './Units.js';
 
@@ -128,7 +128,7 @@ describe('UnitPanel', () => {
 
 describe('MetricsPage', () => {
   it('shows backlog tiles, the chart and a table view', async () => {
-    await render(<MetricsPage />);
+    await render(<MetricsPage metrics={respond('/api/metrics') as Metrics} error={null} />);
     const t = host.textContent ?? '';
     expect(t).toContain('Unread backlog');
     expect(t).toContain('falling behind');
