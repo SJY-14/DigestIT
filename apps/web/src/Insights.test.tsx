@@ -73,12 +73,12 @@ describe('Insights', () => {
     expect(host.textContent).toContain("Blind spots isn't available yet");
   });
 
-  it('opens a drill-down list when a bar is activated, scoped to that day', async () => {
+  it('opens a drill-down list when a bar is activated, scoped to that day and metric', async () => {
     await render(<Insights metrics={metrics} error={null} reviews={new Map()} onSelectUnit={noop} onOpenCommit={noop} />);
-    await click(host.querySelector('.mark-group'));
-    expect(host.textContent).toContain('Units landed or decided on 2026-01-01');
+    await click(host.querySelector('.bar'));
+    expect(host.textContent).toContain('Landed on 2026-01-01');
     await act(async () => undefined);
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/insights/drill?day=2026-01-01');
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/insights/drill?day=2026-01-01&metric=landed');
   });
 });

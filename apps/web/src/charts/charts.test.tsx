@@ -48,28 +48,28 @@ describe('BarSeries', () => {
     expect(host.textContent).toContain('Decided');
   });
 
-  it('roves focus with the arrow keys and drills on Enter', async () => {
+  it('roves focus with the arrow keys and drills the category+series on Enter', async () => {
     const onDrill = vi.fn();
     await render(<BarSeries categories={categories} series={series} ariaLabel="a" onDrill={onDrill} />);
-    const groups = () => [...host.querySelectorAll('.mark-group')];
-    expect(groups()[0]?.getAttribute('tabindex')).toBe('0');
-    expect(groups()[1]?.getAttribute('tabindex')).toBe('-1');
-    await key(groups()[0], 'ArrowRight');
-    expect(groups()[1]?.getAttribute('tabindex')).toBe('0');
-    expect(groups()[0]?.getAttribute('tabindex')).toBe('-1');
-    expect(document.activeElement).toBe(groups()[1]);
-    await key(groups()[1], 'Enter');
-    expect(onDrill).toHaveBeenCalledWith('Tue');
-    await key(groups()[1], 'ArrowLeft');
-    await key(groups()[0], 'Home');
-    expect(groups()[0]?.getAttribute('tabindex')).toBe('0');
+    const bars = () => [...host.querySelectorAll('.bar')];
+    expect(bars()[0]?.getAttribute('tabindex')).toBe('0');
+    expect(bars()[1]?.getAttribute('tabindex')).toBe('-1');
+    await key(bars()[0], 'ArrowRight');
+    expect(bars()[1]?.getAttribute('tabindex')).toBe('0');
+    expect(bars()[0]?.getAttribute('tabindex')).toBe('-1');
+    expect(document.activeElement).toBe(bars()[1]);
+    await key(bars()[1], 'Enter');
+    expect(onDrill).toHaveBeenCalledWith('Mon', 'decided');
+    await key(bars()[1], 'ArrowLeft');
+    await key(bars()[0], 'Home');
+    expect(bars()[0]?.getAttribute('tabindex')).toBe('0');
   });
 
   it('drills on click and toggles the table view', async () => {
     const onDrill = vi.fn();
     await render(<BarSeries categories={categories} series={series} ariaLabel="a" onDrill={onDrill} />);
-    await click(host.querySelector('.mark-group'));
-    expect(onDrill).toHaveBeenCalledWith('Mon');
+    await click(host.querySelector('.bar'));
+    expect(onDrill).toHaveBeenCalledWith('Mon', 'landed');
     await click(host.querySelector('.view-toggle'));
     expect(host.querySelector('svg')).toBeNull();
     const table = host.querySelector('table.data');
@@ -96,11 +96,11 @@ describe('LineSeries', () => {
   it('drills the activated point on Enter', async () => {
     const onDrill = vi.fn();
     await render(<LineSeries categories={categories} series={series} ariaLabel="a" onDrill={onDrill} />);
-    const groups = [...host.querySelectorAll('.mark-group')];
-    await key(groups[0], 'ArrowRight');
-    await key(groups[1], 'ArrowRight');
-    await key(groups[2], 'Enter');
-    expect(onDrill).toHaveBeenCalledWith('Wed');
+    const dots = [...host.querySelectorAll('.dot')];
+    await key(dots[0], 'ArrowRight');
+    await key(dots[1], 'ArrowRight');
+    await key(dots[2], 'Enter');
+    expect(onDrill).toHaveBeenCalledWith('Wed', 'backlog');
   });
 });
 
