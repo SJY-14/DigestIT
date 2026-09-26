@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { annotate, keyLineSet, lineRange, parsePatch } from './diff.js';
+import { annotate, foldHunk, keyLineSet, lineRange, parsePatch, splitHunks, type DiffLine } from './diff.js';
 
 const patch = ['@@ -1,3 +1,3 @@ fn', ' a', '-b', '+B', '+c', ' d', '\\ No newline at end of file', ''].join('\n');
 
@@ -49,5 +49,50 @@ describe('lineRange', () => {
     expect(lineRange({ side: 'new', startLine: 4, endLine: 4 })).toBe('Line 4');
     expect(lineRange({ side: 'new', startLine: 11, endLine: 13 })).toBe('Lines 11–13');
     expect(lineRange({ side: 'old', startLine: 2, endLine: 5 })).toBe('Lines 2–5 (old)');
+  });
+});
+
+const ctxLine = (n: number): DiffLine => ({ kind: 'ctx', text: `l${n}`, oldNo: n, newNo: n, notes: [] });
+
+describe('splitHunks', () => {
+  it('groups lines under their hunk header and drops pre-hunk headers', () => {
+    const l = parsePatch('--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n@@ -10,2 +10,2 @@\n x\n-y\n+z');
+    const hunks = splitHunks(l);
+    expect(hunks).toHaveLength(2);
+    expect(hunks[0]!.content.map((x) => x.text)).toEqual(['a', 'b']);
+    expect(hunks[1]!.content.map((x) => x.text)).toEqual(['x', 'y', 'z']);
+  });
+});
+
+describe('foldHunk', () => {
+  it('shows everything when the hunk is at or under the threshold', () => {
+    const content = Array.from({ length: 20 }, (_, i) => ctxLine(i));
+    const segs = foldHunk(content, new Set(), 3, 20);
+    expect(segs).toEqual([{ visible: true, lines: content }]);
+  });
+
+  it('folds a long hunk entirely when nothing is annotated', () => {
+    const content = Array.from({ length: 25 }, (_, i) => ctxLine(i));
+    const segs = foldHunk(content, new Set(), 3, 20);
+    expect(segs).toEqual([{ visible: false, lines: content }]);
+  });
+
+  it('keeps a +/- context window around key lines and folds the rest', () => {
+    const content = Array.from({ length: 30 }, (_, i) => ctxLine(i));
+    const keySet = new Set([content[15]!]);
+    const segs = foldHunk(content, keySet, 3, 20);
+    expect(segs.map((s) => [s.visible, s.lines.length])).toEqual([
+      [false, 12], // 0..11
+      [true, 7],   // 12..18 (15 +/- 3)
+      [false, 11], // 19..29
+    ]);
+  });
+
+  it('merges overlapping context windows from adjacent key lines into one visible segment', () => {
+    const content = Array.from({ length: 30 }, (_, i) => ctxLine(i));
+    const keySet = new Set([content[10]!, content[13]!]);
+    const segs = foldHunk(content, keySet, 3, 20);
+    expect(segs.map((s) => s.visible)).toEqual([false, true, false]);
+    expect(segs[1]!.lines.map((l) => l.text)).toEqual(['l7', 'l8', 'l9', 'l10', 'l11', 'l12', 'l13', 'l14', 'l15', 'l16']);
   });
 });

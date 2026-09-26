@@ -76,3 +76,52 @@ export function keyLineSet(lines: DiffLine[], annotations: Annotation[]): Set<Di
   }
   return key;
 }
+
+/** One hunk of a parsed patch: its `@@ ... @@` header plus the lines it covers. */
+export interface Hunk {
+  header: DiffLine;
+  content: DiffLine[];
+}
+
+/** Group a file's parsed lines by hunk. Lines before the first hunk header are dropped (patch headers only). */
+export function splitHunks(lines: DiffLine[]): Hunk[] {
+  const out: Hunk[] = [];
+  for (const l of lines) {
+    if (l.kind === 'hunk') out.push({ header: l, content: [] });
+    else out[out.length - 1]?.content.push(l);
+  }
+  return out;
+}
+
+export interface DiffSegment {
+  visible: boolean;
+  lines: DiffLine[];
+}
+
+/**
+ * GitHub-style fold for one hunk's content: short hunks (<= `threshold` lines) show in full.
+ * Longer hunks fold everything except annotated lines +/- `context`; a hunk with no annotated
+ * lines folds entirely. Callers render `visible` segments inline and an "Expand" control for
+ * hidden ones.
+ */
+export function foldHunk(content: DiffLine[], keyLines: ReadonlySet<DiffLine>, context = 3, threshold = 20): DiffSegment[] {
+  if (content.length <= threshold) return [{ visible: true, lines: content }];
+  const visible = new Array<boolean>(content.length).fill(false);
+  let any = false;
+  content.forEach((l, i) => {
+    if (!keyLines.has(l)) return;
+    any = true;
+    for (let j = Math.max(0, i - context); j <= Math.min(content.length - 1, i + context); j++) visible[j] = true;
+  });
+  if (!any) return [{ visible: false, lines: content }];
+  const segments: DiffSegment[] = [];
+  let i = 0;
+  while (i < content.length) {
+    const v = visible[i];
+    let j = i;
+    while (j < content.length && visible[j] === v) j++;
+    segments.push({ visible: v!, lines: content.slice(i, j) });
+    i = j;
+  }
+  return segments;
+}
