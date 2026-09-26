@@ -125,7 +125,7 @@ surface cannot trigger outbound LLM calls.
   stay confined to values we chose). The bind address itself is never
   configurable, so this only widens which Host header is accepted, not what
   the process listens on.
-- other local users may share the host, so once the server is
+- Other local users may share the host, so once the server is
   reachable off-box the loopback bind is no longer an access boundary by
   itself. Setting `DIGESTIT_ALLOWED_HOSTS` therefore also requires
   `DIGESTIT_TOKEN_FILE` (a 0600 file holding a random token) — the process

@@ -78,6 +78,61 @@ export interface RollupResult {
   model: string;
 }
 
+/** One work unit that moved, referenced by its key; L0/L1 text only, as in RollupUnit. */
+export interface BriefingFactUnit {
+  key: string;
+  l0: string;
+  userVisible: boolean;
+  bullets: string[];
+}
+
+/** A unit waiting for human attention, oldest first. */
+export interface BriefingUnreviewedFact {
+  unit: string;
+  size: number;
+  deepestLevelViewed: 0 | 1 | 2 | 3 | null;
+}
+
+/** A unit flagged by one of the fixed "needs a decision" rules (see docs/milestone-3.md T1). */
+export interface BriefingDecisionFact {
+  unit: string;
+  reason: string;
+}
+
+export interface BriefingNumbers {
+  landed: number;
+  decided: number;
+  backlogDelta: number;
+  llmCalls: number;
+}
+
+/**
+ * Text-only briefing input: deterministic facts (SQL, always correct) plus each
+ * moved unit's own L0/L1 text. No diff, no file contents, no code.
+ */
+export interface BriefingFacts {
+  repoName: string;
+  windowStart: string;
+  windowEnd: string;
+  numbers: BriefingNumbers;
+  units: BriefingFactUnit[];
+  unreviewed: BriefingUnreviewedFact[];
+  needsDecision: BriefingDecisionFact[];
+  retryFeedback?: string[];
+}
+
+export interface BriefingSentence {
+  text: string;
+  /** Unit keys this sentence cites; always a subset of keys present in the facts. */
+  units: string[];
+}
+
+export interface BriefingResult {
+  sentences: BriefingSentence[];
+  provider: string;
+  model: string;
+}
+
 export interface ExplanationProvider {
   readonly id: string;
   readonly model: string;
@@ -87,4 +142,6 @@ export interface ExplanationProvider {
   explainRange?(input: RangeInput): Promise<ProviderResult>;
   /** One text-only call returns L0 + L1 for a time window. */
   rollup?(input: RollupInput): Promise<RollupResult>;
+  /** One text-only call returns a ≤5-sentence narrative over facts + unit L0/L1 text. */
+  briefing?(input: BriefingFacts): Promise<BriefingResult>;
 }

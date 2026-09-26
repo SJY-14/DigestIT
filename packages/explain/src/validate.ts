@@ -21,7 +21,7 @@ export interface CheckResult {
   violations: string[];
 }
 
-const words = (s: string): number => (s.trim() === '' ? 0 : s.trim().split(/\s+/).length);
+export const wordCount = (s: string): number => (s.trim() === '' ? 0 : s.trim().split(/\s+/).length);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const HTML = /<\/?[a-zA-Z][^>]*>/g;
 const URL_RE = /\bhttps?:\/\/\S+/gi;
@@ -32,16 +32,16 @@ export function truncateWords(s: string, n: number): string {
   return parts.length <= n ? s.trim() : `${parts.slice(0, n).join(' ')}…`;
 }
 
-function clean(s: string): string {
+export function cleanText(s: string): string {
   return s.replace(HTML, '').replace(URL_RE, '').replace(/[ \t]+/g, ' ').trim();
 }
 
-function unsafe(s: string): boolean {
+export function hasUnsafeMarkup(s: string): boolean {
   HTML.lastIndex = 0;
   return HTML.test(s) || /\bhttps?:\/\//i.test(s);
 }
 
-function strings(v: unknown): string[] | null {
+export function stringArray(v: unknown): string[] | null {
   return Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null;
 }
 
@@ -65,17 +65,17 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
   if (!isObj(raw) || !isObj(raw.l0) || !isObj(raw.l1) || !isObj(raw.l2) || !isObj(raw.l3)) return null;
   const { l0, l1, l2, l3 } = raw as { l0: Record<string, unknown>; l1: Record<string, unknown>; l2: Record<string, unknown>; l3: Record<string, unknown> };
   if (typeof l0.text !== 'string' || typeof l1.userVisible !== 'boolean') return null;
-  const bulletsIn = strings(l1.bullets);
+  const bulletsIn = stringArray(l1.bullets);
   if (!bulletsIn || !Array.isArray(l2.items) || !Array.isArray(l3.annotations)) return null;
 
   const v: string[] = [];
 
   // L0
-  let text = clean(l0.text);
-  if (unsafe(l0.text)) v.push('l0: contains HTML or a link');
+  let text = cleanText(l0.text);
+  if (hasUnsafeMarkup(l0.text)) v.push('l0: contains HTML or a link');
   if (text === '') v.push('l0: empty');
-  if (words(text) > LIMITS.l0Words) {
-    v.push(`l0: ${words(text)} words, limit ${LIMITS.l0Words}`);
+  if (wordCount(text) > LIMITS.l0Words) {
+    v.push(`l0: ${wordCount(text)} words, limit ${LIMITS.l0Words}`);
     text = truncateWords(text, LIMITS.l0Words);
   }
   if (/[.!?]\s+[A-Z]/.test(text)) v.push('l0: more than one sentence');
@@ -83,8 +83,8 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
 
   // L1
   const userVisible = l1.userVisible;
-  let bullets = bulletsIn.map(clean).filter((b) => b !== '');
-  if (bulletsIn.some(unsafe)) v.push('l1: contains HTML or a link');
+  let bullets = bulletsIn.map(cleanText).filter((b) => b !== '');
+  if (bulletsIn.some(hasUnsafeMarkup)) v.push('l1: contains HTML or a link');
   const maxBullets = userVisible ? LIMITS.l1Bullets : 2;
   if (bullets.length === 0) v.push('l1: no bullets');
   if (!userVisible && !(bullets[0] ?? '').startsWith(NO_CHANGE)) {
@@ -97,12 +97,12 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
     bullets = bullets.slice(0, maxBullets);
   }
   let budget: number = LIMITS.l1Words;
-  const total = bullets.reduce((n, b) => n + words(b), 0);
+  const total = bullets.reduce((n, b) => n + wordCount(b), 0);
   if (total > LIMITS.l1Words) v.push(`l1: ${total} words, limit ${LIMITS.l1Words}`);
   bullets = bullets.flatMap((b) => {
     if (budget <= 0) return [];
     const cut = truncateWords(b, budget);
-    budget -= Math.min(words(b), budget);
+    budget -= Math.min(wordCount(b), budget);
     return [cut];
   });
 
@@ -113,15 +113,15 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
       v.push(`l2: item ${i} is malformed`);
       return;
     }
-    if ([it.path, it.role, it.change].some(unsafe)) v.push(`l2: item ${i} contains HTML or a link`);
-    let role = clean(it.role);
-    let change = clean(it.change);
-    if (words(role) + words(change) > LIMITS.l2Words) {
-      v.push(`l2: item ${i} has ${words(role) + words(change)} words, limit ${LIMITS.l2Words}`);
+    if ([it.path, it.role, it.change].some(hasUnsafeMarkup)) v.push(`l2: item ${i} contains HTML or a link`);
+    let role = cleanText(it.role);
+    let change = cleanText(it.change);
+    if (wordCount(role) + wordCount(change) > LIMITS.l2Words) {
+      v.push(`l2: item ${i} has ${wordCount(role) + wordCount(change)} words, limit ${LIMITS.l2Words}`);
       role = truncateWords(role, 10);
-      change = truncateWords(change, LIMITS.l2Words - Math.min(words(role), 10));
+      change = truncateWords(change, LIMITS.l2Words - Math.min(wordCount(role), 10));
     }
-    items.push({ path: clean(it.path), role, change });
+    items.push({ path: cleanText(it.path), role, change });
   });
   if (items.length > LIMITS.l2Items) {
     v.push(`l2: ${items.length} items, limit ${LIMITS.l2Items}`);
@@ -146,10 +146,10 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
     else if (startLine > endLine || !set?.has(startLine) || !set.has(endLine)) {
       v.push(`l3: annotation ${i} ${path}:${startLine}-${endLine} (${side}) does not exist in the diff`);
     } else {
-      if (unsafe(note)) v.push(`l3: annotation ${i} contains HTML or a link`);
-      let n = clean(note);
-      if (words(n) > LIMITS.l3Words) {
-        v.push(`l3: annotation ${i} has ${words(n)} words, limit ${LIMITS.l3Words}`);
+      if (hasUnsafeMarkup(note)) v.push(`l3: annotation ${i} contains HTML or a link`);
+      let n = cleanText(note);
+      if (wordCount(n) > LIMITS.l3Words) {
+        v.push(`l3: annotation ${i} has ${wordCount(n)} words, limit ${LIMITS.l3Words}`);
         n = truncateWords(n, LIMITS.l3Words);
       }
       annotations.push({ path, side, startLine, endLine, note: n });
