@@ -1,0 +1,136 @@
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { runInitCli, runProjectExplainCli, runProjectsCli, runStatusCli } from './project-cli.js';
+
+function listFiles(dir: string, base = dir): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    const full = join(dir, name);
+    const st = statSync(full);
+    if (st.isDirectory()) out.push(...listFiles(full, base));
+    else out.push(full.slice(base.length + 1));
+  }
+  return out;
+}
+
+let root: string;
+let proj: string;
+let dbPath: string;
+let logs: string[];
+let errs: string[];
+let logSpy: ReturnType<typeof vi.spyOn>;
+let errSpy: ReturnType<typeof vi.spyOn>;
+
+const write = (name: string, content: string) => {
+  mkdirSync(join(proj, name, '..'), { recursive: true });
+  writeFileSync(join(proj, name), content);
+};
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'digest-project-cli-'));
+  proj = join(root, 'project');
+  dbPath = join(root, 'home', 'digestit.sqlite');
+  mkdirSync(proj, { recursive: true });
+  logs = [];
+  errs = [];
+  logSpy = vi.spyOn(console, 'log').mockImplementation((s: string) => { logs.push(s); });
+  errSpy = vi.spyOn(console, 'error').mockImplementation((s: string) => { errs.push(s); });
+});
+afterEach(() => {
+  logSpy.mockRestore();
+  errSpy.mockRestore();
+  rmSync(root, { recursive: true, force: true });
+});
+
+describe('runInitCli', () => {
+  it('registers a project and prints where its data lives', async () => {
+    write('a.txt', 'hi\n');
+    const code = await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    expect(code).toBe(0);
+    expect(logs.join('\n')).toContain('registered project "demo"');
+    expect(logs.join('\n')).toContain(join(root, 'home'));
+  });
+
+  it('is a no-op on a second run for the same path', async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath]);
+    logs = [];
+    const code = await runInitCli(['init', proj, '--db', dbPath]);
+    expect(code).toBe(0);
+    expect(logs.join('\n')).toContain('already registered');
+  });
+
+  it('fails without a path', async () => {
+    expect(await runInitCli(['init'])).toBe(2);
+  });
+});
+
+describe('runProjectsCli / runStatusCli', () => {
+  it('lists a registered project and its pending status', async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    write('a.txt', 'hi\nthere\n');
+
+    logs = [];
+    expect(await runProjectsCli(['projects', '--db', dbPath])).toBe(0);
+    expect(logs.join('\n')).toContain('demo');
+
+    logs = [];
+    expect(await runStatusCli(['status', 'demo', '--db', dbPath])).toBe(0);
+    expect(logs.join('\n')).toContain('1 file(s) changed');
+    expect(logs.join('\n')).toContain('budget:');
+  });
+
+  it('reports no projects registered', async () => {
+    expect(await runProjectsCli(['projects', '--db', dbPath])).toBe(0);
+    expect(logs.join('\n')).toContain('no projects registered');
+  });
+});
+
+describe('runProjectExplainCli', () => {
+  it('explains a changed project with the stub provider, then --retry on it makes no new call (already cached)', async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    write('a.txt', 'hi\nthere\n');
+
+    const code = await runProjectExplainCli(['explain', 'demo', '--db', dbPath]);
+    expect(code).toBe(0);
+    const out = logs.join('\n');
+    const m = /digest (\d+): ok/.exec(out);
+    expect(m).not.toBeNull();
+    const digestId = m![1]!;
+
+    logs = [];
+    const retried = await runProjectExplainCli(['explain', '--retry', digestId, '--db', dbPath]);
+    expect(retried).toBe(0);
+    expect(logs.join('\n')).toContain(`digest ${digestId}: cached, 0 provider call(s)`);
+  });
+
+  it('prints "No changes since last check" for an unchanged project', async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    const code = await runProjectExplainCli(['explain', 'demo', '--db', dbPath]);
+    expect(code).toBe(0);
+    expect(logs.join('\n')).toContain('No changes since last check');
+  });
+
+  it('errors for an unknown project', async () => {
+    const code = await runProjectExplainCli(['explain', 'nope', '--db', dbPath]);
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toContain('no project "nope"');
+  });
+});
+
+describe('data lives outside the project across the whole CLI flow', () => {
+  it('never creates files inside the project directory', async () => {
+    write('a.txt', 'hi\n');
+    const before = listFiles(proj);
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    write('a.txt', 'hi\nthere\n');
+    await runProjectExplainCli(['explain', 'demo', '--db', dbPath]);
+    expect(listFiles(proj)).toEqual(before);
+    expect(dbPath.startsWith(proj)).toBe(false);
+  });
+});

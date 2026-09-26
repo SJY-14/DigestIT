@@ -5,3 +5,7 @@ export { pollOnce, watchRepo, runWatchCli, runManualExplainCli, type PollResult,
 export * from './workunits.js';
 export * from './scheduler.js';
 export * from './rollup.js';
+export * from './datahome.js';
+export * from './project.js';
+export * from './project-cli.js';
+export * from './route.js';
