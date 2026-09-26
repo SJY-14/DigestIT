@@ -1,9 +1,11 @@
-// L3 area view (DIG-41, docs/direction-v2.md §4-5): a Generate button gated on `status`
-// ('none'/'pending'/'error'/'truncated'), then why/design/risks, then the diff. Hunks of <= 20
+// L3 area view (DIG-41, docs/direction-v2.md §4-5): a Generate/pending/error/truncated notice
+// gated on `status`, then why/design/risks (once generated), then the diff — shown regardless of
+// `status` since the raw patch is already in the GET payload and costs no LLM call. Hunks of <= 20
 // lines show inline with their notes; longer ones fold to the annotated lines +/- 3, with an
 // Expand per fold and a Show all per file ('e' expands everything). Swaps in for the project
 // graph in the right pane; "Back to graph" returns. If `focusPath` names a file, it opens first
-// and is scrolled to, while the area's other files start collapsed unless they have notes.
+// and is scrolled to (even if the area stays open and focusPath later changes to another file),
+// while the area's other files start collapsed unless they have notes.
 import { useEffect, useRef, useState } from 'react';
 import type { AreaDetailDto, DigestFileDto } from '@digestit/core';
 import { annotate, foldHunk, keyLineSet, lineRange, parsePatch, splitHunks, type Annotation, type DiffLine } from './diff.js';
@@ -71,7 +73,7 @@ function AreaFile({ file, annotations, focused, expandAllTick }: {
   file: DigestFileDto & { patch: string | null };
   annotations: Annotation[];
   focused: boolean;
-  /** Bumped by AreaView's 'e' shortcut; any change (never on mount) expands this file fully. */
+  /** Bumped by AreaView's 'e' shortcut; any change after mount expands this file fully. */
   expandAllTick: number;
 }) {
   const ref = useRef<HTMLDetailsElement>(null);
@@ -87,15 +89,22 @@ function AreaFile({ file, annotations, focused, expandAllTick }: {
   const hunks = splitHunks(lines);
 
   useEffect(() => {
-    if (focused) ref.current?.scrollIntoView({ block: 'start' });
+    if (focused) {
+      setOpen(true);
+      ref.current?.scrollIntoView({ block: 'start' });
+    }
   }, [focused]);
 
+  // Skip the mount-time invocation regardless of the tick's starting value: 'e' may have been
+  // pressed before this file existed (e.g. while status was 'none'), leaving expandAllTick > 0
+  // when it first mounts, which must not bypass the notes-gated collapse above.
+  const mounted = useRef(false);
   useEffect(() => {
-    if (expandAllTick > 0) {
+    if (mounted.current) {
       setOpen(true);
       setShowAll(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    mounted.current = true;
   }, [expandAllTick]);
 
   return (
@@ -158,9 +167,9 @@ export function AreaView({ area, title, onBack, focusPath, onGenerate, callsRema
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'e' || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== 'e' || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
       const target = e.target as HTMLElement | null;
-      if (target && /^(input|textarea|select)$/i.test(target.tagName)) return;
+      if (target && (/^(input|textarea|select)$/i.test(target.tagName) || target.isContentEditable)) return;
       setExpandAllTick((n) => n + 1);
     };
     document.addEventListener('keydown', onKey);
@@ -186,35 +195,33 @@ export function AreaView({ area, title, onBack, focusPath, onGenerate, callsRema
       {(area.status === 'error' || area.status === 'truncated') && (
         <p role="alert" className="error area-generate-error">
           {area.status === 'truncated'
-            ? "This area's explanation was truncated (the daily budget ran out)."
+            ? "This area's explanation was truncated; showing the best partial result."
             : "Could not generate this area's explanation."}{' '}
           <button type="button" className="btn retry" onClick={onGenerate}>Retry</button>
         </p>
       )}
       {l3 && (
-        <>
-          <div className="area-l3">
-            <p>{l3.why}</p>
-            <p className="muted">{l3.design}</p>
-            {l3.risks.length > 0 && (
-              <>
-                <h3>Risks</h3>
-                <ul>{l3.risks.map((r, i) => <li key={i}>{r}</li>)}</ul>
-              </>
-            )}
-          </div>
-          {shown.map((f) => (
-            <AreaFile key={f.path} file={f} annotations={annotations} focused={f.path === focusPath} expandAllTick={expandAllTick} />
-          ))}
-          {filtered.length > 0 && (
-            <section aria-label="Not analysed">
-              <h3>Not analysed</h3>
-              <ul className="not-analysed">
-                {filtered.map((f) => <li key={f.path}><code>{f.path}</code> <span className="muted">({f.filteredReason})</span></li>)}
-              </ul>
-            </section>
+        <div className="area-l3">
+          <p>{l3.why}</p>
+          <p className="muted">{l3.design}</p>
+          {l3.risks.length > 0 && (
+            <>
+              <h3>Risks</h3>
+              <ul>{l3.risks.map((r, i) => <li key={i}>{r}</li>)}</ul>
+            </>
           )}
-        </>
+        </div>
+      )}
+      {shown.map((f) => (
+        <AreaFile key={f.path} file={f} annotations={annotations} focused={f.path === focusPath} expandAllTick={expandAllTick} />
+      ))}
+      {filtered.length > 0 && (
+        <section aria-label="Not analysed">
+          <h3>Not analysed</h3>
+          <ul className="not-analysed">
+            {filtered.map((f) => <li key={f.path}><code>{f.path}</code> <span className="muted">({f.filteredReason})</span></li>)}
+          </ul>
+        </section>
       )}
     </section>
   );

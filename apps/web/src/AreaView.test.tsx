@@ -59,8 +59,11 @@ describe('AreaView', () => {
     expect(btn?.textContent).toContain('uses 1 of 7 calls left');
     await click(btn);
     expect(onGenerate).toHaveBeenCalled();
-    // Nothing to show yet: no diff, no why/design/risks.
+    // No why/design/risks yet (no l3), but the diff is already in the GET payload and free to
+    // show, with Generate above it.
     expect(host.querySelector('.area-l3')).toBeFalsy();
+    const children = [...host.querySelector('.area-view')!.children];
+    expect(children.indexOf(btn!)).toBeLessThan(children.findIndex((c) => c.matches('details.file')));
   });
 
   it('status "none": omits the call count when unknown', async () => {
@@ -83,9 +86,12 @@ describe('AreaView', () => {
     expect(onGenerate).toHaveBeenCalled();
   });
 
-  it('status "truncated": shows a distinct notice and a Retry', async () => {
+  it('status "truncated": shows a distinct notice (a partial result, not a budget message) and a Retry', async () => {
     await render(<AreaView area={{ ...fixtureArea, status: 'truncated', l3: null }} title="x" onBack={noop} onGenerate={noop} />);
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain('truncated');
+    const text = host.querySelector('[role="alert"]')?.textContent;
+    expect(text).toContain('truncated');
+    expect(text).toContain('partial');
+    expect(text).not.toContain('budget');
     expect(host.querySelector('.retry')).toBeTruthy();
   });
 
@@ -116,6 +122,36 @@ describe('AreaView', () => {
     expect(host.querySelector('.fold-expand')).toBeFalsy();
   });
 
+  it("ignores 'e' while composing (IME input in progress)", async () => {
+    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} />);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true, isComposing: true }));
+    });
+    expect(host.querySelector('.fold-expand')).toBeTruthy();
+  });
+
+  it("ignores 'e' typed into a contenteditable region", async () => {
+    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} />);
+    const editable = document.createElement('div');
+    // jsdom doesn't implement contentEditable reflection, so stub the property the guard reads.
+    Object.defineProperty(editable, 'isContentEditable', { value: true });
+    host.append(editable);
+    await key('e', editable);
+    expect(host.querySelector('.fold-expand')).toBeTruthy();
+  });
+
+  it("a tick from 'e' pressed before a file mounts doesn't skip its notes-gated collapse", async () => {
+    const noNotesFile = { ...fixtureArea.files[0]!, path: 'apps/web/src/MainV2.tsx' };
+    const empty: AreaDetailDto = { ...fixtureArea, status: 'none', l3: null, files: [] };
+    const withFile: AreaDetailDto = { ...fixtureArea, status: 'none', l3: null, files: [noNotesFile] };
+    await render(<AreaView area={empty} title="x" onBack={noop} onGenerate={noop} />);
+    await key('e');
+    // The file mounts later (e.g. once Generate resolves); expandAllTick is already > 0.
+    await render(<AreaView area={withFile} title="x" onBack={noop} onGenerate={noop} />);
+    const details = host.querySelector('details.file') as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+  });
+
   it('opens and scrolls to the focused file first; other files stay collapsed unless they have notes', async () => {
     const scrollSpy = vi.fn();
     HTMLElement.prototype.scrollIntoView = scrollSpy;
@@ -126,6 +162,18 @@ describe('AreaView', () => {
     const details = [...host.querySelectorAll('details.file')] as HTMLDetailsElement[];
     // First file has no notes and isn't focused: collapsed. Second is focused: open.
     expect(details[0]!.open).toBe(false);
+    expect(details[1]!.open).toBe(true);
+  });
+
+  it('opens the newly focused file when focusPath changes while the area stays open', async () => {
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    const fileA = { ...fixtureArea.files[0]!, path: 'apps/web/src/MainV2.tsx' };
+    const fileB = { ...fixtureArea.files[0]!, path: 'apps/web/src/AreaView.tsx' };
+    const twoFiles: AreaDetailDto = { ...fixtureArea, files: [fileA, fileB] };
+    await render(<AreaView area={twoFiles} title="x" onBack={noop} onGenerate={noop} focusPath={fileA.path} />);
+    await render(<AreaView area={twoFiles} title="x" onBack={noop} onGenerate={noop} focusPath={fileB.path} />);
+    const details = [...host.querySelectorAll('details.file')] as HTMLDetailsElement[];
+    expect(details[0]!.open).toBe(true);
     expect(details[1]!.open).toBe(true);
   });
 
