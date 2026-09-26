@@ -5,7 +5,7 @@ import type {
   AreaDetailDto, DigestDetailDto, DigestL2Item, DigestSummaryDto, GraphNode, ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 import {
-  ApiError, createProject, explainArea, explainProject, fetchDigest, fetchGraph, fetchProjectStatus, fetchProjects, refreshContext,
+  ApiError, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph, fetchProjectStatus, fetchProjects, refreshContext,
 } from './v2Api.js';
 import { useDigests } from './useDigests.js';
 import { startLive } from './liveClient.js';
@@ -433,10 +433,12 @@ export function MainV2() {
   const [graphError, setGraphError] = useState<string | null>(null);
   const [areaDetail, setAreaDetail] = useState<AreaDetailDto | null>(null);
   const [areaError, setAreaError] = useState<string | null>(null);
+  const [areaGenerating, setAreaGenerating] = useState(false);
   const [hoverAreaId, setHoverAreaId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
   const [announce, setAnnounce] = useState('');
-  const [leftPct, setLeftPct] = useState(40);
+  // Right pane (project graph or, per DIG-41, the AreaView code view) defaults to ~55% of the width.
+  const [leftPct, setLeftPct] = useState(45);
   const narrow = useNarrow();
   const [graphSectionOpen, setGraphSectionOpen] = useState(true);
 
@@ -483,10 +485,24 @@ export function MainV2() {
   useEffect(() => {
     setAreaDetail(null);
     setAreaError(null);
+    setAreaGenerating(false);
     if (currentDigestId === null || url.area === null) return;
     const ac = new AbortController();
-    explainArea(currentDigestId, url.area, ac.signal).then(setAreaDetail, (e: unknown) => { if (!ac.signal.aborted) setAreaError(e instanceof Error ? e.message : String(e)); });
+    // Cheap GET: never spends the budget. Generating L3 is a separate, explicit user action
+    // (docs/direction-v2.md §4: "clicks to request L3"), wired below as onGenerateArea.
+    fetchArea(currentDigestId, url.area, ac.signal).then(setAreaDetail, (e: unknown) => { if (!ac.signal.aborted) setAreaError(e instanceof Error ? e.message : String(e)); });
     return () => ac.abort();
+  }, [currentDigestId, url.area]);
+
+  const onGenerateArea = useCallback(() => {
+    if (currentDigestId === null || url.area === null) return;
+    setAreaGenerating(true);
+    explainArea(currentDigestId, url.area).then(
+      (d) => { setAreaGenerating(false); setAreaDetail(d); },
+      // Leave areaError alone: the area is already loaded, so AreaView shows its own
+      // error + Retry rather than replacing the pane with the "could not load" message.
+      () => { setAreaGenerating(false); setAreaDetail((prev) => (prev ? { ...prev, status: 'error' } : prev)); },
+    );
   }, [currentDigestId, url.area]);
 
   const filter = useMemo(() => (url.node && digest ? computeFilter(url.node, graph, digest) : null), [url.node, graph, digest]);
@@ -603,7 +619,14 @@ export function MainV2() {
                   areaError ? (
                     <p role="alert" className="error">Could not load this area: {areaError}</p>
                   ) : areaDetail ? (
-                    <AreaView area={areaDetail} title={openAreaItem.title} onBack={onBackToGraph} focusPath={focusPath} />
+                    <AreaView
+                      area={areaGenerating ? { ...areaDetail, status: 'pending' } : areaDetail}
+                      title={openAreaItem.title}
+                      onBack={onBackToGraph}
+                      focusPath={focusPath}
+                      onGenerate={onGenerateArea}
+                      callsRemaining={status?.budget.remaining ?? null}
+                    />
                   ) : (
                     <p className="muted">Loading…</p>
                   )

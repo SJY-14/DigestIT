@@ -1,7 +1,9 @@
-// L3 area view (DIG-41, docs/direction-v2.md §4-5): why/design/risks, then the diff. Hunks of
-// <= 20 lines show inline with their notes; longer ones fold to the annotated lines +/- 3, with
-// an Expand per fold and a Show all per file. Swaps in for the project graph in the right pane;
-// "Back to graph" returns. If `focusPath` names a file, it opens first and is scrolled to.
+// L3 area view (DIG-41, docs/direction-v2.md §4-5): a Generate button gated on `status`
+// ('none'/'pending'/'error'/'truncated'), then why/design/risks, then the diff. Hunks of <= 20
+// lines show inline with their notes; longer ones fold to the annotated lines +/- 3, with an
+// Expand per fold and a Show all per file ('e' expands everything). Swaps in for the project
+// graph in the right pane; "Back to graph" returns. If `focusPath` names a file, it opens first
+// and is scrolled to, while the area's other files start collapsed unless they have notes.
 import { useEffect, useRef, useState } from 'react';
 import type { AreaDetailDto, DigestFileDto } from '@digestit/core';
 import { annotate, foldHunk, keyLineSet, lineRange, parsePatch, splitHunks, type Annotation, type DiffLine } from './diff.js';
@@ -65,17 +67,21 @@ function FoldedHunk({ header, content, keySet, showAll, foldKeyPrefix, openFolds
   );
 }
 
-function AreaFile({ file, annotations, focused }: {
+function AreaFile({ file, annotations, focused, expandAllTick }: {
   file: DigestFileDto & { patch: string | null };
   annotations: Annotation[];
   focused: boolean;
+  /** Bumped by AreaView's 'e' shortcut; any change (never on mount) expands this file fully. */
+  expandAllTick: number;
 }) {
   const ref = useRef<HTMLDetailsElement>(null);
-  const [open, setOpen] = useState(true);
+  const fileAnnotations = annotations.filter((a) => a.path === file.path);
+  // A file with notes starts open (there's something to read); one with none starts collapsed
+  // to its header + stats. A focused file (came from the graph via focusPath) always opens.
+  const [open, setOpen] = useState(focused || fileAnnotations.length > 0);
   const [showAll, setShowAll] = useState(false);
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
   const lines = parsePatch(file.patch ?? '');
-  const fileAnnotations = annotations.filter((a) => a.path === file.path);
   const unplaced = annotate(lines, fileAnnotations);
   const keySet = keyLineSet(lines, fileAnnotations);
   const hunks = splitHunks(lines);
@@ -83,6 +89,14 @@ function AreaFile({ file, annotations, focused }: {
   useEffect(() => {
     if (focused) ref.current?.scrollIntoView({ block: 'start' });
   }, [focused]);
+
+  useEffect(() => {
+    if (expandAllTick > 0) {
+      setOpen(true);
+      setShowAll(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandAllTick]);
 
   return (
     <details ref={ref} className="file" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
@@ -129,13 +143,29 @@ export interface AreaViewProps {
   onBack: () => void;
   /** File to open and scroll to first (set when a file node was selected in the graph). */
   focusPath?: string | null;
+  /** Request (or retry) this area's L3. Absent while `area.status` is `'ok'`. */
+  onGenerate: () => void;
+  /** Remaining daily LLM calls, shown in the Generate button. Omitted if unknown. */
+  callsRemaining?: number | null;
 }
 
-export function AreaView({ area, title, onBack, focusPath }: AreaViewProps) {
+export function AreaView({ area, title, onBack, focusPath, onGenerate, callsRemaining }: AreaViewProps) {
   const l3 = area.l3;
   const shown = area.files.filter((f) => !f.filteredReason);
   const filtered = area.files.filter((f) => f.filteredReason);
   const annotations: Annotation[] = l3?.notes ?? [];
+  const [expandAllTick, setExpandAllTick] = useState(0);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'e' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && /^(input|textarea|select)$/i.test(target.tagName)) return;
+      setExpandAllTick((n) => n + 1);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <section className="area-view" aria-label={`Code: ${title}`}>
@@ -143,28 +173,48 @@ export function AreaView({ area, title, onBack, focusPath }: AreaViewProps) {
         <button type="button" className="btn back" onClick={onBack}>← Back to graph</button>
         <h2>{title}</h2>
       </div>
-      {area.status === 'pending' && <p className="muted">Generating this area's explanation…</p>}
-      {area.status === 'error' && <p role="alert" className="error">Could not generate this area's explanation.</p>}
-      {l3 && (
-        <div className="area-l3">
-          <p>{l3.why}</p>
-          <p className="muted">{l3.design}</p>
-          {l3.risks.length > 0 && (
-            <>
-              <h3>Risks</h3>
-              <ul>{l3.risks.map((r, i) => <li key={i}>{r}</li>)}</ul>
-            </>
-          )}
-        </div>
+      {area.status === 'none' && (
+        <button type="button" className="btn primary" onClick={onGenerate}>
+          Generate code-level explanation{callsRemaining != null ? ` (uses 1 of ${callsRemaining} calls left)` : ''}
+        </button>
       )}
-      {shown.map((f) => <AreaFile key={f.path} file={f} annotations={annotations} focused={f.path === focusPath} />)}
-      {filtered.length > 0 && (
-        <section aria-label="Not analysed">
-          <h3>Not analysed</h3>
-          <ul className="not-analysed">
-            {filtered.map((f) => <li key={f.path}><code>{f.path}</code> <span className="muted">({f.filteredReason})</span></li>)}
-          </ul>
-        </section>
+      {area.status === 'pending' && (
+        <p className="muted area-generating" role="status" aria-live="polite">
+          <span className="spinner" aria-hidden="true" /> Generating this area's explanation…
+        </p>
+      )}
+      {(area.status === 'error' || area.status === 'truncated') && (
+        <p role="alert" className="error area-generate-error">
+          {area.status === 'truncated'
+            ? "This area's explanation was truncated (the daily budget ran out)."
+            : "Could not generate this area's explanation."}{' '}
+          <button type="button" className="btn retry" onClick={onGenerate}>Retry</button>
+        </p>
+      )}
+      {l3 && (
+        <>
+          <div className="area-l3">
+            <p>{l3.why}</p>
+            <p className="muted">{l3.design}</p>
+            {l3.risks.length > 0 && (
+              <>
+                <h3>Risks</h3>
+                <ul>{l3.risks.map((r, i) => <li key={i}>{r}</li>)}</ul>
+              </>
+            )}
+          </div>
+          {shown.map((f) => (
+            <AreaFile key={f.path} file={f} annotations={annotations} focused={f.path === focusPath} expandAllTick={expandAllTick} />
+          ))}
+          {filtered.length > 0 && (
+            <section aria-label="Not analysed">
+              <h3>Not analysed</h3>
+              <ul className="not-analysed">
+                {filtered.map((f) => <li key={f.path}><code>{f.path}</code> <span className="muted">({f.filteredReason})</span></li>)}
+              </ul>
+            </section>
+          )}
+        </>
       )}
     </section>
   );

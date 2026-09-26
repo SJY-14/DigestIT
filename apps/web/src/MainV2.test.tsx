@@ -33,7 +33,7 @@ function mockFetch() {
       if (url.startsWith(`/api/projects/${fixtureProject.id}/digests`)) return fixtureDigestPage;
       if (url === `/api/digests/${fixtureDigest.id}`) return fixtureDigest;
       if (url.startsWith(`/api/digests/${fixtureDigest.id}/graph`)) return fixtureGraph;
-      if (url.startsWith(`/api/digests/${fixtureDigest.id}/areas/`) && method === 'POST') return fixtureArea;
+      if (url.startsWith(`/api/digests/${fixtureDigest.id}/areas/`) && (method === 'GET' || method === 'POST')) return fixtureArea;
       throw new Error(`unhandled fetch in test: ${method} ${url}`);
     })();
     return { ok: true, status: 200, json: async () => body } as Response;
