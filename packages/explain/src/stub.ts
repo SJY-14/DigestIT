@@ -1,5 +1,8 @@
 import { NO_CHANGE, truncateWords } from './validate.js';
-import type { ExplanationInput, ExplanationProvider, ProviderResult, RangeInput, RollupInput, RollupResult } from './provider.js';
+import type {
+  BriefingFacts, BriefingResult, BriefingSentence, ExplanationInput, ExplanationProvider,
+  ProviderResult, RangeInput, RollupInput, RollupResult,
+} from './provider.js';
 
 /** Deterministic placeholder built from the commit message and diffstat. No network, no process. */
 export class StubProvider implements ExplanationProvider {
@@ -59,5 +62,23 @@ export class StubProvider implements ExplanationProvider {
         l1: { userVisible: visible.length > 0, bullets },
       },
     };
+  }
+
+  /** Deterministic narrative: needs-a-decision first, then unreviewed, then a fallback on what moved. */
+  async briefing(input: BriefingFacts): Promise<BriefingResult> {
+    const sentences: BriefingSentence[] = [];
+    for (const d of input.needsDecision) {
+      if (sentences.length >= 5) break;
+      sentences.push({ text: `${d.unit} needs a decision: ${d.reason.replace(/_/g, ' ')}.`, units: [d.unit] });
+    }
+    for (const u of input.unreviewed) {
+      if (sentences.length >= 5) break;
+      sentences.push({ text: `${u.unit} is still unreviewed (${u.size} line(s) changed).`, units: [u.unit] });
+    }
+    if (sentences.length === 0 && input.units.length > 0) {
+      const u = input.units[0]!;
+      sentences.push({ text: `${u.key}: ${truncateWords(u.l0, 30)}`, units: [u.key] });
+    }
+    return { sentences: sentences.slice(0, 5), provider: this.id, model: this.model };
   }
 }

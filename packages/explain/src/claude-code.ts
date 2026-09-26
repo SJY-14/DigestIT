@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type {
   AllLevels,
+  BriefingFacts,
+  BriefingResult,
   ExplanationInput,
   ExplanationProvider,
   ProviderResult,
@@ -11,6 +13,7 @@ import type {
 } from './provider.js';
 import { buildPrompt } from './prompt.js';
 import { buildRangePrompt, buildRollupPrompt } from './range.js';
+import { buildBriefingPrompt } from './briefing.js';
 
 export type SpawnFn = (cmd: string, args: string[]) => ChildProcessWithoutNullStreams;
 
@@ -87,6 +90,12 @@ export class ClaudeCodeProvider implements ExplanationProvider {
     if (!isObj(l0) || typeof l0.text !== 'string') throw new Error('invalid l0');
     if (!isObj(l1) || typeof l1.userVisible !== 'boolean' || !Array.isArray(l1.bullets)) throw new Error('invalid l1');
     return { levels: { l0, l1 } as unknown as RollupResult['levels'], provider: this.id, model: this.model };
+  }
+
+  async briefing(input: BriefingFacts): Promise<BriefingResult> {
+    const v = parseJson(await this.call(buildBriefingPrompt(input)));
+    if (!Array.isArray(v.sentences)) throw new Error('invalid sentences');
+    return { sentences: v.sentences as BriefingResult['sentences'], provider: this.id, model: this.model };
   }
 
   /** Runs one prompt and returns the model's text result. */
