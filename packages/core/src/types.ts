@@ -33,7 +33,7 @@ export interface Commit {
 export interface ChangeUnit {
   id: number;
   repoId: number;
-  kind: 'commit' | 'range';
+  kind: 'commit' | 'range' | 'digest';
   headSha: string;
   baseSha: string | null;
   title: string;

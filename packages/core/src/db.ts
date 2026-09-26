@@ -170,6 +170,92 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX rollup_window_end ON rollup(window_end);
   `,
+  // v2 (DIG-33, docs/direction-v2.md): projects, shadow checkpoints, digests, lazy per-area L3 and
+  // project context. change_unit and explain_call are rebuilt only to widen their CHECKs.
+  `
+  ALTER TABLE repo ADD COLUMN mode TEXT NOT NULL DEFAULT 'history' CHECK (mode IN ('history','project'));
+  ALTER TABLE repo ADD COLUMN context_path TEXT;
+  ALTER TABLE repo ADD COLUMN created_at TEXT;
+
+  CREATE TABLE change_unit_new (
+    id       INTEGER PRIMARY KEY,
+    repo_id  INTEGER NOT NULL REFERENCES repo(id),
+    kind     TEXT NOT NULL DEFAULT 'commit' CHECK (kind IN ('commit','range','digest')),
+    head_sha TEXT NOT NULL,
+    base_sha TEXT,
+    title    TEXT NOT NULL
+  );
+  INSERT INTO change_unit_new SELECT id, repo_id, kind, head_sha, base_sha, title FROM change_unit;
+  DROP TABLE change_unit;
+  ALTER TABLE change_unit_new RENAME TO change_unit;
+  CREATE UNIQUE INDEX change_unit_commit ON change_unit(repo_id, head_sha) WHERE kind = 'commit';
+  CREATE UNIQUE INDEX change_unit_range ON change_unit(repo_id, head_sha, COALESCE(base_sha, '')) WHERE kind = 'range';
+  CREATE UNIQUE INDEX change_unit_digest ON change_unit(repo_id, head_sha) WHERE kind = 'digest';
+
+  CREATE TABLE explain_call_new (
+    id             INTEGER PRIMARY KEY,
+    at             TEXT NOT NULL,
+    change_unit_id INTEGER REFERENCES change_unit(id),
+    reason         TEXT NOT NULL CHECK (reason IN
+                   ('merged','handoff','rollup','backfill','manual','digest','area','context')),
+    duration_ms    INTEGER NOT NULL DEFAULT 0,
+    outcome        TEXT NOT NULL CHECK (outcome IN ('ok','error','budget'))
+  );
+  INSERT INTO explain_call_new SELECT id, at, change_unit_id, reason, duration_ms, outcome FROM explain_call;
+  DROP TABLE explain_call;
+  ALTER TABLE explain_call_new RENAME TO explain_call;
+  CREATE INDEX explain_call_at ON explain_call(at);
+  CREATE INDEX explain_call_unit ON explain_call(change_unit_id, at);
+
+  CREATE TABLE checkpoint (
+    id          INTEGER PRIMARY KEY,
+    repo_id     INTEGER NOT NULL REFERENCES repo(id),
+    seq         INTEGER NOT NULL,
+    shadow_sha  TEXT NOT NULL,
+    tree_sha    TEXT NOT NULL,
+    taken_at    TEXT NOT NULL,
+    reason      TEXT NOT NULL CHECK (reason IN ('init','explain','manual')),
+    user_head   TEXT,
+    user_branch TEXT,
+    skipped     TEXT NOT NULL DEFAULT '[]',
+    UNIQUE (repo_id, seq)
+  );
+  CREATE TABLE digest (
+    change_unit_id     INTEGER PRIMARY KEY REFERENCES change_unit(id),
+    repo_id            INTEGER NOT NULL REFERENCES repo(id),
+    from_checkpoint_id INTEGER NOT NULL REFERENCES checkpoint(id),
+    to_checkpoint_id   INTEGER NOT NULL UNIQUE REFERENCES checkpoint(id),
+    created_at         TEXT NOT NULL,
+    stats              TEXT NOT NULL DEFAULT '{"files":0,"additions":0,"deletions":0}'
+  );
+  CREATE INDEX digest_repo_created ON digest(repo_id, created_at);
+  CREATE TABLE area_explanation (
+    change_unit_id INTEGER NOT NULL REFERENCES change_unit(id),
+    area_id        TEXT NOT NULL,
+    content        TEXT NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('ok','pending','error','truncated')),
+    provider       TEXT NOT NULL,
+    model          TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    input_hash     TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    UNIQUE (change_unit_id, area_id, prompt_version)
+  );
+  CREATE TABLE project_context (
+    id                INTEGER PRIMARY KEY,
+    repo_id           INTEGER NOT NULL REFERENCES repo(id),
+    checkpoint_id     INTEGER REFERENCES checkpoint(id),
+    content           TEXT NOT NULL,
+    status            TEXT NOT NULL CHECK (status IN ('ok','pending','error','truncated')),
+    source_hash       TEXT NOT NULL,
+    user_context_hash TEXT,
+    provider          TEXT NOT NULL,
+    model             TEXT NOT NULL,
+    prompt_version    TEXT NOT NULL,
+    created_at        TEXT NOT NULL
+  );
+  CREATE INDEX project_context_repo ON project_context(repo_id, created_at);
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {
