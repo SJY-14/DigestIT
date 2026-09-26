@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
 import { createProvider, type ExplanationProvider } from '@digestit/explain';
 import {
-  ProjectLockedError, budgetStatus, explainProject, findProject, initProject, latestCheckpoint,
+  ProjectLockedError, budgetStatus, explainProject, findProject, initProject, isExplaining, latestCheckpoint,
   listProjects, projectStatus, retryDigest, type ProjectRow,
 } from './project.js';
 import type { DatabaseSync } from 'node:sqlite';
@@ -173,6 +173,46 @@ describe('digest explain: init -> edit -> explain -> digest', () => {
     // Only one checkpoint/digest was created for the one tree change, not two.
     expect(latestCheckpoint(db, project.id)!.seq).toBe(2);
     expect(db.prepare("SELECT count(*) AS n FROM change_unit WHERE kind = 'digest'").get()).toEqual({ n: 1 });
+  });
+});
+
+describe('explain lock and file filtering', () => {
+  it('recovers a stale lock left by a dead process but honours a live one', async () => {
+    write('a.txt', 'one\n');
+    const init = await initProject(db, home, proj);
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+    const lock = join(init.dataDir, 'explain.lock');
+
+    writeFileSync(lock, String(process.pid)); // live holder
+    expect(isExplaining(home, project.id)).toBe(true);
+    await expect(explainProject(db, home, project, provider(project.name), { budget: 40 })).rejects.toBeInstanceOf(ProjectLockedError);
+
+    writeFileSync(lock, '2147483646'); // no such process: a crashed explain
+    expect(isExplaining(home, project.id)).toBe(false);
+    write('a.txt', 'one\ntwo\n');
+    const r = await explainProject(db, home, project, provider(project.name), { budget: 40 });
+    expect(r.outcome).toBe('ok');
+    expect(isExplaining(home, project.id)).toBe(false);
+  });
+
+  it('records filterReason on the digest file rows', async () => {
+    write('a.txt', 'one\n');
+    const init = await initProject(db, home, proj);
+    write('pnpm-lock.yaml', 'lockfileVersion: 9\n');
+    write('a.txt', 'one\ntwo\n');
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+    const r = await explainProject(db, home, project, provider(project.name), { budget: 40 });
+    const rows = db.prepare('SELECT path, filtered_reason AS reason FROM file_change WHERE change_unit_id = ? ORDER BY path').all(r.digestId!);
+    expect(rows).toEqual([{ path: 'a.txt', reason: null }, { path: 'pnpm-lock.yaml', reason: 'lockfile' }]);
+  });
+
+  it('re-running init finishes a registration that has no checkpoint yet', async () => {
+    write('a.txt', 'one\n');
+    const init = await initProject(db, home, proj);
+    db.prepare('DELETE FROM checkpoint WHERE repo_id = ?').run(init.repoId);
+    const again = await initProject(db, home, proj);
+    expect(again.repoId).toBe(init.repoId);
+    expect(latestCheckpoint(db, init.repoId)!.seq).toBe(1);
   });
 });
 

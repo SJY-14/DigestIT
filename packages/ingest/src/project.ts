@@ -1,8 +1,9 @@
-import { closeSync, existsSync, openSync, realpathSync, unlinkSync, writeSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, linkSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { BudgetDto, CheckpointReason, CommitStats, SkipReason } from '@digestit/core';
-import { type DigestOutcome, type ExplanationProvider, explainDigest } from '@digestit/explain';
+import { type DigestOutcome, type ExplanationProvider, explainDigest, filterReason } from '@digestit/explain';
 import { DEFAULT_DAILY_BUDGET, startOfLocalDay } from './scheduler.js';
 import { ensureDir0700, projectDataDir } from './datahome.js';
 import { diff, listTree, openShadow, pending, snapshot, userGitInfo, type PendingResult } from './shadow.js';
@@ -14,26 +15,54 @@ export class ProjectLockedError extends Error {
   }
 }
 
+/** True if the lock file exists and names a live process (a crashed or killed explain leaves a stale one). */
+function lockHeld(path: string): boolean {
+  let pid: number;
+  try {
+    pid = Number(readFileSync(path, 'utf8'));
+  } catch {
+    return false;
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** Creates the lock atomically with the pid already in it (write a temp file, then hard-link it into place). */
+function tryLock(path: string): boolean {
+  const tmp = `${path}.${randomUUID()}`;
+  writeFileSync(tmp, String(process.pid), { mode: 0o600 });
+  try {
+    linkSync(tmp, path);
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw e;
+  } finally {
+    unlinkSync(tmp);
+  }
+}
+
 /** Exclusive, per-project lock file: only one `explain` (fresh or `--retry`) runs at a time. */
 function withProjectLock<T>(dataDir: string, fn: () => Promise<T>): Promise<T> {
   ensureDir0700(dataDir);
   const path = `${dataDir}/explain.lock`;
-  let fd: number;
-  try {
-    fd = openSync(path, 'wx', 0o600);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new ProjectLockedError();
-    throw e;
+  if (!tryLock(path)) {
+    if (lockHeld(path)) throw new ProjectLockedError();
+    try { unlinkSync(path); } catch { /* removed concurrently */ }
+    if (!tryLock(path)) throw new ProjectLockedError();
   }
-  writeSync(fd, String(process.pid));
-  closeSync(fd);
   return fn().finally(() => {
     try { unlinkSync(path); } catch { /* already gone */ }
   });
 }
 
 export function isExplaining(home: string, repoId: number): boolean {
-  return existsSync(`${projectDataDir(home, repoId)}/explain.lock`);
+  return lockHeld(`${projectDataDir(home, repoId)}/explain.lock`);
 }
 
 export interface ProjectRow {
@@ -137,7 +166,9 @@ export async function initProject(
   const existing = db.prepare("SELECT id, name FROM repo WHERE path = ? AND mode = 'project'").get(path) as { id: number; name: string } | undefined;
   if (existing) {
     const dataDir = projectDataDir(home, existing.id);
-    const latest = latestCheckpoint(db, existing.id)!;
+    const latest = latestCheckpoint(db, existing.id);
+    // No checkpoint means an earlier init failed after registering: finish it now.
+    if (!latest) return { ...(await takeInitCheckpoint(db, dataDir, existing.id, path, now().toISOString())), repoId: existing.id, name: existing.name, path, dataDir, created: true };
     const shadow = await openShadow(dataDir, path);
     const tracked = await listTree(shadow, latest.treeSha);
     return { repoId: existing.id, name: existing.name, path, dataDir, created: false, tracked: tracked.length, skipped: latest.skipped };
@@ -153,20 +184,26 @@ export async function initProject(
   ).run(name, path, contextPath, at).lastInsertRowid);
 
   const dataDir = projectDataDir(home, repoId);
+  return { ...(await takeInitCheckpoint(db, dataDir, repoId, path, at)), repoId, name, path, dataDir, created: true };
+}
+
+async function takeInitCheckpoint(
+  db: DatabaseSync, dataDir: string, repoId: number, path: string, at: string,
+): Promise<Pick<InitResult, 'tracked' | 'skipped'>> {
   ensureDir0700(dataDir);
   const shadow = await openShadow(dataDir, path);
   const info = await userGitInfo(path);
   const result = await snapshot(shadow);
   insertCheckpoint(db, repoId, 1, result.treeSha, 'init', info?.head ?? null, info?.branch ?? null, result.skipped, at);
   const tracked = await listTree(shadow, result.treeSha);
-  return { repoId, name, path, dataDir, created: true, tracked: tracked.length, skipped: result.skipped };
+  return { tracked: tracked.length, skipped: result.skipped };
 }
 
-export function budgetStatus(db: DatabaseSync, now: Date = new Date()): BudgetDto {
+/** Today's shared call budget (every `explain_call` reason counts). `limit` is the configured daily cap. */
+export function budgetStatus(db: DatabaseSync, now: Date = new Date(), limit: number = DEFAULT_DAILY_BUDGET): BudgetDto {
   const start = startOfLocalDay(now);
   const used = (db.prepare("SELECT count(*) AS n FROM explain_call WHERE at >= ? AND outcome IN ('ok','error')")
     .get(start.toISOString()) as { n: number }).n;
-  const limit = DEFAULT_DAILY_BUDGET;
   const resetsAt = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1).toISOString();
   return { limit, used, remaining: Math.max(0, limit - used), resetsAt };
 }
@@ -179,12 +216,14 @@ export interface ProjectStatus {
 }
 
 /** `digest status`: pending changes + remaining budget, no snapshot write and no LLM call. */
-export async function projectStatus(db: DatabaseSync, home: string, project: ProjectRow, now: Date = new Date()): Promise<ProjectStatus> {
+export async function projectStatus(
+  db: DatabaseSync, home: string, project: ProjectRow, now: Date = new Date(), limit: number = DEFAULT_DAILY_BUDGET,
+): Promise<ProjectStatus> {
   const latest = latestCheckpoint(db, project.id);
   const dataDir = projectDataDir(home, project.id);
   const shadow = await openShadow(dataDir, project.path);
   const pendingStats: PendingResult = latest ? await pending(shadow, latest.shadowSha) : { files: 0, additions: 0, deletions: 0 };
-  return { project, pending: pendingStats, budget: budgetStatus(db, now), explaining: isExplaining(home, project.id) };
+  return { project, pending: pendingStats, budget: budgetStatus(db, now, limit), explaining: isExplaining(home, project.id) };
 }
 
 export interface ExplainProjectResult {
@@ -209,7 +248,7 @@ function insertDigestChangeUnit(
   );
   let additions = 0, deletions = 0;
   for (const f of files) {
-    insFile.run(changeUnitId, f.path, f.oldPath, f.status, f.additions, f.deletions, f.patch, f.status === 'B' ? 'binary' : null);
+    insFile.run(changeUnitId, f.path, f.oldPath, f.status, f.additions, f.deletions, f.patch, filterReason(f));
     additions += f.additions;
     deletions += f.deletions;
   }
@@ -248,9 +287,18 @@ export async function explainProject(
     if (result.unchanged) return { noChanges: true, digestId: null, outcome: null, calls: 0 };
     const at = now().toISOString();
     const info = await userGitInfo(project.path);
-    const toId = insertCheckpoint(db, project.id, from.seq + 1, result.treeSha, 'explain', info?.head ?? null, info?.branch ?? null, result.skipped, at);
     const files = await diff(shadow, from.shadowSha, result.treeSha);
-    const changeUnitId = insertDigestChangeUnit(db, project.id, from, toId, result.treeSha, files, at);
+    // Checkpoint and digest land together, so a failure never leaves a checkpoint whose changes have no digest.
+    let changeUnitId: number;
+    db.exec('BEGIN');
+    try {
+      const toId = insertCheckpoint(db, project.id, from.seq + 1, result.treeSha, 'explain', info?.head ?? null, info?.branch ?? null, result.skipped, at);
+      changeUnitId = insertDigestChangeUnit(db, project.id, from, toId, result.treeSha, files, at);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
     const r = await explainDigest(db, changeUnitId, provider, { context: opts.context, budget, now });
     return { noChanges: false, digestId: changeUnitId, outcome: r.outcome, calls: r.calls, detail: r.detail };
   });

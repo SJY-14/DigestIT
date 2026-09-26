@@ -91,6 +91,7 @@ export async function runStatusCli(argv: string[]): Promise<number> {
     console.error(e instanceof Error ? e.message : String(e));
     return 2;
   }
+  const limit = intOpt(process.env.DIGESTIT_DAILY_BUDGET);
   const { db, home } = openProjectDb(values.db ?? process.env.DIGESTIT_DB);
   try {
     const found = findProject(db, positionals[0]);
@@ -98,7 +99,7 @@ export async function runStatusCli(argv: string[]): Promise<number> {
       console.error(found.error);
       return 1;
     }
-    const s = await projectStatus(db, home, found);
+    const s = await projectStatus(db, home, found, new Date(), limit && !Number.isNaN(limit) ? limit : DEFAULT_DAILY_BUDGET);
     console.log(`${found.name}: ${s.pending.files} file(s) changed, +${s.pending.additions} -${s.pending.deletions} since last check`);
     console.log(`budget: ${s.budget.used}/${s.budget.limit} used today, ${s.budget.remaining} remaining (resets ${s.budget.resetsAt})`);
     if (s.explaining) console.log('an explain is currently running for this project');
