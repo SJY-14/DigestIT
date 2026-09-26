@@ -262,6 +262,8 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .chart-wrap { display: flex; flex-direction: column; }
 .chart-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; justify-content: flex-end; }
 .chart { width: 100%; height: auto; display: block; }
+/* Heatmap cells stay at their intrinsic size (contribution-graph style); only shrink to fit. */
+.chart.heatmap { width: auto; max-width: 100%; align-self: flex-start; }
 .chart .grid { stroke: var(--border-muted); stroke-width: 1; }
 .chart .axis { fill: var(--muted); font-size: 11px; }
 .chart .hit { fill: transparent; }

@@ -13,17 +13,22 @@ export interface GridHeatmapProps {
   onDrill?: (row: string, column: string) => void;
   /** How often to draw a column label, so a 90-day grid doesn't collide. Default: every 7th. */
   columnLabelEvery?: number;
+  /** Short column label (e.g. `MM-DD`); the full value stays in titles and the table. */
+  formatColumn?: (c: string) => string;
 }
 
-const CELL = 12, GAP = 2, PAD = { l: 90, r: 8, t: 8, b: 20 };
+const CELL = 12, GAP = 2, PAD = { r: 28, t: 8, b: 20 };
+/** Rough 11px-font advance, so the row-label gutter fits paths like `packages/explain`. */
+const CHAR_W = 6.5;
 
 /** Contribution-graph-style grid: rows = areas, columns = days/weeks, 5-step single hue. */
-export function GridHeatmap({ rows, columns, values, ariaLabel, formatValue = String, onDrill, columnLabelEvery = 7 }: GridHeatmapProps) {
+export function GridHeatmap({ rows, columns, values, ariaLabel, formatValue = String, onDrill, columnLabelEvery = 7, formatColumn = (c) => c }: GridHeatmapProps) {
   const [table, setTable] = useState(false);
   const [hover, setHover] = useState<{ row: number; col: number } | null>(null);
   const max = Math.max(0, ...values.flatMap((r) => r));
   const step = CELL + GAP;
-  const W = PAD.l + columns.length * step + PAD.r;
+  const padL = Math.min(220, 16 + CHAR_W * Math.max(0, ...rows.map((r) => r.length)));
+  const W = padL + columns.length * step + PAD.r;
   const H = PAD.t + rows.length * step + PAD.b;
   const { tabIndex, onKeyDown, ref } = useRovingGrid(rows.length, columns.length, (r, c) => onDrill?.(rows[r]!, columns[c]!));
 
@@ -59,13 +64,13 @@ export function GridHeatmap({ rows, columns, values, ariaLabel, formatValue = St
         </div>
       ) : (
         <>
-          <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label={ariaLabel} className="chart heatmap">
+          <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="group" aria-label={ariaLabel} className="chart heatmap">
             {rows.map((r, ri) => (
-              <text key={r} className="axis" x={PAD.l - 8} y={PAD.t + ri * step + CELL - 2} textAnchor="end">{r}</text>
+              <text key={r} className="axis" x={padL - 8} y={PAD.t + ri * step + CELL - 2} textAnchor="end">{r}</text>
             ))}
             {columns.map((c, ci) =>
               ci % columnLabelEvery === 0 ? (
-                <text key={c} className="axis" x={PAD.l + ci * step} y={H - 4} textAnchor="start">{c}</text>
+                <text key={c} className="axis" x={padL + ci * step} y={H - 4} textAnchor="start">{formatColumn(c)}</text>
               ) : null,
             )}
             {rows.map((r, ri) =>
@@ -77,7 +82,7 @@ export function GridHeatmap({ rows, columns, values, ariaLabel, formatValue = St
                   role="button"
                   aria-label={summary(ri, ci)}
                   className={`cell heat-${heatStep(at(ri, ci), max)}`}
-                  x={PAD.l + ci * step}
+                  x={padL + ci * step}
                   y={PAD.t + ri * step}
                   width={CELL}
                   height={CELL}

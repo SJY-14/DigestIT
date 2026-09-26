@@ -26,7 +26,7 @@ export function PrimitivesGallery() {
       </section>
       <section>
         <h2>Grid heatmap</h2>
-        <GridHeatmap rows={galleryAreas} columns={galleryDays} values={galleryHeatmap} ariaLabel="Units touched per area per day" columnLabelEvery={1} />
+        <GridHeatmap rows={galleryAreas} columns={galleryDays} values={galleryHeatmap} ariaLabel="Units touched per area per day" columnLabelEvery={3} formatColumn={(c) => c.slice(5)} />
       </section>
       <section>
         <h2>Dot strip</h2>

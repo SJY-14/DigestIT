@@ -111,7 +111,7 @@ export function LineSeries({ categories, series, ariaLabel, formatValue = String
                   );
                 })}
                 {(i % 2 === categories.length % 2 || categories.length < 8) && (
-                  <text className="axis" x={px(i)} y={H - 6} textAnchor="middle">{formatCategory(c)}</text>
+                  <text className="axis" x={px(i)} y={H - 6} textAnchor={i === categories.length - 1 && i > 0 ? 'end' : 'middle'}>{formatCategory(c)}</text>
                 )}
               </g>
             ))}
