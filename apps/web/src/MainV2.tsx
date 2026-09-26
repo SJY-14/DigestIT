@@ -613,7 +613,8 @@ export function MainV2() {
   const onSelectNode = useCallback((node: GraphNode) => push({ node: node.id, area: null }), [push]);
   const onChipClick = useCallback((path: string) => push({ node: `f:${path}`, area: null }), [push]);
   const onClearFilter = useCallback(() => push({ node: null }), [push]);
-  const onOpenCode = useCallback((item: DigestL2Item) => push({ area: item.id }), [push]);
+  // On narrow screens the right pane sits in a collapsible section; open it so Code (L3) is visible.
+  const onOpenCode = useCallback((item: DigestL2Item) => { setGraphSectionOpen(true); push({ area: item.id }); }, [push]);
   const onBackToGraph = useCallback(() => push({ area: null }), [push]);
   const onExpandGraphNode = useCallback((path: string) => setExpand((prev) => (prev.includes(path) ? prev : [...prev, path])), []);
   const onToggleRow = useCallback((id: string) => {
