@@ -15,6 +15,12 @@ export const LIMITS = {
   digestAreaWords: 30,
   digestEffectWords: 20,
   digestIdMaxLen: 40,
+  areaWhyWords: 120,
+  areaDesignWords: 80,
+  areaRisksMax: 3,
+  areaRiskWords: 30,
+  areaNotesMax: 12,
+  areaNoteWords: 40,
 } as const;
 
 export const NO_CHANGE = 'No user-visible change';
@@ -52,7 +58,7 @@ export function stringArray(v: unknown): string[] | null {
   return Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null;
 }
 
-function lineIndex(files: readonly ProviderFile[]): Map<string, FileLines> {
+export function lineIndex(files: readonly ProviderFile[]): Map<string, FileLines> {
   const m = new Map<string, FileLines>();
   for (const f of files) if (f.patch !== null && f.filteredReason === null) m.set(f.path, indexPatch(f.patch));
   return m;

@@ -1,5 +1,5 @@
 import { ClaudeCodeProvider } from './claude-code.js';
-import type { ContextInput, ContextResult, ExplanationInput, ExplanationProvider, ProviderResult } from './provider.js';
+import type { AreaInput, AreaResult, ContextInput, ContextResult, ExplanationInput, ExplanationProvider, ProviderResult } from './provider.js';
 import { StubProvider } from './stub.js';
 
 export interface ExplainConfig {
@@ -47,6 +47,10 @@ export function withAllowlist(
     digest: inner.digest && ((input) => {
       if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
       return inner.digest!(input);
+    }),
+    explainArea: inner.explainArea && ((input: AreaInput): Promise<AreaResult> => {
+      if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
+      return inner.explainArea!(input);
     }),
   };
 }

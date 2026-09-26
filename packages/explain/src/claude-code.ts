@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type {
   AllLevels,
+  AreaInput,
+  AreaResult,
   BriefingFacts,
   BriefingResult,
   ContextInput,
@@ -20,6 +22,7 @@ import { buildRangePrompt, buildRollupPrompt } from './range.js';
 import { buildBriefingPrompt } from './briefing.js';
 import { buildContextPrompt } from './context.js';
 import { buildDigestPrompt } from './digest.js';
+import { buildAreaPrompt } from './area.js';
 
 export type SpawnFn = (cmd: string, args: string[]) => ChildProcessWithoutNullStreams;
 
@@ -119,6 +122,14 @@ export class ClaudeCodeProvider implements ExplanationProvider {
     if (!isObj(l1) || typeof l1.userVisible !== 'boolean' || !Array.isArray(l1.bullets)) throw new Error('invalid l1');
     if (!isObj(l2) || !Array.isArray(l2.items) || !Array.isArray(l2.notAnalysed)) throw new Error('invalid l2');
     return { levels: { l0, l1, l2 } as unknown as DigestResult['levels'], provider: this.id, model: this.model };
+  }
+
+  async explainArea(input: AreaInput): Promise<AreaResult> {
+    const v = parseJson(await this.call(buildAreaPrompt(input)));
+    if (typeof v.why !== 'string' || typeof v.design !== 'string' || !Array.isArray(v.risks) || !Array.isArray(v.notes)) {
+      throw new Error('invalid area explanation');
+    }
+    return { content: v as unknown as AreaResult['content'], provider: this.id, model: this.model };
   }
 
   /** Runs one prompt and returns the model's text result. */
