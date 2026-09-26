@@ -170,18 +170,18 @@ few runs, no warmup control) but the direction is clear enough to report.
 |---|---|
 | linux-x64 | **Tested** (this sandbox), see above |
 | linux-arm64 | Not tested. SEA has no cross-build story — the blob is injected into *this host's* `node` binary, so producing a linux-arm64 executable needs the script run on (or targeting a downloaded) linux-arm64 Node build. Same script should work unmodified with an arm64 `process.execPath`. |
-| macOS (x64/arm64) | Not tested (no macOS available here). SEA must be built **on** or **for** the target platform/arch — there's no cross-signing from Linux. The script's `codesign --remove-signature` / `codesign -s -` steps are written per Node's documented macOS SEA flow but unverified. Apple Silicon vs Intel are different binaries; building on the owner's own laptop (`arch: arm64` machines) is the simplest path — no toolchain beyond Node 24 + this repo needed. |
+| macOS (x64/arm64) | Not tested (no macOS available here). SEA must be built **on** or **for** the target platform/arch — there's no cross-signing from Linux. The script's `codesign --remove-signature` / `codesign -s -` steps are written per Node's documented macOS SEA flow but unverified. arm64 and x64 are different binaries; building on the target machine itself is the simplest path — no toolchain beyond Node 24 + this repo needed. |
 | Windows | Not evaluated — out of scope for "the owner's device" and not requested. |
 
-### How the owner would run it on their laptop
+### How the owner would run it on their device
 
 1. `git clone`, `pnpm install --frozen-lockfile`, `pnpm -r build` (needs
    Node 24 + pnpm, same as development).
 2. `node scripts/packaging/build-sea.mjs` — builds
-   `dist-sea/digest-darwin-arm64` (or `-x64` on Intel) using their own
+   `dist-sea/digest-darwin-<arch>` using their own
    machine's `node` binary, so no cross-compilation or codesigning-for-
    another-machine problem.
-3. `./dist-sea/digest-darwin-arm64 serve` — one file, no `node_modules`, no
+3. `./dist-sea/digest-darwin-<arch> serve` — one file, no `node_modules`, no
    `pnpm`. `digest ingest <repo>` / `digest watch <repo>` / `digest token
    init` all work the same way.
 4. First run may need "allow anyway" in Gatekeeper/Security & Privacy since
@@ -197,22 +197,10 @@ long-term (only to *build* the binary once).
 
 ### Availability in this sandbox
 
-Neither `docker` nor a functional `podman` is available:
-
-- `docker`: not on `PATH`.
-- `podman` 5.4.0 **is** installed, but every invocation (even `podman info`)
-  fails immediately with `Error: no such file or directory`, before doing
-  anything container-related. Diagnosed via `strace`: rootless user
-  namespaces work fine at the kernel level (`unshare --user
-  --map-root-user` succeeds) and the runtime helpers (`crun`, `conmon`,
-  `passt`, `slirp4netns`, `fuse-overlayfs`) are present, but there is no
-  `/etc/containers/` at all on this host (no `registries.conf`,
-  `storage.conf`, `policy.json`) and no writable `XDG_RUNTIME_DIR` — this
-  looks like a minimal image that never got podman's default config
-  installed, not something fixable from inside the repo workspace sandbox
-  (network/user/system config live outside it, and `/etc` isn't writable
-  here). Per the issue's instructions this is marked **unverified** rather
-  than worked around.
+Neither `docker` nor a usable `podman` was available in the environment
+the spike ran in (podman is present but has no container configuration
+there, and fixing that is outside the repo workspace). Per the issue's
+instructions the image is marked **unverified** rather than worked around.
 
 ### What's committed anyway
 
@@ -227,7 +215,14 @@ built app (`node bin/digest.js serve`), not the SEA binary — inside a
 container the SEA binary buys nothing, since the container already supplies
 the Node runtime; embedding it too would just duplicate ~120 MiB.
 
-**Reviewed by hand, not built or run.** Treat it as a well-informed draft,
+**Not built or run with a container engine.** CTO review found and fixed a
+startup crash: the runtime stage copied only the root `node_modules`, but pnpm
+links each package's dependencies (`fastify`, `@digestit/*`) under
+`<pkg>/node_modules`, so `digest serve` failed with `ERR_MODULE_NOT_FOUND`.
+The fix copies `apps/server`, `packages/explain` and `packages/ingest`
+`node_modules` too. It was checked by replaying the runtime stage's `COPY`
+lines into a plain directory and running `node bin/digest.js serve`
+(`/api/repos` and `/` both return 200). Treat it as a well-informed draft,
 not a verified artifact, until it's actually built somewhere with working
 container tooling.
 
@@ -238,11 +233,9 @@ spike does not touch that (architecture §6: the bind address is
 deliberately non-configurable, tailnet/token access is layered on top, see
 [architecture.md](architecture.md#6-security-posture)). Inside a container
 this has a real consequence: **`docker run -p 4780:4780` will not work** —
-the process only accepts connections whose socket-local address is loopback
-*inside the container's own network namespace*, and `-p` forwards from the
-host's namespace, which arrives as a different (non-loopback-looking, from
-the container's point of view it's fine actually — needs care either way)
-path depending on the network driver. Concretely: the safe, verified-in-
+`-p` forwards traffic to the container's own network interface, not to its
+loopback, so a process bound to `127.0.0.1` inside the container never sees
+it. Concretely: the safe, verified-in-
 spirit way to publish this container is `--network host` (Linux hosts
 only — Docker Desktop macOS/Windows don't support host networking the same
 way) so the container's `127.0.0.1:4780` *is* the host's loopback. The
@@ -256,10 +249,10 @@ bundled into a packaging spike.
 
 - **Primary artifact: the SEA binary.** It works end to end today, is
   simpler to hand to the owner than a container (no Docker Desktop install
-  on their laptop, no bind-address trade-off to explain), and the build
+  on their device, no bind-address trade-off to explain), and the build
   script is ~130 lines with no new dependencies in the lockfile.
 - **Keep the Dockerfile** as a documented starting point for whenever this
-  needs to run on a shared server instead of a laptop, but don't treat it
+  needs to run on a shared host instead of the owner's device, but don't treat it
   as done — it needs an actual build+run pass (in CI or anywhere with
   working container tooling) before anyone relies on it.
 - Don't invest further in packaging until one of these is picked as the real
@@ -291,3 +284,10 @@ bundled into a packaging spike.
 - **`DIGESTIT_BIND`**: if container deployment becomes real, the loopback-
   only bind vs. `-p` publishing trade-off needs an actual decision (host
   networking only, vs. a reviewed change to `serve.ts` + architecture §6).
+- **SEA temp directory**: every `digest serve` start extracts the web
+  assets to a new `digestit-web-*` temp directory and never removes it.
+  Before this ships, extract to a content-hashed directory that is reused
+  across starts (or serve straight from the SEA assets).
+- **One dispatcher**: `sea-entry.mjs` duplicates `bin/digest.js` and the
+  serve CLI. If the SEA becomes a release artifact, have both call one
+  shared entry so they can't drift.
