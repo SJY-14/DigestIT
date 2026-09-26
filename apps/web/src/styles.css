@@ -296,3 +296,34 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
   .cell.heat-1, .cell.heat-2, .cell.heat-3, .cell.heat-4 { stroke: CanvasText; stroke-width: 1; }
   .median-tick { stroke: CanvasText; }
 }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* --- project graph pane (DIG-42): folders/files as nodes, containment as edges ------------ */
+.project-graph { display: flex; flex-direction: column; }
+.graph-controls { display: flex; gap: 8px; margin-bottom: 8px; }
+.graph-zoom { width: 28px; padding: 0; font-size: 16px; line-height: 1; }
+.graph-canvas { width: 100%; height: auto; aspect-ratio: 1; display: block; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 6px; touch-action: none; }
+.graph-edge { stroke: var(--border); stroke-width: 1; }
+.graph-node.clickable { cursor: pointer; }
+.graph-node .graph-shape { fill: var(--muted); opacity: 0.6; stroke: none; }
+.graph-node.folder .graph-shape { opacity: 0.75; }
+.graph-node .graph-ring { fill: none; stroke: var(--muted); stroke-width: 1.5; opacity: 0.6; }
+.graph-node.changed .graph-shape { fill: var(--accent); opacity: 1; }
+.graph-node.changed .graph-ring { stroke: var(--accent); opacity: 1; }
+.graph-node.deleted .graph-shape { fill: none; stroke: var(--del); stroke-width: 2; stroke-dasharray: 3 2; }
+.graph-node.shape-box .graph-shape { fill: var(--bg); stroke: var(--muted); stroke-width: 1.5; }
+.graph-node.shape-box.changed .graph-shape { stroke: var(--accent); }
+.graph-node .graph-count { font-size: 9px; fill: var(--muted); user-select: none; }
+.graph-node.dimmed { opacity: 0.35; }
+.graph-node .graph-hilite-ring { fill: none; stroke: var(--fg); stroke-width: 2; }
+.graph-node .graph-label { font-size: 10px; fill: var(--fg); user-select: none; }
+.graph-note { margin-top: 8px; }
+@media (forced-colors: active) {
+  .graph-node .graph-shape { stroke: CanvasText; stroke-width: 1; }
+  .graph-node.changed .graph-shape { fill: LinkText; }
+  .graph-node .graph-hilite-ring { stroke: Highlight; }
+}
