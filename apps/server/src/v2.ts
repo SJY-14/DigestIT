@@ -13,7 +13,7 @@ import {
 } from '@digestit/core';
 import {
   DEFAULT_DAILY_BUDGET, ProjectLockedError, budgetStatus, explainProject, initProject,
-  isExplaining, latestCheckpoint, listProjects, listTree, openShadow, projectDataDir,
+  latestCheckpoint, listProjects, listTree, openShadow, projectDataDir,
   projectStatus, retryDigest, type ProjectRow,
 } from '@digestit/ingest';
 import {
