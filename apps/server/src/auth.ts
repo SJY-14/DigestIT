@@ -1,4 +1,4 @@
-import { chmodSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { parseArgs } from 'node:util';
 
@@ -58,6 +58,29 @@ export function tokensMatch(a: string, b: string): boolean {
 
 export function generateToken(): string {
   return randomBytes(32).toString('base64url');
+}
+
+export interface WriteTokenResult {
+  token: string;
+  /** True the first time this file is created — the caller prints the login URL once. */
+  created: boolean;
+}
+
+/**
+ * The write-token file (v2 direction, docs/direction-v2.md §4): write endpoints always require a
+ * token, even on plain loopback with no `DIGESTIT_ALLOWED_HOSTS`. Reuses the same 0600
+ * atomic-write-then-rename as `runTokenCli` so the token is never briefly world/group-readable.
+ * Idempotent: an existing valid file is reused as-is (restarting `digest serve` must not
+ * invalidate a token a browser tab already has).
+ */
+export function resolveOrCreateWriteToken(path: string): WriteTokenResult {
+  if (existsSync(path)) return { token: loadTokenFile(path), created: false };
+  const token = generateToken();
+  const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
+  writeFileSync(tmp, `${token}\n`, { mode: 0o600, flag: 'wx' });
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, path);
+  return { token, created: true };
 }
 
 export const TOKEN_USAGE =
