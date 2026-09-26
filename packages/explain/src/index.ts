@@ -13,3 +13,4 @@ export * from './range.js';
 export * from './briefing.js';
 export * from './context.js';
 export * from './digest.js';
+export * from './area.js';

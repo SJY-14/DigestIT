@@ -1,7 +1,8 @@
 import { NO_CHANGE, NO_VISIBLE_CHANGE, truncateWords } from './validate.js';
+import { indexPatch } from './difflines.js';
 import type {
-  BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult, DigestInput, DigestResult,
-  ExplanationInput, ExplanationProvider, ProviderFile, ProviderResult, RangeInput, RollupInput, RollupResult,
+  AreaInput, AreaResult, BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult, DigestInput,
+  DigestResult, ExplanationInput, ExplanationProvider, ProviderFile, ProviderResult, RangeInput, RollupInput, RollupResult,
 } from './provider.js';
 
 function firstSentence(text: string): string {
@@ -167,6 +168,26 @@ export class StubProvider implements ExplanationProvider {
           notAnalysed: skipped.map((f) => `${f.path} (${f.filteredReason})`),
         },
       },
+    };
+  }
+
+  /** Deterministic placeholder: carries the area's own how/why through, one note per file at its first diff line. */
+  async explainArea(input: AreaInput): Promise<AreaResult> {
+    const analysed = input.files.filter((f) => f.filteredReason === null && f.patch !== null);
+    const notes = analysed.slice(0, 3).flatMap((f) => {
+      const lines = indexPatch(f.patch!);
+      const newFirst = [...lines.newLines].sort((a, b) => a - b)[0];
+      const oldFirst = [...lines.oldLines].sort((a, b) => a - b)[0];
+      const side: 'new' | 'old' = newFirst !== undefined ? 'new' : 'old';
+      const line = newFirst ?? oldFirst;
+      if (line === undefined) return [];
+      const verb = f.status === 'D' ? 'Removed' : f.status === 'A' ? 'Added' : 'Changed';
+      return [{ path: f.path, side, startLine: line, endLine: line, note: `${verb} here.` }];
+    });
+    return {
+      provider: this.id,
+      model: this.model,
+      content: { why: input.area.why, design: input.area.how, risks: [], notes },
     };
   }
 }

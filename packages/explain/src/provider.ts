@@ -1,4 +1,5 @@
 import type {
+  AreaL3Content,
   DigestL2Content,
   L0Content,
   L1Content,
@@ -225,6 +226,26 @@ export interface DigestResult {
   model: string;
 }
 
+/**
+ * Prepared input for one L2 area's lazy L3 (DIG-37): only that area's own
+ * files (already filtered, budgeted and redacted), plus the digest's L0/L1
+ * and this area's own L2 item as grounding, and the compact project context.
+ */
+export interface AreaInput {
+  repoName: string;
+  context?: string;
+  digest: { l0: string; l1Bullets: string[] };
+  area: { id: string; title: string; effect: string; how: string; why: string };
+  files: ProviderFile[];
+  retryFeedback?: string[];
+}
+
+export interface AreaResult {
+  content: AreaL3Content;
+  provider: string;
+  model: string;
+}
+
 export interface ExplanationProvider {
   readonly id: string;
   readonly model: string;
@@ -240,4 +261,6 @@ export interface ExplanationProvider {
   explainContext?(input: ContextInput): Promise<ContextResult>;
   /** One call returns L0 + L1 + L2 areas for a digest. */
   digest?(input: DigestInput): Promise<DigestResult>;
+  /** One call returns the lazy L3 (why/design/risks/notes) for one L2 area. */
+  explainArea?(input: AreaInput): Promise<AreaResult>;
 }
