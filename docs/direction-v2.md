@@ -19,8 +19,10 @@ marked **(rec.)** below, and the build starts on that option.
 | `explain_call.reason` + `digest`, `area`, `context` | Every LLM call is counted against the one daily budget. |
 
 The types and API DTOs are in `packages/core/src/v2.ts`. `explanation` level 2 for a digest uses
-`DigestL2Content`: `items[{ id, paths[], title, how, why }]`. Each `id` is the key the UI clicks to
-request L3.
+`DigestL2Content`: `items[{ id, paths[], title, effect, how, why }]`. `title` is the area's L0 (one
+line), `effect` its L1 (what a user notices), and `how`/`why` its L2. Each `id` is the key the UI
+clicks to request L3. The project graph (§5) is derived per request from the checkpoint tree and
+has no table.
 
 ## 2. Shadow tracking (O1)
 
@@ -70,8 +72,8 @@ daily budget.
 `digest explain` / `POST /api/projects/:id/explain`:
 1. Take a snapshot. If the tree is unchanged, reply "no changes since last check" (no LLM call, no checkpoint).
 2. Record the checkpoint and the digest, with its `file_change` rows.
-3. If the budget allows: one call returns **L0, L1 and L2**. L2 has 1–8 areas, each saying how
-   the code changed and why, with a stable `id`. If the budget is exhausted or the call fails,
+3. If the budget allows: one call returns **L0, L1 and L2**. L2 has 1–8 areas, each with a
+   one-line title, what a user notices, how the code changed and why, and a stable `id`. If the budget is exhausted or the call fails,
    the digest still exists with status `pending`/`error` and can be retried later.
 
 Click an L2 area → `POST /api/digests/:id/areas/:areaId/explain`. The response is cached per
@@ -96,12 +98,40 @@ can register any path; running it is the consent to send that project's (redacte
 
 `/` shows the project bar: switcher, path, context status (built at, from N files, user `.md`
 yes/no, Refresh), the budget meter, and a primary **Explain changes since last check** button with
-the pending count. Below it is the digest timeline, newest first: L0, time span, ±stats. A digest
-opens as L0 → L1 → L2 area cards. Clicking a card expands its L3: a why/design/risks block, then
-the diff. Hunks of ≤ 20 lines show inline with their notes beside the anchored lines. Longer hunks
-are folded to the annotated lines ±3, with "Expand" per fold and "Show all" per file. With no project,
-`/` shows setup: path, optional context `.md`, Start. The old commit timeline and Insights move to a
-secondary "History" menu. DIG-11 visual language, no CDN.
+the pending count. With no project, `/` shows setup: path, optional context `.md`, Start. The old
+commit timeline and Insights move to a secondary "History" menu. DIG-11 visual language, no CDN.
+
+Below the bar the digest view has **two panes** (Board addition, 2026-09-26). On narrow screens
+they stack, with the list first.
+- **Left: the change list.** The digest's L0 and L1 come first, then one GitHub-style row per L2 area:
+  title (L0), effect (L1) in one short line, path chips and ±stats. A digest picker above the list
+  (newest first: L0, time span, ±stats, status) opens past digests. A row expands in place to its
+  how/why (L2) and a **Code (L3)** button.
+- **Right: the project graph.** Folders and files are nodes, and containment is shown as links
+  (Obsidian-like feel). Nodes changed in this digest are filled with the accent blue, sized by
+  √(lines changed), and everything else is muted gray. Blue means "changed" and nothing else, with
+  no glow. `GET /api/digests/:id/graph` builds it deterministically (`core/graph.ts`, no LLM). The
+  path set is the `to` checkpoint's tree plus deleted files. Unchanged subtrees fold into one folder
+  node, and folders along changed paths are open. Large runs of unchanged files become one
+  "N files" node. A 400-node cap folds the deepest changed folders first and says so. Clicking a
+  folded node re-fetches with `?expand=`. Layout: `d3-force` (pinned, local, the only new
+  dependency), seeded radially from the tree and run to a fixed tick count, with no animation.
+  Rendering is SVG with pan/zoom, **Fit to changes** (the default) and Fit all.
+- **Linking.** Hovering or focusing a row rings its nodes and dims the rest. Clicking a lit node
+  selects it: the list filters to the areas touching that folder or file, under a header showing
+  the node's path and stats. That header plus the filtered rows is the node's L0 → L1 → L2, taken
+  from the areas, so there is no extra LLM call per node. A chip clears the filter. **Code (L3)**
+  swaps the right pane from the graph to the area's L3 view (§4: why/design/risks, then the diff).
+  If a file node was selected, that file is scrolled to and opened first. Hunks of ≤ 20 lines show
+  inline with their notes, longer ones fold to the annotated lines ±3 with "Expand" per fold and
+  "Show all" per file. "Back to graph" returns. L3 stays per area and cached. A file's L3 is its
+  area's L3 focused on that file.
+- **Accessibility.** The list is the keyboard and screen-reader path to everything. The graph
+  drawing is `aria-hidden`, its controls are buttons, and it never holds information the list
+  doesn't have. Path chips on the rows give the same filter as clicking a node.
+- **Later.** Edges carry a `kind`. Today only `contains` exists; `imports` and `cochange` can be
+  added later without changing nodes or the component, which ignores kinds it doesn't know.
+  URL state: `?project=&digest=&node=&area=`.
 
 ## 6. Migration from the current model
 
