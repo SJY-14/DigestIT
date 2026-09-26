@@ -34,13 +34,15 @@ request L3.
 2. Drop the entries on the default denylist (the shadow's `info/exclude`: `.env*`, `*.pem`/`*.key`/`id_*`/`*.p12`,
    credentials files, `.npmrc`/`.netrc`, `node_modules/`, `dist/`, `build/`, `.venv/`, `target/`, …)
    and files over the size cap (default 1 MiB). Record the reason for each dropped file in `checkpoint.skipped`.
-3. `add --pathspec-from-file` (NUL-separated) → `write-tree` → `commit-tree` (parent = previous
-   checkpoint) → `update-ref refs/digestit/cp/<seq>`. Uncommitted and untracked work is included.
+3. `add --pathspec-from-file` (NUL-separated) plus staging of deletions → `write-tree` →
+   `update-ref refs/digestit/cp/<seq> <tree>`. A checkpoint is a **tree object**, not a commit, so
+   the store never needs a git identity (`checkpoint.shadow_sha` = `tree_sha`). Uncommitted and
+   untracked work is included.
 
 Denylisted files never enter the store, so secrets are not even copied into the data dir. The
 user's `.git` is never read for content and never written. Git always skips any `.git` directory
 in the work tree, and nested repos are listed as not analysed. The diff is `diff-tree -p -M` between
-two checkpoint commits, parsed by the existing `ingest/git.ts` parser into `file_change`, then prepared
+two checkpoint trees, parsed by the existing `ingest/git.ts` parser into `file_change`, then prepared
 by the existing `prepare.ts` (filter, budget, redact). A cheap "pending changes" count
 (`diff --numstat` of the work tree against the last checkpoint) runs without any LLM call, so the UI
 can show "12 files changed since last check". `git gc --auto` runs after a snapshot.
