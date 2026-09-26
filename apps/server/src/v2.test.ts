@@ -384,6 +384,22 @@ describe('GET /api/digests/:id/graph', () => {
     expect(body.digestId).toBe(d2);
   });
 
+  it('accepts repeated ?expand= query params as an array', async () => {
+    const { app, d2 } = await twoDigests();
+    const res = await get(app, `/api/digests/${d2}/graph?expand=src&expand=`);
+    expect(res.statusCode).toBe(200);
+    const opened = res.json().nodes.find((n: { id: string }) => n.id === 'd:src');
+    expect(opened.collapsed).toBe(false);
+  });
+
+  it('400s more than 20 expand values', async () => {
+    const { app, d1 } = await twoDigests();
+    const qs = Array.from({ length: 21 }, () => 'expand=src').join('&');
+    const res = await get(app, `/api/digests/${d1}/graph?${qs}`);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('too_many_expand');
+  });
+
   it('accepts a valid expand and is served from cache on the next identical request', async () => {
     const { app, d1 } = await twoDigests();
     const first = await get(app, `/api/digests/${d1}/graph?expand=src`);
