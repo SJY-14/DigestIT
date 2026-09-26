@@ -1,5 +1,29 @@
 # Roadmap
 
+## Direction v2 — standalone project digester (current priority)
+
+Board direction DIG-33 (2026-09-26): select a project folder → build its context → the user works
+with any AI tool → **Explain** describes what changed since the last check (a *digest*) at L0/L1,
+with clickable L2 areas and on-demand L3 (why + folded diffs). It supersedes the open M3 work.
+Design: [direction-v2.md](direction-v2.md). Open decisions O1–O3 are with the Board. The build
+starts on the recommended options.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-33 | Design doc, migration 6, `core/v2.ts` types + API DTOs | CTO | — |
+| 1 | DIG-34 | Shadow store (snapshots in the data dir, no writes to the project) | Diff engineer | — |
+| 2 | DIG-35 | Digest L0/L1/L2 areas (how + why) in one call | Summarization engineer | — |
+| 3 | DIG-36 | Project context builder (map + 1 call + optional user `.md`) | Summarization engineer | — |
+| 4 | DIG-37 | Lazy L3 per area (why/design/risks + anchored notes) | Summarization engineer | DIG-35 |
+| 5 | DIG-38 | Project registry, data dir, `digest init/projects/status/explain` | Diff engineer | DIG-34, DIG-35 |
+| 6 | DIG-39 | API v2 + token-only writes + wiring | Diff engineer | DIG-38, DIG-36, DIG-37 |
+| 7 | DIG-40 | Main screen v2 (project bar, budget, Explain, digest timeline, L0→L2) | Frontend engineer | — (fixture API until DIG-39) |
+| 8 | DIG-41 | L3 area view with folded diffs and "Show all" | Frontend engineer | — |
+
+Done when the owner runs `digest init` on a folder, edits it with any tool, presses Explain in
+the dashboard, gets a digest with L0/L1/L2, and clicks an area to get its L3. The daily budget is
+shown and enforced, and nothing is written into the project.
+
 ## Milestone 1 — MVP: explain DigestIT's own history
 
 Done when the owner opens the dashboard over Tailscale (port 4780), sees this repo's commits on a
@@ -76,7 +100,10 @@ Design and acceptance scope: [milestone-2.md](milestone-2.md). Approved by the B
 | 7 | DIG-19 | Live dashboard + `/metrics` | Frontend engineer | DIG-17, DIG-18, DIG-9, DIG-11 |
 | 8 | DIG-20 | *(gated)* Paperclip read-only enrichment | — | separate Board approval |
 
-## Milestone 3 — thinking aids
+## Milestone 3 — thinking aids (paused by direction v2)
+
+Re-planned under DIG-33: DIG-25/26/27 are done and stay in the code. DIG-28 and DIG-30 are deferred
+(their branches are kept). DIG-29 and DIG-31 are cancelled.
 
 Daily/weekly briefing, digest dashboard, change map and review blind spots, all built from stored
 data with drill-down to L0–L3. Design and acceptance scope: [milestone-3.md](milestone-3.md).
