@@ -82,24 +82,25 @@ export async function readCommit(repo: string, sha: string): Promise<GitCommit> 
 const STATUS_MAP: Record<string, ChangeStatus> = { A: 'A', M: 'M', D: 'D', R: 'R', T: 'M', C: 'A' };
 
 /** Splits `-z` output into NUL-separated fields. */
-const nul = (s: string): string[] => {
+export const nul = (s: string): string[] => {
   const parts = s.split('\0');
   if (parts.at(-1) === '') parts.pop();
   return parts;
 };
 
-const DIFF_FLAGS = ['--no-ext-diff', '--no-textconv', '--no-color', '-M', '-r'] as const;
+export const DIFF_FLAGS = ['--no-ext-diff', '--no-textconv', '--no-color', '-M', '-r'] as const;
 
-/**
- * Files changed by `sha` against its first parent (or the empty tree for a
- * root commit), with numstat and one patch per file. Merges therefore show
- * what the merge brought in relative to the branch it landed on.
- */
-export async function readFiles(repo: string, sha: string, firstParent: string | null): Promise<GitFile[]> {
-  const target = firstParent ? [firstParent, sha] : ['--root', sha];
+export interface DiffRawEntry {
+  path: string;
+  oldPath: string | null;
+  status: ChangeStatus;
+  typeChange: boolean;
+}
 
-  const raw = nul(await git(repo, ['diff-tree', ...DIFF_FLAGS, '--raw', '-z', ...target]));
-  const entries: { path: string; oldPath: string | null; status: ChangeStatus; typeChange: boolean }[] = [];
+/** Parses `diff-tree --raw -z` (or `diff --raw -z`) output. */
+export function parseDiffRaw(rawText: string): DiffRawEntry[] {
+  const raw = nul(rawText);
+  const entries: DiffRawEntry[] = [];
   for (let i = 0; i < raw.length; ) {
     // Root form without a parent prints the commit id first.
     if (!raw[i]!.startsWith(':')) { i++; continue; }
@@ -113,9 +114,20 @@ export async function readFiles(repo: string, sha: string, firstParent: string |
       i += 2;
     }
   }
-  if (entries.length === 0) return [];
+  return entries;
+}
 
-  const numstat = nul(await git(repo, ['diff-tree', ...DIFF_FLAGS, '--numstat', '-z', ...target]));
+/**
+ * Combines raw entries with `--numstat -z` output and a `-p` patch stream (as split by
+ * `splitPatch`) into `GitFile[]`. `label` is only used in the mismatch error message.
+ */
+export function combineDiffTree(
+  entries: DiffRawEntry[],
+  numstatText: string,
+  patchText: string,
+  label: string,
+): GitFile[] {
+  const numstat = nul(numstatText);
   const counts = new Map<string, { add: number; del: number; binary: boolean }>();
   for (let i = 0; i < numstat.length; ) {
     const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(numstat[i]!);
@@ -131,12 +143,11 @@ export async function readFiles(repo: string, sha: string, firstParent: string |
     }
   }
 
-  const patchText = await git(repo, ['diff-tree', ...DIFF_FLAGS, '-p', ...target]);
   const patches = splitPatch(patchText);
   // A type change (file <-> symlink) is printed as a delete section plus an add section.
   const expected = entries.reduce((n, e) => n + (e.typeChange ? 2 : 1), 0);
   if (patches.length !== expected) {
-    throw new Error(`patch/file count mismatch for ${sha}: ${patches.length} vs ${expected}`);
+    throw new Error(`patch/file count mismatch for ${label}: ${patches.length} vs ${expected}`);
   }
 
   let p = 0;
@@ -153,6 +164,22 @@ export async function readFiles(repo: string, sha: string, firstParent: string |
       patch: c.binary ? null : patch,
     };
   });
+}
+
+/**
+ * Files changed by `sha` against its first parent (or the empty tree for a
+ * root commit), with numstat and one patch per file. Merges therefore show
+ * what the merge brought in relative to the branch it landed on.
+ */
+export async function readFiles(repo: string, sha: string, firstParent: string | null): Promise<GitFile[]> {
+  const target = firstParent ? [firstParent, sha] : ['--root', sha];
+
+  const entries = parseDiffRaw(await git(repo, ['diff-tree', ...DIFF_FLAGS, '--raw', '-z', ...target]));
+  if (entries.length === 0) return [];
+
+  const numstatText = await git(repo, ['diff-tree', ...DIFF_FLAGS, '--numstat', '-z', ...target]);
+  const patchText = await git(repo, ['diff-tree', ...DIFF_FLAGS, '-p', ...target]);
+  return combineDiffTree(entries, numstatText, patchText, sha);
 }
 
 /** Content lines always start with ' ', '+', '-', '@' or '\', so a "diff --git " line is a file boundary. */
