@@ -1,7 +1,7 @@
-import { NO_CHANGE, truncateWords } from './validate.js';
+import { NO_CHANGE, NO_VISIBLE_CHANGE, truncateWords } from './validate.js';
 import type {
-  BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult, ExplanationInput, ExplanationProvider,
-  ProviderResult, RangeInput, RollupInput, RollupResult,
+  BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult, DigestInput, DigestResult,
+  ExplanationInput, ExplanationProvider, ProviderFile, ProviderResult, RangeInput, RollupInput, RollupResult,
 } from './provider.js';
 
 function firstSentence(text: string): string {
@@ -112,6 +112,60 @@ export class StubProvider implements ExplanationProvider {
         modules,
         glossary: manifestNames.slice(0, 5).map((n) => ({ term: n, meaning: 'a package in this project' })),
         conventions: map.manifests.flatMap((m) => m.scripts ?? []).slice(0, 10).map((s) => `Run "${s}" via the package manager.`),
+      },
+    };
+  }
+
+  /** Deterministic areas: one per top-level directory of the analysed files (root files grouped as `(root)`). */
+  async digest(input: DigestInput): Promise<DigestResult> {
+    const analysed = input.files.filter((f) => f.filteredReason === null);
+    const skipped = input.files.filter((f) => f.filteredReason !== null);
+    const additions = input.files.reduce((n, f) => n + f.additions, 0);
+    const deletions = input.files.reduce((n, f) => n + f.deletions, 0);
+
+    const groups = new Map<string, ProviderFile[]>();
+    for (const f of analysed) {
+      const slash = f.path.indexOf('/');
+      const top = slash < 0 ? '(root)' : f.path.slice(0, slash);
+      const g = groups.get(top);
+      if (g) g.push(f);
+      else groups.set(top, [f]);
+    }
+    const seenIds = new Set<string>();
+    const items = [...groups.entries()].slice(0, 8).map(([dir, files]) => {
+      const a = files.reduce((n, f) => n + f.additions, 0);
+      const d = files.reduce((n, f) => n + f.deletions, 0);
+      const base = dir.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'root';
+      let id = base;
+      for (let n = 2; seenIds.has(id); n++) id = `${base}-${n}`;
+      seenIds.add(id);
+      const isTestsOrDocs = files.every((f) => /(^|\/)(tests?|docs?|__tests__)(\/|$)/i.test(f.path));
+      return {
+        id,
+        paths: files.map((f) => f.path),
+        title: truncateWords(`Changes in ${dir}`, 8),
+        effect: isTestsOrDocs ? NO_VISIBLE_CHANGE : 'Behavior in this area of the app may have changed.',
+        how: `${files.length} file(s) touched, +${a} -${d} lines.`,
+        why: 'reason not evident from the change',
+      };
+    });
+
+    return {
+      provider: this.id,
+      model: this.model,
+      levels: {
+        l0: { text: `${input.files.length} file(s) changed, +${additions} / -${deletions} lines.` },
+        l1: {
+          userVisible: false,
+          bullets: [
+            NO_CHANGE,
+            `Touches ${input.files.length} file(s) across ${groups.size} area(s).`,
+          ],
+        },
+        l2: {
+          items,
+          notAnalysed: skipped.map((f) => `${f.path} (${f.filteredReason})`),
+        },
       },
     };
   }

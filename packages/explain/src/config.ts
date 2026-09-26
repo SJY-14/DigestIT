@@ -44,6 +44,10 @@ export function withAllowlist(
       if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
       return inner.explainContext!(input);
     }),
+    digest: inner.digest && ((input) => {
+      if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
+      return inner.digest!(input);
+    }),
   };
 }
 

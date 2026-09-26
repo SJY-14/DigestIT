@@ -1,4 +1,11 @@
-import type { L0Content, L1Content, L2Content, L3Content, ProjectContextContent } from '@digestit/core';
+import type {
+  DigestL2Content,
+  L0Content,
+  L1Content,
+  L2Content,
+  L3Content,
+  ProjectContextContent,
+} from '@digestit/core';
 
 export interface ProviderFile {
   path: string;
@@ -194,6 +201,30 @@ export interface ContextResult {
   model: string;
 }
 
+/**
+ * Prepared input for a digest (changes between two checkpoints, no commit
+ * messages). `context` is the compact project description, when built (DIG-36).
+ */
+export interface DigestInput {
+  repoName: string;
+  files: ProviderFile[];
+  context?: string;
+  retryFeedback?: string[];
+}
+
+export interface DigestLevels {
+  l0: L0Content;
+  l1: L1Content;
+  /** 1-8 clickable areas; no L3 here, it is lazy per area (DIG-37). */
+  l2: DigestL2Content;
+}
+
+export interface DigestResult {
+  levels: DigestLevels;
+  provider: string;
+  model: string;
+}
+
 export interface ExplanationProvider {
   readonly id: string;
   readonly model: string;
@@ -207,4 +238,6 @@ export interface ExplanationProvider {
   briefing?(input: BriefingFacts): Promise<BriefingResult>;
   /** One call returns the project's purpose, key modules, glossary and conventions. */
   explainContext?(input: ContextInput): Promise<ContextResult>;
+  /** One call returns L0 + L1 + L2 areas for a digest. */
+  digest?(input: DigestInput): Promise<DigestResult>;
 }
