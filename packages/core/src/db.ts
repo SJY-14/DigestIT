@@ -256,6 +256,11 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX project_context_repo ON project_context(repo_id, created_at);
   `,
+  // DIG-39 (API v2): ContextStatusDto.fromFiles has no source in migration 6's project_context
+  // row, since the built ProjectMap itself is never persisted (only its content/status/hashes).
+  `
+  ALTER TABLE project_context ADD COLUMN from_files INTEGER;
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {
