@@ -74,12 +74,24 @@ export interface UserGitInfo {
   branch: string | null;
 }
 
+/**
+ * Drops every inherited `GIT_*` var before we set our own: an inherited `GIT_OBJECT_DIRECTORY`,
+ * `GIT_ALTERNATE_OBJECT_DIRECTORIES` or `GIT_NAMESPACE` would otherwise redirect the shadow store.
+ */
+const stripGitEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) if (!k.startsWith('GIT_')) out[k] = v;
+  return out;
+};
+
 const baseEnv = (): NodeJS.ProcessEnv => ({
-  ...process.env,
+  ...stripGitEnv(process.env),
   GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_OPTIONAL_LOCKS: '0',
   GIT_PAGER: 'cat',
+  // A file named `*.log` or `:(icase)x` must never be read as a glob or pathspec magic.
+  GIT_LITERAL_PATHSPECS: '1',
 });
 
 /** Runs git for the shadow's own store: `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` always set. */
@@ -169,8 +181,11 @@ async function removePaths(shadow: Shadow, paths: readonly string[]): Promise<vo
 const isDirBoundary = (path: string): boolean => path.endsWith('/');
 
 interface Categorized {
-  /** Every untracked path, `.gitignore` and the denylist both ignored (for denylist reporting). */
-  rawOthers: string[];
+  /**
+   * Untracked-or-ignored paths, `--directory`-collapsed: a whole ignored directory (e.g.
+   * `node_modules/`) is one entry, not one per file underneath. Used only for denylist reporting.
+   */
+  ignored: string[];
   /** Untracked, respecting the project's own `.gitignore` (and, redundantly, the denylist). */
   keptOthers: string[];
   modified: string[];
@@ -178,15 +193,15 @@ interface Categorized {
 }
 
 async function listCategorized(shadow: Shadow): Promise<Categorized> {
-  const [rawOut, keptOut, modifiedOut, deletedOut] = await Promise.all([
-    runGit(shadow, ['ls-files', '-z', '--others']),
+  const [ignoredOut, keptOut, modifiedOut, deletedOut] = await Promise.all([
+    runGit(shadow, ['ls-files', '-z', '--others', '--ignored', '--directory', '--exclude-standard']),
     runGit(shadow, ['ls-files', '-z', '--others', '--exclude-standard']),
     runGit(shadow, ['ls-files', '-z', '--modified']),
     runGit(shadow, ['ls-files', '-z', '--deleted']),
   ]);
   const noDotGit = (paths: string[]) => paths.filter((p) => !p.split('/').includes('.git'));
   return {
-    rawOthers: noDotGit(nul(rawOut)),
+    ignored: noDotGit(nul(ignoredOut)),
     keptOthers: noDotGit(nul(keptOut)),
     modified: noDotGit(nul(modifiedOut)),
     deleted: noDotGit(nul(deletedOut)),
@@ -201,25 +216,36 @@ interface ChangeSet {
 
 /**
  * Applies the denylist and size cap to the candidates found by {@link listCategorized}.
- * `rawOthers` (not `keptOthers`) is walked for untracked files: `keptOthers` already had the
- * denylist silently subtracted via `info/exclude`, so it can't tell a denylisted file from one
- * dropped by the project's own `.gitignore` — the former must be named in `skipped`, the latter not.
+ *
+ * Denylisted-but-untracked paths are read from `ignored` (git's own `--ignored --directory`
+ * listing) rather than walked file-by-file: a project with 15k files under `node_modules/`
+ * produces one `skipped` entry (`node_modules`), not fifteen thousand. A nested repo that sits
+ * inside a gitignored directory is never reported, since it never reaches `keptOthers` either —
+ * we only care about a nested repo we would otherwise have tried to walk into.
+ *
+ * A tracked file that grows past the cap or becomes unreadable keeps its previous index entry
+ * (neither added nor removed), so `diff()` never shows a false delete for a size hiccup. A tracked
+ * file that turns denylisted is the one case that *is* removed, to scrub it from the store.
  */
 async function computeChanges(shadow: Shadow): Promise<ChangeSet> {
-  const { rawOthers, keptOthers, modified, deleted } = await listCategorized(shadow);
-  const kept = new Set(keptOthers);
+  const { ignored, keptOthers, modified, deleted } = await listCategorized(shadow);
   const toAdd: string[] = [];
   const toDelete: string[] = [...deleted];
   const skipped: SkippedFile[] = [];
 
+  for (const path of ignored) {
+    if (matchesDenylist(path)) {
+      skipped.push({ path: isDirBoundary(path) ? path.slice(0, -1) : path, reason: 'denylist' });
+    }
+  }
+
   const checkOne = async (path: string, tracked: boolean): Promise<void> => {
     if (isDirBoundary(path)) { skipped.push({ path: path.slice(0, -1), reason: 'nested_repo' }); return; }
     if (matchesDenylist(path)) {
-      skipped.push({ path, reason: 'denylist' });
-      if (tracked) toDelete.push(path);
+      // Untracked denylist matches were already reported above, from the collapsed `ignored` list.
+      if (tracked) { skipped.push({ path, reason: 'denylist' }); toDelete.push(path); }
       return;
     }
-    if (!tracked && !kept.has(path)) return; // dropped by the project's own .gitignore; not reported
     const abs = join(shadow.projectRoot, path);
     let stat;
     try {
@@ -227,19 +253,17 @@ async function computeChanges(shadow: Shadow): Promise<ChangeSet> {
       if (stat.isFile()) await access(abs, fsConstants.R_OK);
     } catch {
       skipped.push({ path, reason: 'unreadable' });
-      if (tracked) toDelete.push(path);
-      return;
+      return; // leave a tracked file's previous index entry alone; there's nothing to add for a new one
     }
     if (stat.isFile() && stat.size > shadow.maxFileBytes) {
       skipped.push({ path, reason: 'too_large' });
-      if (tracked) toDelete.push(path);
-      return;
+      return; // ditto
     }
     toAdd.push(path);
   };
 
   await Promise.all([
-    ...rawOthers.map((p) => checkOne(p, false)),
+    ...keptOthers.map((p) => checkOne(p, false)),
     ...modified.map((p) => checkOne(p, true)),
   ]);
   return { toAdd, toDelete, skipped };
@@ -251,13 +275,22 @@ async function nextSeq(shadow: Shadow): Promise<number> {
   return seqs.length ? Math.max(...seqs) + 1 : 1;
 }
 
-/**
- * Snapshots the current work tree (tracked, untracked and deleted files, minus the denylist and
- * oversized files) as a tree object. `parent` is the previous checkpoint's tree sha, if any.
- */
-export async function snapshot(shadow: Shadow, opts: { parent?: string } = {}): Promise<SnapshotResult> {
+/** `write-tree` of the current index, or `null` if there is no usable index yet. */
+async function currentIndexTreeOrNull(shadow: Shadow): Promise<string | null> {
+  try {
+    return (await runGit(shadow, ['write-tree'])).trim();
+  } catch {
+    return null;
+  }
+}
+
+async function snapshotImpl(shadow: Shadow, opts: { parent?: string }): Promise<SnapshotResult> {
   const parentTree = opts.parent ?? EMPTY_TREE_SHA;
-  await runGit(shadow, ['read-tree', opts.parent ? opts.parent : '--empty']);
+  // Skip `read-tree` when the index already matches `parent`: it would otherwise reset every
+  // entry's cached stat info, forcing git to rehash unchanged files on the next `add`.
+  if ((await currentIndexTreeOrNull(shadow)) !== parentTree) {
+    await runGit(shadow, ['read-tree', opts.parent ? opts.parent : '--empty']);
+  }
 
   const { toAdd, toDelete, skipped } = await computeChanges(shadow);
   await addPaths(shadow, toAdd);
@@ -272,6 +305,22 @@ export async function snapshot(shadow: Shadow, opts: { parent?: string } = {}): 
   await runGit(shadow, ['update-ref', `refs/digestit/cp/${seq}`, treeSha]);
   await runGit(shadow, ['gc', '--auto', '-q']);
   return { treeSha, skipped, unchanged: false };
+}
+
+const snapshotChains = new Map<string, Promise<void>>();
+
+/**
+ * Snapshots the current work tree (tracked, untracked and deleted files, minus the denylist and
+ * oversized files) as a tree object. `parent` is the previous checkpoint's tree sha, if any.
+ *
+ * Calls for the same shadow are serialized on an in-process chain keyed by `gitDir`: every call
+ * shares one index file, and a watcher and an explain request can both trigger a snapshot.
+ */
+export function snapshot(shadow: Shadow, opts: { parent?: string } = {}): Promise<SnapshotResult> {
+  const prior = snapshotChains.get(shadow.gitDir) ?? Promise.resolve();
+  const result = prior.then(() => snapshotImpl(shadow, opts));
+  snapshotChains.set(shadow.gitDir, result.then(() => undefined, () => undefined));
+  return result;
 }
 
 /** Files changed between two checkpoint trees, parsed the same way as a commit diff. */
@@ -310,7 +359,13 @@ async function countAddedLines(absPath: string, maxBytes: number): Promise<numbe
   return lines.at(-1) === '' ? lines.length - 1 : lines.length;
 }
 
-/** Cheap "what changed since `lastSha`" count. Read-only: never touches the store or the index. */
+/**
+ * Cheap "what changed since `lastSha`" count. Read-only: never touches the store or the index.
+ *
+ * `lastSha` must be the shadow's latest snapshot tree: the index already matches it, so tracked
+ * changes are counted with `git diff <lastSha>` and no pathspec at all, rather than one path per
+ * changed file on argv (a mass change across thousands of files would otherwise risk E2BIG).
+ */
 export async function pending(shadow: Shadow, lastSha: string): Promise<PendingResult> {
   const { keptOthers, modified, deleted } = await listCategorized(shadow);
   const keep = (paths: string[]) => paths.filter((p) => !isDirBoundary(p) && !matchesDenylist(p));
@@ -319,11 +374,9 @@ export async function pending(shadow: Shadow, lastSha: string): Promise<PendingR
   const keptDeleted = keep(deleted);
 
   let additions = 0, deletions = 0;
-  const trackedPaths = [...keptModified, ...keptDeleted];
-  if (trackedPaths.length > 0) {
-    // `git diff` has no `--pathspec-from-file`; pass paths positionally after `--`.
+  if (keptModified.length > 0 || keptDeleted.length > 0) {
     const numstatText = await runGit(shadow, [
-      'diff', '--no-ext-diff', '--no-textconv', '--numstat', '-z', lastSha, '--', ...trackedPaths,
+      'diff', '--no-ext-diff', '--no-textconv', '--numstat', '-z', lastSha,
     ]);
     for (const { add, del } of parseNumstatCounts(numstatText)) { additions += add; deletions += del; }
   }
@@ -339,7 +392,7 @@ const execTrim = async (args: readonly string[], cwd: string): Promise<string | 
     const { stdout } = await execFileAsync('git', args, {
       cwd,
       encoding: 'utf8',
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat' },
+      env: { ...stripGitEnv(process.env), GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat' },
     });
     return stdout.trim() || null;
   } catch {

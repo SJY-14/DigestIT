@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
-  chmodSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync,
+  statSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -71,13 +73,14 @@ describe('snapshot: never writes into the project', () => {
   });
 });
 
-interface FsEntry { path: string; mtimeMs: number; size: number }
+interface FsEntry { path: string; mtimeMs: number; size: number; hash: string | null }
 function snapshotFsState(dir: string, base = dir): FsEntry[] {
   const out: FsEntry[] = [];
   for (const name of readdirSync(dir).sort()) {
     const full = join(dir, name);
     const st = statSync(full);
-    out.push({ path: full.slice(base.length), mtimeMs: st.mtimeMs, size: st.size });
+    const hash = st.isFile() ? createHash('sha256').update(readFileSync(full)).digest('hex') : null;
+    out.push({ path: full.slice(base.length), mtimeMs: st.mtimeMs, size: st.size, hash });
     if (st.isDirectory()) out.push(...snapshotFsState(full, base));
   }
   return out;
@@ -157,12 +160,47 @@ describe('snapshot', () => {
     const r = await snapshot(shadow);
 
     const reasons = r.skipped.map((s) => s.path).sort();
-    expect(reasons).toEqual(['.env', 'id_rsa', 'node_modules/pkg/index.js']);
+    expect(reasons).toEqual(['.env', 'id_rsa', 'node_modules']); // a denylisted dir collapses to one entry
     expect(r.skipped.every((s) => s.reason === 'denylist')).toBe(true);
     expect(await listTree(shadow, r.treeSha)).toEqual(['keep.txt']);
 
     const dump = execFileSync('git', ['--git-dir', shadow.gitDir, 'cat-file', '--batch-all-objects', '--batch'], { encoding: 'utf8' });
     expect(dump).not.toContain('super-secret-value');
+  });
+
+  it('collapses a whole denylisted directory into one skipped entry', async () => {
+    write('keep.txt', 'k\n');
+    for (let i = 0; i < 200; i++) write(`node_modules/pkg/f${i}.js`, `// ${i}\n`);
+    const shadow = await openShadow(data, proj);
+    const r = await snapshot(shadow);
+    expect(r.skipped).toEqual([{ path: 'node_modules', reason: 'denylist' }]);
+    expect(await listTree(shadow, r.treeSha)).toEqual(['keep.txt']);
+  });
+
+  it('does not report a nested repo that sits inside a gitignored directory', async () => {
+    write('keep.txt', 'k\n');
+    write('.gitignore', 'ignored-dir/\n');
+    const nested = join(proj, 'ignored-dir', 'nested_repo');
+    mkdirSync(nested, { recursive: true });
+    execFileSync('git', ['init', '-q', '-b', 'main', nested], { encoding: 'utf8' });
+    writeFileSync(join(nested, 'inner.txt'), 'inner\n');
+
+    const shadow = await openShadow(data, proj);
+    const r = await snapshot(shadow);
+    expect(r.skipped).toEqual([]);
+    expect(await listTree(shadow, r.treeSha)).toEqual(['.gitignore', 'keep.txt']);
+  });
+
+  it('still reports a gitignored .env as skipped and keeps it out of the store', async () => {
+    write('keep.txt', 'k\n');
+    write('.gitignore', '.env\n');
+    write('.env', 'API_KEY=also-secret\n');
+    const shadow = await openShadow(data, proj);
+    const r = await snapshot(shadow);
+    expect(r.skipped).toEqual([{ path: '.env', reason: 'denylist' }]);
+    expect(await listTree(shadow, r.treeSha)).toEqual(['.gitignore', 'keep.txt']);
+    const dump = execFileSync('git', ['--git-dir', shadow.gitDir, 'cat-file', '--batch-all-objects', '--batch'], { encoding: 'utf8' });
+    expect(dump).not.toContain('also-secret');
   });
 
   it('skips files over the size cap and reports too_large', async () => {
@@ -172,6 +210,37 @@ describe('snapshot', () => {
     const r = await snapshot(shadow);
     expect(r.skipped).toEqual([{ path: 'big.txt', reason: 'too_large' }]);
     expect(await listTree(shadow, r.treeSha)).toEqual(['small.txt']);
+  });
+
+  it('keeps a tracked file at its previous content when it grows past the cap, instead of deleting it', async () => {
+    write('big.txt', 'small\n');
+    const shadow = await openShadow(data, proj, { maxFileBytes: 10 });
+    const r1 = await snapshot(shadow);
+    expect(await listTree(shadow, r1.treeSha)).toContain('big.txt');
+
+    write('big.txt', 'x'.repeat(100)); // now over the cap
+    const r2 = await snapshot(shadow, { parent: r1.treeSha });
+    expect(r2.skipped).toContainEqual({ path: 'big.txt', reason: 'too_large' });
+    expect(await listTree(shadow, r2.treeSha)).toContain('big.txt'); // kept, not removed
+    const files = await diff(shadow, r1.treeSha, r2.treeSha);
+    expect(files.find((f) => f.path === 'big.txt')).toBeUndefined(); // unchanged in the tree: no false delete
+  });
+
+  it('keeps a tracked file at its previous content when it becomes unreadable, instead of deleting it', async () => {
+    write('locked.txt', 'secretish\n');
+    const shadow = await openShadow(data, proj);
+    const r1 = await snapshot(shadow);
+    chmodSync(join(proj, 'locked.txt'), 0o000);
+    try {
+      const r2 = await snapshot(shadow, { parent: r1.treeSha });
+      if (r2.skipped.some((s) => s.path === 'locked.txt')) {
+        expect(await listTree(shadow, r2.treeSha)).toContain('locked.txt');
+        const files = await diff(shadow, r1.treeSha, r2.treeSha);
+        expect(files.find((f) => f.path === 'locked.txt')).toBeUndefined();
+      }
+    } finally {
+      chmodSync(join(proj, 'locked.txt'), 0o644);
+    }
   });
 
   it('reports unreadable files without failing the whole snapshot', async () => {
@@ -273,6 +342,51 @@ describe('pending', () => {
     write('ignored-thing.txt', 'x\n');
     const p = await pending(shadow, r1.treeSha);
     expect(p.files).toBe(1); // only .gitignore itself is a real pending change
+  });
+
+  it('counts a mass tracked-file change without hitting argv limits', async () => {
+    for (let i = 0; i < 500; i++) write(`gen/f${i}.txt`, `line ${i}\n`);
+    const shadow = await openShadow(data, proj);
+    const r1 = await snapshot(shadow);
+    for (let i = 0; i < 500; i++) write(`gen/f${i}.txt`, `line ${i}\nextra\n`);
+    const p = await pending(shadow, r1.treeSha);
+    expect(p.files).toBe(500);
+    expect(p.additions).toBe(500);
+  });
+});
+
+describe('env hardening', () => {
+  it('ignores inherited GIT_* vars that could redirect the store', async () => {
+    write('a.txt', 'x\n');
+    const shadow = await openShadow(data, proj);
+    const bogusGitDir = join(root, 'bogus.git');
+    const saved = { GIT_DIR: process.env.GIT_DIR, GIT_OBJECT_DIRECTORY: process.env.GIT_OBJECT_DIRECTORY };
+    process.env.GIT_DIR = bogusGitDir;
+    process.env.GIT_OBJECT_DIRECTORY = join(bogusGitDir, 'objects');
+    try {
+      const r = await snapshot(shadow);
+      expect(await listTree(shadow, r.treeSha)).toEqual(['a.txt']);
+      expect(existsSync(bogusGitDir)).toBe(false);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      }
+    }
+  });
+});
+
+describe('snapshot concurrency', () => {
+  it('serializes concurrent snapshot calls on the same shadow instead of racing the shared index', async () => {
+    write('a.txt', 'v1\n');
+    const shadow = await openShadow(data, proj);
+    const r1 = await snapshot(shadow);
+    write('b.txt', 'v2\n');
+    const [r2, r3] = await Promise.all([
+      snapshot(shadow, { parent: r1.treeSha }),
+      snapshot(shadow, { parent: r1.treeSha }),
+    ]);
+    expect(r2.treeSha).toBe(r3.treeSha);
+    expect(await listTree(shadow, r2.treeSha)).toEqual(['a.txt', 'b.txt']);
   });
 });
 
