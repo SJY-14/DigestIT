@@ -223,6 +223,17 @@ describe('checkContext', () => {
     expect(r.violations[0]).toContain('is not in the project map');
   });
 
+  it('accepts a parent directory with no files of its own, and normalises "./x/" to "x"', () => {
+    const nested = buildProjectMap(['packages/core/src/a.ts'], () => null);
+    const r = checkContext({
+      purpose: 'Does things.',
+      modules: [{ path: 'packages', role: 'workspaces' }, { path: './packages/core/', role: 'shared types' }],
+      glossary: [], conventions: [],
+    }, nested)!;
+    expect(r.content.modules).toEqual([{ path: 'packages', role: 'workspaces' }, { path: 'packages/core', role: 'shared types' }]);
+    expect(r.violations).toEqual([]);
+  });
+
   it('accepts a module path that is a directory in the map, not only a file', () => {
     const r = checkContext({ purpose: 'Does things.', modules: [{ path: 'src', role: 'core logic' }], glossary: [], conventions: [] }, map)!;
     expect(r.content.modules).toEqual([{ path: 'src', role: 'core logic' }]);
@@ -295,6 +306,16 @@ describe('buildContextPrompt', () => {
     const withSecret = buildProjectMap(['README.md'], () => 'token: ghp_abcdefghijklmnopqrstuvwxyz0123456789');
     const p = buildContextPrompt({ repoName: 'DigestIT', map: withSecret, userMd: null });
     expect(p).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+  });
+
+  it('cuts only the map to fit the token budget, keeping the user note and the closing tag', () => {
+    const files = Array.from({ length: 3000 }, (_, i) => `pkg${i}/sub${i}/deeply/nested/module-file-${i}.ts`);
+    const big = buildProjectMap(files, () => null);
+    const p = buildContextPrompt({ repoName: 'DigestIT', map: big, userMd: 'Owner note: billing lives in pkg7.' });
+    expect(p.length).toBeLessThanOrEqual(CONTEXT_LIMITS.maxInputTokens * 4);
+    expect(p).toContain('map truncated to fit token budget');
+    expect(p).toContain('</project>');
+    expect(p).toContain('<user>\nOwner note: billing lives in pkg7.\n</user>');
   });
 
   it('includes retry feedback when present', () => {

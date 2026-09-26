@@ -277,24 +277,31 @@ function renderMap(map: ProjectMap): string {
     ? map.docs.map((d) => `- ${d.path}:\n${d.headings.map((h) => `  # ${h}`).join('\n')}`).join('\n')
     : '(none)';
   const readmeBlock = map.readme ? `${map.readme.path}${map.readme.truncated ? ' (truncated)' : ''}:\n${map.readme.content}` : '(none)';
-  return `Files (${map.totalFiles} total${map.truncatedPaths ? `, showing first ${map.paths.length}` : ''}):\n${pathsBlock}\n\nDirectories:\n${dirsBlock}\n\nManifests:\n${manifestsBlock}\n\nTop-level docs:\n${docsBlock}\n\nREADME:\n${readmeBlock}`;
+  // Most informative first: if the rendered map exceeds the token budget, only the tail (per-directory counts) is cut.
+  return `README:\n${readmeBlock}\n\nManifests:\n${manifestsBlock}\n\nTop-level docs:\n${docsBlock}\n\nFiles (${map.totalFiles} total${map.truncatedPaths ? `, showing first ${map.paths.length}` : ''}):\n${pathsBlock}\n\nDirectories:\n${dirsBlock}`;
 }
 
 export function buildContextPrompt(input: ContextInput): string {
   const retry = input.retryFeedback && input.retryFeedback.length > 0
     ? `\nYour previous answer was rejected for these reasons; fix them and answer again:\n${input.retryFeedback.map((r) => `- ${r}`).join('\n')}\n`
     : '';
-  const mapText = escapeAngles(redact(renderMap(input.map)));
+  let mapText = escapeAngles(redact(renderMap(input.map)));
   const userBlock = input.userMd ? `\n<user>\n${escapeAngles(input.userMd)}\n</user>\n` : '';
-  let body = `${CONTEXT_INSTRUCTIONS}\n${retry}\n<project repo="${escapeAngles(input.repoName)}">\n${mapText}\n</project>\n${userBlock}`;
-  const maxChars = CONTEXT_LIMITS.maxInputTokens * 4;
-  if (body.length > maxChars) body = `${body.slice(0, maxChars - 40)}\n[... map truncated to fit token budget ...]\n`;
-  return body;
+  const head = `${CONTEXT_INSTRUCTIONS}\n${retry}\n<project repo="${escapeAngles(input.repoName)}">\n`;
+  const tail = `\n</project>\n${userBlock}`;
+  // Only the map is cut to fit, so the user note and the closing tag always survive.
+  const mapBudget = CONTEXT_LIMITS.maxInputTokens * 4 - head.length - tail.length;
+  const marker = '\n[... map truncated to fit token budget ...]';
+  if (mapText.length > mapBudget) mapText = mapText.slice(0, Math.max(0, mapBudget - marker.length)) + marker;
+  return head + mapText + tail;
 }
 
 function validPaths(map: ProjectMap): Set<string> {
   const s = new Set<string>(map.paths);
-  for (const d of map.dirs) if (d.path !== '') s.add(d.path);
+  // Every ancestor too: `packages` is a valid module even if it only holds subdirectories.
+  for (const d of map.dirs) {
+    for (let p = d.path; p !== '' && !s.has(p); p = dirOf(p)) s.add(p);
+  }
   return s;
 }
 
@@ -331,7 +338,7 @@ export function checkContext(raw: unknown, map: ProjectMap): CheckContextResult 
       return;
     }
     if (hasUnsafeMarkup(m.path) || hasUnsafeMarkup(m.role)) v.push(`modules: item ${i} contains HTML or a link`);
-    const path = cleanText(m.path);
+    const path = cleanText(m.path).replace(/^\.\//, '').replace(/\/+$/, '');
     if (!known.has(path)) {
       v.push(`modules: item ${i} path "${path}" is not in the project map`);
       return;
