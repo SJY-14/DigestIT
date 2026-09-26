@@ -10,6 +10,10 @@ export const LIMITS = {
   l2Words: 25,
   l3Annotations: 10,
   l3Words: 30,
+  digestItemsMax: 8,
+  digestTitleWords: 8,
+  digestAreaWords: 30,
+  digestIdMaxLen: 40,
 } as const;
 
 export const NO_CHANGE = 'No user-visible change';

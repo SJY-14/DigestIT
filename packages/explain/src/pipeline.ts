@@ -87,11 +87,11 @@ export function isCached(db: DatabaseSync, id: number, promptVersion: string, in
   return rows.length === 4 && rows.every((r) => (r.status === 'ok' || r.status === 'truncated') && r.input_hash === inputHash);
 }
 
-export function store(
-  db: DatabaseSync, id: number, levels: AllLevels, status: ExplanationStatus,
+/** Writes one or more levels for a change unit in one transaction; used by `store` (all four levels) and `explainDigest` (levels 0-2). */
+export function storeLevels(
+  db: DatabaseSync, id: number, contents: readonly (readonly [Level, unknown])[], status: ExplanationStatus,
   provider: { provider: string; model: string }, promptVersion: string, inputHash: string, at: string,
 ): void {
-  const contents: [Level, unknown][] = [[0, levels.l0], [1, levels.l1], [2, levels.l2], [3, levels.l3]];
   const stmt = db.prepare(
     `INSERT INTO explanation (change_unit_id, level, content, status, provider, model, prompt_version, input_hash, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -109,6 +109,13 @@ export function store(
     db.exec('ROLLBACK');
     throw e;
   }
+}
+
+export function store(
+  db: DatabaseSync, id: number, levels: AllLevels, status: ExplanationStatus,
+  provider: { provider: string; model: string }, promptVersion: string, inputHash: string, at: string,
+): void {
+  storeLevels(db, id, [[0, levels.l0], [1, levels.l1], [2, levels.l2], [3, levels.l3]], status, provider, promptVersion, inputHash, at);
 }
 
 /**

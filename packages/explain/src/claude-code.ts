@@ -6,6 +6,8 @@ import type {
   BriefingResult,
   ContextInput,
   ContextResult,
+  DigestInput,
+  DigestResult,
   ExplanationInput,
   ExplanationProvider,
   ProviderResult,
@@ -17,6 +19,7 @@ import { buildPrompt } from './prompt.js';
 import { buildRangePrompt, buildRollupPrompt } from './range.js';
 import { buildBriefingPrompt } from './briefing.js';
 import { buildContextPrompt } from './context.js';
+import { buildDigestPrompt } from './digest.js';
 
 export type SpawnFn = (cmd: string, args: string[]) => ChildProcessWithoutNullStreams;
 
@@ -107,6 +110,15 @@ export class ClaudeCodeProvider implements ExplanationProvider {
       throw new Error('invalid project context');
     }
     return { content: v as unknown as ContextResult['content'], provider: this.id, model: this.model };
+  }
+
+  async digest(input: DigestInput): Promise<DigestResult> {
+    const v = parseJson(await this.call(buildDigestPrompt(input)));
+    const { l0, l1, l2 } = v;
+    if (!isObj(l0) || typeof l0.text !== 'string') throw new Error('invalid l0');
+    if (!isObj(l1) || typeof l1.userVisible !== 'boolean' || !Array.isArray(l1.bullets)) throw new Error('invalid l1');
+    if (!isObj(l2) || !Array.isArray(l2.items) || !Array.isArray(l2.notAnalysed)) throw new Error('invalid l2');
+    return { levels: { l0, l1, l2 } as unknown as DigestResult['levels'], provider: this.id, model: this.model };
   }
 
   /** Runs one prompt and returns the model's text result. */
