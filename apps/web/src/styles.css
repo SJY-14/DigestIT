@@ -165,6 +165,13 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
   --state-handoff: #9a6700;
   --state-merged: #8250df;
   --badge-unread: #0969da;
+  /* Sequential 5-step single hue (heat-0 = no data, heat-1..4 validated via the dataviz
+     skill's ordinal-ramp checks: monotone lightness, >=0.06 step gaps, light-end >=2:1). */
+  --heat-0: var(--bg-inset);
+  --heat-1: #8fb0e0;
+  --heat-2: #6293db;
+  --heat-3: #3a72cc;
+  --heat-4: #173e85;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -174,6 +181,11 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
     --state-handoff: #d29922;
     --state-merged: #ab7df8;
     --badge-unread: #4493f8;
+    --heat-0: var(--bg-inset);
+    --heat-1: #1e4d8f;
+    --heat-2: #2a68c2;
+    --heat-3: #4f8fe0;
+    --heat-4: #a3cbff;
   }
 }
 .nav { display: flex; gap: 4px; margin-left: 12px; }
@@ -226,24 +238,51 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
 .btn:disabled { opacity: 0.6; cursor: default; }
 
-/* metrics page */
-.metrics { display: flex; flex-direction: column; gap: 16px; }
+/* insights page */
+.insights-body { margin-top: 12px; }
+.insights-tab, .metrics { display: flex; flex-direction: column; gap: 16px; }
+.gallery { display: flex; flex-direction: column; gap: 24px; padding-top: 16px; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
 .tile { border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; }
 .tile-label { font-size: 12px; color: var(--muted); }
 .tile-value { font-size: 28px; font-weight: 600; line-height: 1.3; font-variant-numeric: tabular-nums; }
 .tile-note { font-size: 12px; }
 .box-title { font-size: 14px; }
-.legend { display: flex; gap: 12px; margin-left: auto; font-weight: 400; }
+.legend { display: flex; gap: 12px; margin-right: auto; font-weight: 400; }
 .key-item { display: inline-flex; align-items: center; gap: 6px; }
 .swatch { width: 10px; height: 10px; border-radius: 2px; }
-.swatch.landed, .bar.landed { fill: var(--series-1); background: var(--series-1); }
-.swatch.decided, .bar.decided { fill: var(--series-2); background: var(--series-2); }
+.swatch.series-1, .bar.series-1, .dot.series-1 { fill: var(--series-1); background: var(--series-1); }
+.swatch.series-2, .bar.series-2, .dot.series-2 { fill: var(--series-2); background: var(--series-2); }
+.line.series-1 { stroke: var(--series-1); }
+.line.series-2 { stroke: var(--series-2); }
+.swatch.median-tick { width: 12px; height: 2px; border-radius: 1px; background: var(--fg); }
 .box-body { padding: 12px 16px; }
+
+/* --- chart primitives (DIG-27): bar/line series, grid heatmap, dot strip ------------------ */
+.chart-wrap { display: flex; flex-direction: column; }
+.chart-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; justify-content: flex-end; }
 .chart { width: 100%; height: auto; display: block; }
+/* Heatmap cells stay at their intrinsic size (contribution-graph style); only shrink to fit. */
+.chart.heatmap { width: auto; max-width: 100%; align-self: flex-start; }
 .chart .grid { stroke: var(--border-muted); stroke-width: 1; }
 .chart .axis { fill: var(--muted); font-size: 11px; }
 .chart .hit { fill: transparent; }
+.chart .line { fill: none; stroke-width: 2; }
+.chart .dot { stroke: var(--bg); stroke-width: 2; }
+.chart .median-tick { stroke: var(--fg); stroke-width: 2; }
+.chart .mark-group, .chart .cell, .chart .bar, .chart .dot { cursor: pointer; }
+.chart .cell.heat-0 { fill: var(--heat-0); stroke: var(--border-muted); stroke-width: 1; }
+.chart .cell.heat-1 { fill: var(--heat-1); }
+.chart .cell.heat-2 { fill: var(--heat-2); }
+.chart .cell.heat-3 { fill: var(--heat-3); }
+.chart .cell.heat-4 { fill: var(--heat-4); }
+.heat-scale { display: flex; align-items: center; gap: 4px; margin-right: auto; font-size: 12px; }
+.heat-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.heat-swatch.heat-0 { background: var(--heat-0); border: 1px solid var(--border-muted); }
+.heat-swatch.heat-1 { background: var(--heat-1); }
+.heat-swatch.heat-2 { background: var(--heat-2); }
+.heat-swatch.heat-3 { background: var(--heat-3); }
+.heat-swatch.heat-4 { background: var(--heat-4); }
 .chart-tip { margin: 4px 0 0; font-size: 12px; color: var(--muted); min-height: 18px; }
 .table-scroll { overflow-x: auto; }
 .data { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -251,4 +290,9 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .data th { color: var(--muted); font-weight: 600; }
 .data .num { text-align: right; font-variant-numeric: tabular-nums; }
 .view-toggle { margin-left: 8px; height: 24px; padding: 0 10px; }
-@media (forced-colors: active) { .bar.decided { fill: none; stroke: CanvasText; stroke-width: 2; } }
+@media (forced-colors: active) {
+  .bar.series-2, .dot.series-2 { fill: none; stroke: CanvasText; stroke-width: 2; }
+  .line.series-2 { stroke: CanvasText; stroke-dasharray: 4 2; }
+  .cell.heat-1, .cell.heat-2, .cell.heat-3, .cell.heat-4 { stroke: CanvasText; stroke-width: 1; }
+  .median-tick { stroke: CanvasText; }
+}

@@ -2,8 +2,7 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Metrics, WorkUnitSummary } from './api.js';
-import { MetricsPage } from './MetricsPage.js';
+import type { WorkUnitSummary } from './api.js';
 import { NewPill, UnitList, UnitPanel } from './Units.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -23,14 +22,6 @@ let host: HTMLElement;
 function respond(url: string): unknown {
   if (url.startsWith('/api/work-units/DIG-7')) {
     return { ...unit(), members: [{ sha: 'b'.repeat(40), changeId: 3, authorName: 'Ada', committedAt: '2026-01-01T00:30:00Z', title: 'Add route', isMerge: false }], ranges: [], explanation: null };
-  }
-  if (url === '/api/metrics') {
-    return {
-      generatedAt: 'x',
-      global: { unreadBacklog: 2, undecidedBacklog: 3, medianTimeToOpenSec: 120, medianTimeToDecideSec: null,
-        digestVsProduction: { windowDays: 2, landed: 4, decided: 2, ratio: 0.5, perDay: [{ day: '2026-01-01', landed: 3, decided: 1 }, { day: '2026-01-02', landed: 1, decided: 1 }] } },
-      units: [{ id: 7, key: 'DIG-7', state: 'active', landedAt: 'x', timeToLandSec: 1, timeToExplainSec: 60, timeToOpenSec: 120, timeToDecideSec: null, decidedBy: null, levelsViewedBeforeDeciding: [0, 3], reopens: 1 }],
-    };
   }
   return {};
 }
@@ -124,20 +115,9 @@ describe('UnitPanel', () => {
     await render(<UnitPanel unit={unit({ pendingBudget: true })} level={0} onLevel={noop} onClose={noop} onEvent={noop} />);
     expect(host.textContent).toContain('pending (budget): the daily explanation budget');
   });
-});
 
-describe('MetricsPage', () => {
-  it('shows backlog tiles, the chart and a table view', async () => {
-    await render(<MetricsPage metrics={respond('/api/metrics') as Metrics} error={null} />);
-    const t = host.textContent ?? '';
-    expect(t).toContain('Unread backlog');
-    expect(t).toContain('falling behind');
-    expect(t).toContain('2 min');
-    expect(host.querySelectorAll('.bar.landed')).toHaveLength(2);
-    expect(host.querySelector('svg[role="img"]')?.getAttribute('aria-label')).toContain('per day');
-    await click(host.querySelector('.view-toggle'));
-    expect(host.querySelector('svg[role="img"]')).toBeNull();
-    expect(host.textContent).toContain('2026-01-02');
-    expect(host.textContent).toContain('L0 L3');
+  it('tags the opened event with `via` when opened from a chart drill', async () => {
+    await render(<UnitPanel unit={unit()} level={0} onLevel={noop} onClose={noop} onEvent={noop} via="map" />);
+    expect(posts()[0]?.body).toEqual({ kind: 'opened', workUnitId: 7, via: 'map' });
   });
 });
