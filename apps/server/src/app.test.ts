@@ -126,7 +126,7 @@ describe('isAllowedHost', () => {
     const allowed = new Set(['dashboard.example.ts.net:4780']);
     expect(isAllowedHost('127.0.0.1:4780', allowed)).toBe(true);
     expect(isAllowedHost('localhost', allowed)).toBe(true);
-    expect(isAllowedHost('dashboard.example.ts.net:4780', allowed)).toBe(true);
+    expect(isAllowedHost('Dashboard.Example.ts.net:4780', allowed)).toBe(true);
     expect(isAllowedHost('dashboard.example.ts.net:4780', allowed)).toBe(true);
     expect(isAllowedHost('evil.example:4780', allowed)).toBe(false);
     expect(isAllowedHost(undefined, allowed)).toBe(false);
