@@ -8,20 +8,26 @@ import { useTimeline } from './useTimeline.js';
 import { useLive } from './useLive.js';
 import { reviewStates } from './feed.js';
 import { Insights } from './Insights.js';
+import { MainV2 } from './MainV2.js';
 import { NewPill, Rollup, UnitList, UnitPanel } from './Units.js';
 import type { Level, WorkUnitMember, WorkUnitSummary } from './api.js';
 
 const UNIT_HASH = '#unit=';
-type Page = 'units' | 'timeline' | 'briefing' | 'insights';
-const PATH_FOR: Record<Page, string> = { units: '/', timeline: '/timeline', briefing: '/briefing', insights: '/insights' };
+// 'main' is the v2 home screen (DIG-40); the pre-v2 commit timeline, work units, briefing and
+// insights pages stay at their own paths, moved under the "History" menu (DIG-40 scope).
+type Page = 'main' | 'units' | 'timeline' | 'briefing' | 'insights';
+const PATH_FOR: Record<Page, string> = { main: '/', units: '/units', timeline: '/timeline', briefing: '/briefing', insights: '/insights' };
+const HISTORY_PAGES = ['units', 'timeline', 'briefing', 'insights'] as const;
+const PAGE_LABEL: Record<Page, string> = { main: 'Home', units: 'Units', timeline: 'Timeline', briefing: 'Briefing', insights: 'Insights' };
 
 function pageFor(path: string): Page {
   switch (path.replace(/\/+$/, '')) {
+    case '/units': return 'units';
     case '/timeline': return 'timeline';
     case '/briefing': return 'briefing';
     case '/insights':
     case '/metrics': return 'insights';
-    default: return 'units';
+    default: return 'main';
   }
 }
 
@@ -29,7 +35,7 @@ function usePage(): [Page, (p: Page) => void] {
   const [page, setPageRaw] = useState<Page>(() => {
     const p = pageFor(location.pathname);
     // A bare commit-sha hash with no explicit path (an old-style deep link) opens the timeline.
-    return p === 'units' && location.hash.length > 1 && !location.hash.startsWith(UNIT_HASH) ? 'timeline' : p;
+    return p === 'main' && location.hash.length > 1 && !location.hash.startsWith(UNIT_HASH) ? 'timeline' : p;
   });
   useEffect(() => {
     // `/metrics` is kept working as a redirect target; the URL itself moves to `/insights`.
@@ -95,7 +101,7 @@ export function App() {
   const initialHash = useRef(location.hash).current;
   const restored = useRef(!initialHash.startsWith(UNIT_HASH));
   const anySelected = Boolean(selected || selectedUnit || member);
-  const showsPanel = page !== 'briefing';
+  const showsPanel = page !== 'briefing' && page !== 'main';
   const [level, setLevelState] = useState<Level>(() => loadLevel());
   const setLevel = useCallback((l: Level) => {
     setLevelState(l);
@@ -156,10 +162,10 @@ export function App() {
   const gutter = rows.reduce((m, r) => Math.max(m, r.lanes.width), 1);
 
   return (
-    <div className={anySelected && showsPanel ? 'app with-panel' : 'app'}>
+    <div className={page === 'main' ? 'app with-panel' : anySelected && showsPanel ? 'app with-panel' : 'app'}>
       <header className="top">
         <h1>DigestIT</h1>
-        {repos.length > 1 && (
+        {page !== 'main' && repos.length > 1 && (
           <select aria-label="Repository" value={repoId ?? ''} onChange={(e) => setRepoId(Number(e.target.value))}>
             {repos.map((r) => (
               <option key={r.id} value={r.id}>
@@ -168,24 +174,37 @@ export function App() {
             ))}
           </select>
         )}
-        {repos.length === 1 && <span className="repo-name">{repos[0]?.name}</span>}
+        {page !== 'main' && repos.length === 1 && <span className="repo-name">{repos[0]?.name}</span>}
         <nav className="nav" aria-label="Pages">
-          {(['units', 'timeline', 'briefing', 'insights'] as const).map((p) => (
-            <a
-              key={p}
-              href={PATH_FOR[p]}
-              aria-current={page === p ? 'page' : undefined}
-              onClick={(e) => { e.preventDefault(); setPage(p); }}
-            >
-              {p === 'units' ? 'Units' : p === 'timeline' ? 'Timeline' : p === 'briefing' ? 'Briefing' : 'Insights'}
-            </a>
-          ))}
+          <a href={PATH_FOR.main} aria-current={page === 'main' ? 'page' : undefined} onClick={(e) => { e.preventDefault(); setPage('main'); }}>
+            {PAGE_LABEL.main}
+          </a>
+          <details className="history-menu">
+            <summary>History</summary>
+            <div className="history-menu-list" role="menu">
+              {HISTORY_PAGES.map((p) => (
+                <a
+                  key={p}
+                  href={PATH_FOR[p]}
+                  role="menuitem"
+                  aria-current={page === p ? 'page' : undefined}
+                  onClick={(e) => { e.preventDefault(); setPage(p); }}
+                >
+                  {PAGE_LABEL[p]}
+                </a>
+              ))}
+            </div>
+          </details>
         </nav>
-        <span className="conn muted" title={live.transport === 'live' ? 'Live updates' : 'Live stream unavailable; refreshing every 30 s'}>
-          {live.transport === 'live' ? 'Live' : 'Polling'}
-        </span>
+        {page !== 'main' && (
+          <span className="conn muted" title={live.transport === 'live' ? 'Live updates' : 'Live stream unavailable; refreshing every 30 s'}>
+            {live.transport === 'live' ? 'Live' : 'Polling'}
+          </span>
+        )}
       </header>
-      {!showsPanel ? (
+      {page === 'main' ? (
+        <MainV2 />
+      ) : !showsPanel ? (
         <main>
           <p className="muted">Daily and weekly briefings aren't available yet.</p>
         </main>

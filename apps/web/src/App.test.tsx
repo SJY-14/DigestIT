@@ -47,6 +47,7 @@ beforeEach(() => {
         if (url.startsWith('/api/metrics')) return metrics;
         if (url.startsWith('/api/insights/drill')) return { workUnits: [drilledUnit] };
         if (url.startsWith('/api/ui-events')) return {};
+        if (url === '/api/projects') return [];
         throw new Error(`unhandled fetch in test: ${url}`);
       })();
       return { ok: true, status: 200, json: async () => body } as Response;
@@ -92,5 +93,23 @@ describe('App: drilling into a unit outside the live list', () => {
     // useLive's `units`/`digestUnits` lists.
     expect(host.querySelector('.unit-info .key')?.textContent).toBe('DIG-99');
     expect(host.textContent).toContain('Only via drill');
+  });
+});
+
+describe('App: v2 nav (DIG-40)', () => {
+  it('renders the v2 main screen at "/", with the old pages moved under a History menu', async () => {
+    history.replaceState(null, '', '/');
+    await render(<App />);
+    await waitFor(() => host.querySelector('.setup-form') !== null);
+    expect(host.querySelector('a[aria-current="page"]')?.textContent).toBe('Home');
+
+    const menu = host.querySelector('.history-menu') as HTMLDetailsElement;
+    expect(menu).toBeTruthy();
+    const links = [...menu.querySelectorAll('a')].map((a) => a.textContent);
+    expect(links).toEqual(['Units', 'Timeline', 'Briefing', 'Insights']);
+
+    await click(menu.querySelector('a'));
+    await waitFor(() => host.querySelector('.setup-form') === null);
+    expect(location.pathname).toBe('/units');
   });
 });
