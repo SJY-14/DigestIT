@@ -53,6 +53,39 @@ describe('summarize', () => {
 });
 
 describe('ProjectGraph', () => {
+  it('zooms on wheel and keeps the page from scrolling', async () => {
+    await render(<ProjectGraph graph={fixture} onSelectNode={noop} onExpand={noop} />);
+    const svg = host.querySelector('svg')!;
+    const before = svg.querySelector('g')!.getAttribute('transform');
+    const ev = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true });
+    act(() => { svg.dispatchEvent(ev); });
+    expect(ev.defaultPrevented).toBe(true);
+    expect(svg.querySelector('g')!.getAttribute('transform')).not.toBe(before);
+  });
+
+  it('only captures the pointer once a press moves far enough to be a pan, so node clicks still land', async () => {
+    const onSelectNode = vi.fn();
+    const capture = vi.fn();
+    await render(<ProjectGraph graph={fixture} onSelectNode={onSelectNode} onExpand={noop} />);
+    const svg = host.querySelector('svg')!;
+    (svg as unknown as { setPointerCapture: typeof capture }).setPointerCapture = capture;
+    const node = host.querySelector('.graph-node.changed')!;
+    const fire = (el: Element, type: string, x: number) =>
+      act(() => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: 0 })); });
+    // A press with a tiny jitter is a click on the node: no capture, the node handler runs.
+    fire(node, 'pointerdown', 100);
+    fire(node, 'pointermove', 102);
+    fire(node, 'pointerup', 102);
+    fire(node, 'click', 102);
+    expect(capture).not.toHaveBeenCalled();
+    expect(onSelectNode).toHaveBeenCalledTimes(1);
+    // A real drag starts a pan and captures the pointer.
+    fire(svg, 'pointerdown', 100);
+    fire(svg, 'pointermove', 140);
+    expect(capture).toHaveBeenCalledTimes(1);
+    fire(svg, 'pointerup', 140);
+  });
+
   it('is aria-hidden and exposes real button controls, plus a visually hidden summary', async () => {
     await render(<ProjectGraph graph={fixture} onSelectNode={noop} onExpand={noop} />);
     expect(host.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');

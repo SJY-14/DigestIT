@@ -2,12 +2,14 @@
 // edges. Changed nodes are accent blue and sized by sqrt(lines changed); everything else is
 // muted gray. The drawing is aria-hidden and must never hold information the change list (the
 // keyboard/screen-reader path, DIG-40) doesn't also have; the controls are real <button>s.
-import { useMemo, useRef, useState, type PointerEvent, type WheelEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { GraphEdge, GraphNode, ProjectGraphDto } from '@digestit/core';
 import { bounds, fitView, layoutGraph, nodeRadius, type Point, type View } from './graphLayout.js';
 
 const VIEWPORT = 640;
 const ZOOM_STEP = 1.3;
+/** Pixels the pointer must move before a press on the canvas becomes a pan. */
+const PAN_THRESHOLD = 4;
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 6;
 /** Below this scale, only the "always shown" labels (changed/root/top-level/hover) are drawn. */
@@ -90,24 +92,41 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
     setHoverId(null);
   }
 
-  const drag = useRef<{ startX: number; startY: number; viewX: number; viewY: number } | null>(null);
+  const drag = useRef<{ startX: number; startY: number; viewX: number; viewY: number; panning: boolean } | null>(null);
 
   const fitToChanges = () => setView(fittedToChanges);
   const fitAll = () => setView(fitView(bounds(graph.nodes, positions), VIEWPORT));
   const zoomBy = (factor: number) =>
     setView((v) => ({ ...v, scale: Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor)) }));
 
-  const onWheel = (e: WheelEvent<SVGSVGElement>) => {
-    e.preventDefault();
-    zoomBy(e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
-  };
+  // React attaches wheel listeners as passive, so preventDefault() there can't stop the page from
+  // scrolling; zoom through a native non-passive listener instead.
+  const svgRef = useRef<SVGSVGElement>(null);
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return undefined;
+    const onWheel = (e: globalThis.WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+      setView((v) => ({ ...v, scale: Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor)) }));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+  // Pointer capture starts only once the pointer has moved past a small threshold: capturing on
+  // pointerdown retargets the following click to the <svg> in some browsers, so node clicks would
+  // never reach the node's handler. A real pan still ends up captured (and so is not a click).
   const onPointerDown = (e: PointerEvent<SVGSVGElement>) => {
-    drag.current = { startX: e.clientX, startY: e.clientY, viewX: view.x, viewY: view.y };
-    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { startX: e.clientX, startY: e.clientY, viewX: view.x, viewY: view.y, panning: false };
   };
   const onPointerMove = (e: PointerEvent<SVGSVGElement>) => {
     if (!drag.current) return;
     const d = drag.current;
+    if (!d.panning) {
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < PAN_THRESHOLD) return;
+      d.panning = true;
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    }
     setView((v) => ({ ...v, x: d.viewX + (e.clientX - d.startX), y: d.viewY + (e.clientY - d.startY) }));
   };
   const onPointerUp = () => {
@@ -129,8 +148,8 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
       <svg
         className="graph-canvas"
         viewBox={`0 0 ${VIEWPORT} ${VIEWPORT}`}
+        ref={svgRef}
         aria-hidden="true"
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
