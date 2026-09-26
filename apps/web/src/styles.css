@@ -353,8 +353,11 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .context-status { flex: 1 1 auto; }
 .budget-meter { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; }
 .explain-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding: 8px 14px; }
-.explain-pending { font-weight: 400; font-size: 12px; }
-.explain-btn:disabled .explain-pending { color: rgba(255, 255, 255, 0.75); }
+/* A chip behind the pending count, not just a lighter text color: the accent blue is too light in
+   dark mode for any text color on it to clear 4.5:1, so darken the chip itself instead. */
+.explain-pending { display: inline-flex; font-weight: 400; font-size: 12px; padding: 1px 6px; border-radius: 2em; background: rgba(0, 0, 0, 0.3); color: #fff; }
+.explain-btn:disabled { opacity: 1; background: var(--bg-inset); border-color: var(--border); color: var(--muted); }
+.explain-btn:disabled .explain-pending { background: none; padding: 1px 0; color: var(--muted); }
 
 .digest-picker { border: 1px solid var(--border); border-radius: 6px; }
 .digest-picker > summary { list-style: none; cursor: pointer; padding: 8px 12px; background: var(--bg-inset); border-radius: 6px; }

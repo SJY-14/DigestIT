@@ -69,6 +69,11 @@ export function fetchDigest(id: number, signal?: AbortSignal): Promise<DigestDet
   return getJson(`/api/digests/${id}`, signal);
 }
 
+/** Re-runs L0/L1/L2 for an `error`/`truncated` digest. Costs 1 call. */
+export function retryDigest(id: number, signal?: AbortSignal): Promise<DigestDetailDto> {
+  return postJson(`/api/digests/${id}/explain`, {}, signal);
+}
+
 export function fetchGraph(digestId: number, expand: string[], signal?: AbortSignal): Promise<ProjectGraphDto> {
   const q = new URLSearchParams();
   for (const e of expand) q.append('expand', e);

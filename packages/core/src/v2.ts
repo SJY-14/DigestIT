@@ -131,7 +131,8 @@ export interface DigestFileDto {
   filteredReason: FilteredReason | null;
 }
 
-/** GET /api/digests/:id */
+/** GET /api/digests/:id, and POST /api/digests/:id/explain: re-runs L0/L1/L2 for an
+ * `error`/`truncated` digest. Costs 1 call. Both return this DTO. */
 export interface DigestDetailDto extends DigestSummaryDto {
   projectId: number;
   l1: L1Content | null;

@@ -6,6 +6,7 @@ import type {
 } from '@digestit/core';
 import {
   ApiError, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph, fetchProjectStatus, fetchProjects, refreshContext,
+  retryDigest,
 } from './v2Api.js';
 import { useDigests } from './useDigests.js';
 import { startLive } from './liveClient.js';
@@ -98,7 +99,7 @@ function ExplainButton({ status, explaining, onExplain }: { status: ProjectStatu
   return (
     <button type="button" className="btn primary explain-btn" disabled={reason !== null} onClick={onExplain} title={reason ?? undefined}>
       {explaining ? 'Explaining…' : 'Explain changes since last check'}
-      <span className="muted explain-pending">{pendingLabel(status)}</span>
+      <span className="explain-pending">{pendingLabel(status)}</span>
     </button>
   );
 }
@@ -113,12 +114,13 @@ function contextLabel(status: ProjectStatusDto): string {
 }
 
 function ProjectBar({
-  projects, currentProject, onSwitch, status, onRefreshContext, refreshing, explaining, onExplain,
+  projects, currentProject, onSwitch, status, statusError, onRefreshContext, refreshing, explaining, onExplain,
 }: {
   projects: ProjectDto[];
   currentProject: ProjectDto;
   onSwitch: (id: number) => void;
   status: ProjectStatusDto | null;
+  statusError: string | null;
   onRefreshContext: () => void;
   refreshing: boolean;
   explaining: boolean;
@@ -137,9 +139,13 @@ function ProjectBar({
         <code className="project-path">{currentProject.rootPath}</code>
       </div>
       <div className="project-bar-row">
-        <span className="context-status muted">
-          {status ? contextLabel(status) : 'Loading context…'}
-        </span>
+        {statusError ? (
+          <span role="alert" className="context-status error">Could not load status: {statusError}</span>
+        ) : (
+          <span className="context-status muted">
+            {status ? contextLabel(status) : 'Loading context…'}
+          </span>
+        )}
         <button type="button" className="btn" onClick={onRefreshContext} disabled={refreshing}>
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
@@ -161,7 +167,14 @@ function statusChip(status: DigestSummaryDto['status']) {
   return <span className="badge digest-error">{status === 'error' ? 'error' : status === 'pending' ? 'pending' : 'truncated'}</span>;
 }
 
-function DigestRow({ d, current, onSelect, onRetry }: { d: DigestSummaryDto; current: boolean; onSelect: () => void; onRetry: () => void }) {
+function DigestRow({ d, current, onSelect, onRetry, retrying, retryDisabled }: {
+  d: DigestSummaryDto;
+  current: boolean;
+  onSelect: () => void;
+  onRetry: () => void;
+  retrying: boolean;
+  retryDisabled: boolean;
+}) {
   const retryable = d.status === 'error' || d.status === 'truncated';
   return (
     <li className="digest-row">
@@ -176,18 +189,30 @@ function DigestRow({ d, current, onSelect, onRetry }: { d: DigestSummaryDto; cur
           {statusChip(d.status)}
         </span>
       </button>
-      {retryable && <button type="button" className="btn retry" onClick={onRetry}>Retry</button>}
+      {retryable && (
+        <button
+          type="button"
+          className="btn retry"
+          onClick={onRetry}
+          disabled={retrying || retryDisabled}
+          title={retryDisabled ? 'Daily budget used up' : undefined}
+        >
+          {retrying ? 'Retrying…' : 'Retry'}
+        </button>
+      )}
     </li>
   );
 }
 
 function DigestPicker({
-  digests, current, onSelect, onRetry,
+  digests, current, onSelect, onRetry, retryingId, retryDisabled,
 }: {
   digests: ReturnType<typeof useDigests>;
   current: DigestSummaryDto | undefined;
   onSelect: (id: number) => void;
   onRetry: (id: number) => void;
+  retryingId: number | null;
+  retryDisabled: boolean;
 }) {
   const sentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -209,7 +234,15 @@ function DigestPicker({
       </summary>
       <ol className="digest-list">
         {digests.items.map((d) => (
-          <DigestRow key={d.id} d={d} current={d.id === current?.id} onSelect={() => onSelect(d.id)} onRetry={() => onRetry(d.id)} />
+          <DigestRow
+            key={d.id}
+            d={d}
+            current={d.id === current?.id}
+            onSelect={() => onSelect(d.id)}
+            onRetry={() => onRetry(d.id)}
+            retrying={retryingId === d.id}
+            retryDisabled={retryDisabled}
+          />
         ))}
       </ol>
       {digests.error && <p role="alert" className="error">Could not load digests: {digests.error}</p>}
@@ -348,6 +381,9 @@ function ChangeList({
 
 // --- resizable divider ---------------------------------------------------------------------------
 
+const MIN_LEFT_PCT = 20;
+const MAX_LEFT_PCT = 70;
+
 function Divider({ pct, onChange }: { pct: number; onChange: (pct: number) => void }) {
   const dragging = useRef(false);
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
@@ -360,20 +396,22 @@ function Divider({ pct, onChange }: { pct: number; onChange: (pct: number) => vo
     if (!wrap) return;
     const rect = wrap.getBoundingClientRect();
     const next = ((e.clientX - rect.left) / rect.width) * 100;
-    onChange(Math.min(70, Math.max(20, next)));
+    onChange(Math.min(MAX_LEFT_PCT, Math.max(MIN_LEFT_PCT, next)));
   };
   const onPointerUp = () => { dragging.current = false; };
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'ArrowLeft') onChange(Math.max(20, pct - 2));
-    else if (e.key === 'ArrowRight') onChange(Math.min(70, pct + 2));
+    if (e.key === 'ArrowLeft') onChange(Math.max(MIN_LEFT_PCT, pct - 2));
+    else if (e.key === 'ArrowRight') onChange(Math.min(MAX_LEFT_PCT, pct + 2));
+    else if (e.key === 'Home') onChange(MIN_LEFT_PCT);
+    else if (e.key === 'End') onChange(MAX_LEFT_PCT);
   };
   return (
     <div
       className="split-divider"
       role="separator"
       aria-orientation="vertical"
-      aria-valuemin={20}
-      aria-valuemax={70}
+      aria-valuemin={MIN_LEFT_PCT}
+      aria-valuemax={MAX_LEFT_PCT}
       aria-valuenow={Math.round(pct)}
       tabIndex={0}
       onPointerDown={onPointerDown}
@@ -393,11 +431,11 @@ function useProjectStatus(projectId: number | null) {
   const refresh = useCallback(() => {
     if (projectId === null) return;
     fetchProjectStatus(projectId).then(
-      (s) => setStatus(s),
+      (s) => { setStatus(s); setError(null); },
       (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
     );
   }, [projectId]);
-  useEffect(() => { setStatus(null); refresh(); }, [refresh]);
+  useEffect(() => { setStatus(null); setError(null); refresh(); }, [refresh]);
   useEffect(() => {
     if (projectId === null) return undefined;
     return startLive({ onChange: refresh, onTransport: () => undefined });
@@ -422,6 +460,7 @@ function useNarrow(breakpoint = 1000): boolean {
 export function MainV2() {
   const [projects, setProjects] = useState<ProjectDto[] | null>(null);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [projectsNotFound, setProjectsNotFound] = useState(false);
   const [url, push, replace] = useV2Url('/');
   const [explainingLocal, setExplainingLocal] = useState(false);
   const [explainError, setExplainError] = useState<string | null>(null);
@@ -436,15 +475,19 @@ export function MainV2() {
   const [areaGenerating, setAreaGenerating] = useState(false);
   const [hoverAreaId, setHoverAreaId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
+  const [retryingId, setRetryingId] = useState<number | null>(null);
   const [announce, setAnnounce] = useState('');
-  // Right pane (project graph or, per DIG-41, the AreaView code view) defaults to ~55% of the width.
-  const [leftPct, setLeftPct] = useState(45);
+  // Left pane (change list) defaults to ~40% of the width; the right pane fills the rest.
+  const [leftPct, setLeftPct] = useState(40);
   const narrow = useNarrow();
   const [graphSectionOpen, setGraphSectionOpen] = useState(true);
 
   useEffect(() => {
     const ac = new AbortController();
-    fetchProjects(ac.signal).then(setProjects, (e: unknown) => setProjectsError(e instanceof Error ? e.message : String(e)));
+    fetchProjects(ac.signal).then(setProjects, (e: unknown) => {
+      if (e instanceof ApiError && e.status === 404) setProjectsNotFound(true);
+      else setProjectsError(e instanceof Error ? e.message : String(e));
+    });
     return () => ac.abort();
   }, []);
 
@@ -454,7 +497,7 @@ export function MainV2() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects, url.project]);
 
-  const { status, refresh: refreshStatus } = useProjectStatus(currentProjectId);
+  const { status, error: statusError, refresh: refreshStatus } = useProjectStatus(currentProjectId);
   const digests = useDigests(currentProjectId);
   const currentDigestId = url.digest ?? digests.items[0]?.id ?? null;
   useEffect(() => {
@@ -471,7 +514,7 @@ export function MainV2() {
     return () => ac.abort();
   }, [currentDigestId]);
 
-  useEffect(() => { setExpand([]); }, [currentDigestId]);
+  useEffect(() => { setExpand([]); setExpandedIds(new Set()); }, [currentDigestId]);
 
   useEffect(() => {
     setGraph(null);
@@ -482,10 +525,16 @@ export function MainV2() {
     return () => ac.abort();
   }, [currentDigestId, expand]);
 
+  // Tracks a generate/retry POST in flight so a superseded request (the user opened a
+  // different area before it settled) is aborted rather than landing on the wrong area.
+  const generateRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
     setAreaDetail(null);
     setAreaError(null);
     setAreaGenerating(false);
+    generateRef.current?.abort();
+    generateRef.current = null;
     if (currentDigestId === null || url.area === null) return;
     const ac = new AbortController();
     // Cheap GET: never spends the budget. Generating L3 is a separate, explicit user action
@@ -496,20 +545,37 @@ export function MainV2() {
 
   const onGenerateArea = useCallback(() => {
     if (currentDigestId === null || url.area === null) return;
+    const ac = new AbortController();
+    generateRef.current?.abort();
+    generateRef.current = ac;
     setAreaGenerating(true);
-    explainArea(currentDigestId, url.area).then(
-      (d) => { setAreaGenerating(false); setAreaDetail(d); },
+    explainArea(currentDigestId, url.area, ac.signal).then(
+      (d) => {
+        if (ac.signal.aborted) return;
+        setAreaGenerating(false);
+        setAreaDetail(d);
+        refreshStatus();
+      },
       // Leave areaError alone: the area is already loaded, so AreaView shows its own
       // error + Retry rather than replacing the pane with the "could not load" message.
-      () => { setAreaGenerating(false); setAreaDetail((prev) => (prev ? { ...prev, status: 'error' } : prev)); },
+      () => {
+        if (ac.signal.aborted) return;
+        setAreaGenerating(false);
+        setAreaDetail((prev) => (prev ? { ...prev, status: 'error' } : prev));
+        refreshStatus();
+      },
     );
-  }, [currentDigestId, url.area]);
+  }, [currentDigestId, url.area, refreshStatus]);
 
   const filter = useMemo(() => (url.node && digest ? computeFilter(url.node, graph, digest) : null), [url.node, graph, digest]);
 
+  // Only announce "Filter cleared" on a real node -> no-node transition, not on first load
+  // (when there was never a filter to clear).
+  const prevNodeRef = useRef<string | null>(null);
   useEffect(() => {
     if (filter) setAnnounce(`Filtered to ${filter.path}`);
-    else if (url.node === null) setAnnounce('Filter cleared');
+    else if (url.node === null && prevNodeRef.current !== null) setAnnounce('Filter cleared');
+    prevNodeRef.current = url.node;
   }, [filter, url.node]);
 
   const highlightNodeIds = useMemo(() => {
@@ -559,6 +625,30 @@ export function MainV2() {
     });
   }, []);
 
+  const onRetryDigest = useCallback((id: number) => {
+    setRetryingId(id);
+    retryDigest(id).then(
+      (d) => {
+        digests.reload();
+        if (id === currentDigestId) setDigest(d);
+        else push({ digest: id, node: null, area: null });
+      },
+      () => digests.reload(),
+    ).finally(() => {
+      setRetryingId(null);
+      refreshStatus();
+    });
+  }, [currentDigestId, digests, push, refreshStatus]);
+
+  if (projectsNotFound) {
+    return (
+      <div className="box setup">
+        <p className="muted">
+          This server doesn't have the v2 project API yet. Use <strong>History</strong> above for the existing commit timeline and insights.
+        </p>
+      </div>
+    );
+  }
   if (projectsError) return <p role="alert" className="error">Could not load projects: {projectsError}</p>;
   if (projects === null) return <p className="muted">Loading…</p>;
   if (projects.length === 0) {
@@ -578,6 +668,7 @@ export function MainV2() {
         currentProject={currentProject}
         onSwitch={onSwitchProject}
         status={status}
+        statusError={statusError}
         onRefreshContext={onRefreshContext}
         refreshing={refreshing}
         explaining={explaining}
@@ -585,15 +676,21 @@ export function MainV2() {
       />
       {explainError && <p role="alert" className="error">Could not explain: {explainError}</p>}
       {digestError && <p role="alert" className="error">Could not load the digest: {digestError}</p>}
-      {!digest && !digestError && <p className="muted">Loading digest…</p>}
+      {!digestError && currentDigestId === null && digests.done && (
+        <p className="empty">No digests yet. Use <strong>Explain changes since last check</strong> above to create the first one.</p>
+      )}
+      {!digestError && currentDigestId === null && !digests.done && <p className="muted">Loading…</p>}
+      {!digestError && currentDigestId !== null && !digest && <p className="muted">Loading digest…</p>}
       {digest && (
         <div className={narrow ? 'split-v2 stacked' : 'split-v2'}>
-          <div className="left-pane">
+          <div className="left-pane" style={narrow ? undefined : { flexBasis: `${leftPct}%` }}>
             <DigestPicker
               digests={digests}
               current={digests.items.find((d) => d.id === currentDigestId)}
               onSelect={(id) => push({ digest: id, node: null, area: null })}
-              onRetry={(id) => push({ digest: id })}
+              onRetry={onRetryDigest}
+              retryingId={retryingId}
+              retryDisabled={(status?.budget.remaining ?? 1) === 0}
             />
             <ChangeList
               digest={digest}
@@ -614,7 +711,7 @@ export function MainV2() {
               </button>
             )}
             {(!narrow || graphSectionOpen) && (
-              <div className="right-pane" style={narrow ? undefined : { flexBasis: `${100 - leftPct}%` }}>
+              <div className="right-pane">
                 {url.area && openAreaItem ? (
                   areaError ? (
                     <p role="alert" className="error">Could not load this area: {areaError}</p>
