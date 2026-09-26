@@ -29,8 +29,14 @@ const validReply = {
   l1: { userVisible: true, bullets: ['A new settings screen is reachable from the app.'] },
   l2: {
     items: [
-      { id: 'storage', paths: ['packages/core/src/db.ts'], title: 'Storage layer', how: 'Adjusted a query.', why: 'reason not evident from the change' },
-      { id: 'settings-ui', paths: ['apps/web/src/App.tsx'], title: 'Settings screen', how: 'Added a new component.', why: 'Users asked for a settings page.' },
+      {
+        id: 'storage', paths: ['packages/core/src/db.ts'], title: 'Storage layer', effect: 'No visible change',
+        how: 'Adjusted a query.', why: 'reason not evident from the change',
+      },
+      {
+        id: 'settings-ui', paths: ['apps/web/src/App.tsx'], title: 'Settings screen', effect: 'A new settings screen is reachable from the app.',
+        how: 'Added a new component.', why: 'Users asked for a settings page.',
+      },
     ],
     notAnalysed: [],
   },
@@ -112,8 +118,8 @@ describe('checkDigestLevels', () => {
       ...validReply,
       l2: {
         items: [
-          { id: 'a', paths: ['packages/core/src/db.ts'], title: 't', how: 'h', why: 'w' },
-          { id: 'a', paths: ['apps/web/src/App.tsx'], title: 't2', how: 'h2', why: 'w2' },
+          { id: 'a', paths: ['packages/core/src/db.ts'], title: 't', effect: 'e', how: 'h', why: 'w' },
+          { id: 'a', paths: ['apps/web/src/App.tsx'], title: 't2', effect: 'e2', how: 'h2', why: 'w2' },
         ],
         notAnalysed: [],
       },
@@ -128,8 +134,8 @@ describe('checkDigestLevels', () => {
       ...validReply,
       l2: {
         items: [
-          { id: 'a', paths: ['packages/core/src/db.ts', 'not/in/digest.ts'], title: 't', how: 'h', why: 'w' },
-          { id: 'b', paths: ['also/not/in/digest.ts'], title: 't2', how: 'h2', why: 'w2' },
+          { id: 'a', paths: ['packages/core/src/db.ts', 'not/in/digest.ts'], title: 't', effect: 'e', how: 'h', why: 'w' },
+          { id: 'b', paths: ['also/not/in/digest.ts'], title: 't2', effect: 'e2', how: 'h2', why: 'w2' },
         ],
         notAnalysed: [],
       },
@@ -148,7 +154,7 @@ describe('checkDigestLevels', () => {
 
   it('caps areas at 8 and flags zero areas', () => {
     const many = Array.from({ length: 10 }, (_, i) => ({
-      id: `area-${i}`, paths: [FILES[0]!.path], title: 't', how: 'h', why: 'w',
+      id: `area-${i}`, paths: [FILES[0]!.path], title: 't', effect: 'e', how: 'h', why: 'w',
     }));
     const r = checkDigestLevels({ ...validReply, l2: { items: many, notAnalysed: [] } }, [FILES[0]!]);
     expect(r?.levels.l2.items).toHaveLength(8);
@@ -158,17 +164,32 @@ describe('checkDigestLevels', () => {
     expect(none?.violations.some((v) => v.includes('no usable areas'))).toBe(true);
   });
 
-  it('truncates an over-limit title/how/why and reuses the l0/l1 word-limit rules', () => {
+  it('truncates an over-limit title/effect/how/why and reuses the l0/l1 word-limit rules', () => {
     const longText = Array(50).fill('word').join(' ');
     const reply = {
       l0: { text: longText },
       l1: { userVisible: false, bullets: ['No user-visible change'] },
-      l2: { items: [{ id: 'a', paths: [FILES[0]!.path], title: longText, how: longText, why: longText }], notAnalysed: [] },
+      l2: { items: [{ id: 'a', paths: [FILES[0]!.path], title: longText, effect: longText, how: longText, why: longText }], notAnalysed: [] },
     };
     const r = checkDigestLevels(reply, [FILES[0]!]);
     expect(r?.violations.some((v) => v.includes('l0:'))).toBe(true);
     expect(r?.violations.some((v) => v.includes('title has'))).toBe(true);
+    expect(r?.violations.some((v) => v.includes('effect has'))).toBe(true);
     expect(r?.levels.l2.items[0]!.title.split(' ').length).toBeLessThanOrEqual(9); // 8 words + ellipsis token
+    expect(r?.levels.l2.items[0]!.effect.split(' ').length).toBeLessThanOrEqual(21); // 20 words + ellipsis token
+  });
+
+  it('rejects an area missing effect', () => {
+    const reply = { ...validReply, l2: { items: [{ ...validReply.l2.items[0], effect: undefined }], notAnalysed: [] } };
+    const r = checkDigestLevels(reply, [FILES[0]!]);
+    expect(r?.violations.some((v) => v.includes('malformed'))).toBe(true);
+    expect(r?.levels.l2.items).toHaveLength(0);
+  });
+
+  it('flags an effect containing a link', () => {
+    const reply = { ...validReply, l2: { items: [{ ...validReply.l2.items[0], effect: 'See https://example.com for details.' }], notAnalysed: [] } };
+    const r = checkDigestLevels(reply, [FILES[0]!]);
+    expect(r?.violations.some((v) => v.includes('contains HTML or a link'))).toBe(true);
   });
 });
 
@@ -277,7 +298,7 @@ describe('StubProvider.digest', () => {
     ]);
     const r = await explainDigest(db, id, new StubProvider(), { budget: 40 });
     expect(r.outcome).toBe('ok');
-    const l2 = JSON.parse(rows(db)[2]!.content) as { items: { id: string; paths: string[] }[]; notAnalysed: string[] };
+    const l2 = JSON.parse(rows(db)[2]!.content) as { items: { id: string; paths: string[]; effect: string }[]; notAnalysed: string[] };
     const byId = Object.fromEntries(l2.items.map((it) => [it.id, it.paths]));
     expect(byId['packages']).toEqual(['packages/core/src/db.ts', 'packages/explain/src/digest.ts']);
     expect(byId['apps']).toEqual(['apps/web/src/App.tsx']);
@@ -286,5 +307,31 @@ describe('StubProvider.digest', () => {
     // Cache hit: a second run makes no further call.
     const r2 = await explainDigest(db, id, new StubProvider(), { budget: 40 });
     expect(r2).toMatchObject({ outcome: 'cached', calls: 0 });
+  });
+
+  it('sets effect to "No visible change" for a tests-only area, and a fixed phrase otherwise', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigest(db, [
+      { path: 'packages/core/src/db.ts' },
+      { path: 'tests/db.test.ts' },
+    ]);
+    const r = await explainDigest(db, id, new StubProvider(), { budget: 40 });
+    expect(r.outcome).toBe('ok');
+    const l2 = JSON.parse(rows(db)[2]!.content) as { items: { id: string; paths: string[]; effect: string }[] };
+    const byId = Object.fromEntries(l2.items.map((it) => [it.id, it.effect]));
+    expect(byId['tests']).toBe('No visible change');
+    expect(byId['packages']).not.toBe('No visible change');
+  });
+
+  it('dedupes stub ids that collide after case-folding', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigest(db, [
+      { path: 'Foo/a.ts' },
+      { path: 'foo/b.ts' },
+    ]);
+    const r = await explainDigest(db, id, new StubProvider(), { budget: 40 });
+    expect(r.outcome).toBe('ok');
+    const l2 = JSON.parse(rows(db)[2]!.content) as { items: { id: string; paths: string[] }[] };
+    expect(l2.items.map((it) => it.id).sort()).toEqual(['foo', 'foo-2']);
   });
 });

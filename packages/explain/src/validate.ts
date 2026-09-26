@@ -13,10 +13,13 @@ export const LIMITS = {
   digestItemsMax: 8,
   digestTitleWords: 8,
   digestAreaWords: 30,
+  digestEffectWords: 20,
   digestIdMaxLen: 40,
 } as const;
 
 export const NO_CHANGE = 'No user-visible change';
+/** Required verbatim for a digest area's `effect` when nothing about it is user-visible. */
+export const NO_VISIBLE_CHANGE = 'No visible change';
 
 export interface CheckResult {
   /** Sanitised copy that satisfies every limit (over-limit parts are cut). */

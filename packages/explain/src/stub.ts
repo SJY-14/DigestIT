@@ -1,4 +1,4 @@
-import { NO_CHANGE, truncateWords } from './validate.js';
+import { NO_CHANGE, NO_VISIBLE_CHANGE, truncateWords } from './validate.js';
 import type {
   BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult, DigestInput, DigestResult,
   ExplanationInput, ExplanationProvider, ProviderFile, ProviderResult, RangeInput, RollupInput, RollupResult,
@@ -144,7 +144,7 @@ export class StubProvider implements ExplanationProvider {
         id,
         paths: files.map((f) => f.path),
         title: truncateWords(`Changes in ${dir}`, 8),
-        effect: isTestsOrDocs ? NO_CHANGE : 'Behavior in this area of the app may have changed.',
+        effect: isTestsOrDocs ? NO_VISIBLE_CHANGE : 'Behavior in this area of the app may have changed.',
         how: `${files.length} file(s) touched, +${a} -${d} lines.`,
         why: 'reason not evident from the change',
       };
