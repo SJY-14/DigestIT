@@ -203,6 +203,21 @@ describe('snapshot', () => {
     expect(dump).not.toContain('also-secret');
   });
 
+  it('drops a tracked file from the next snapshot once it becomes gitignored', async () => {
+    write('keep.txt', 'k\n');
+    write('secretish.txt', 'was tracked, not secret yet\n');
+    const shadow = await openShadow(data, proj);
+    const r1 = await snapshot(shadow);
+    expect(await listTree(shadow, r1.treeSha)).toEqual(['keep.txt', 'secretish.txt']);
+
+    write('.gitignore', 'secretish.txt\n');
+    const r2 = await snapshot(shadow, { parent: r1.treeSha });
+    expect(r2.skipped).toContainEqual({ path: 'secretish.txt', reason: 'denylist' });
+    expect(await listTree(shadow, r2.treeSha)).toEqual(['.gitignore', 'keep.txt']);
+    const files = await diff(shadow, r1.treeSha, r2.treeSha);
+    expect(files.find((f) => f.path === 'secretish.txt')?.status).toBe('D');
+  });
+
   it('skips files over the size cap and reports too_large', async () => {
     write('big.txt', 'x'.repeat(100));
     write('small.txt', 'ok\n');

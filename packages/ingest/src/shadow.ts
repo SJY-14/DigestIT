@@ -190,14 +190,17 @@ interface Categorized {
   keptOthers: string[];
   modified: string[];
   deleted: string[];
+  /** Already-tracked paths that now match the project's own `.gitignore` (added after they were first snapshotted). */
+  trackedIgnored: string[];
 }
 
 async function listCategorized(shadow: Shadow): Promise<Categorized> {
-  const [ignoredOut, keptOut, modifiedOut, deletedOut] = await Promise.all([
+  const [ignoredOut, keptOut, modifiedOut, deletedOut, trackedIgnoredOut] = await Promise.all([
     runGit(shadow, ['ls-files', '-z', '--others', '--ignored', '--directory', '--exclude-standard']),
     runGit(shadow, ['ls-files', '-z', '--others', '--exclude-standard']),
     runGit(shadow, ['ls-files', '-z', '--modified']),
     runGit(shadow, ['ls-files', '-z', '--deleted']),
+    runGit(shadow, ['ls-files', '-z', '--cached', '--ignored', '--exclude-standard']),
   ]);
   const noDotGit = (paths: string[]) => paths.filter((p) => !p.split('/').includes('.git'));
   return {
@@ -205,6 +208,7 @@ async function listCategorized(shadow: Shadow): Promise<Categorized> {
     keptOthers: noDotGit(nul(keptOut)),
     modified: noDotGit(nul(modifiedOut)),
     deleted: noDotGit(nul(deletedOut)),
+    trackedIgnored: noDotGit(nul(trackedIgnoredOut)),
   };
 }
 
@@ -228,7 +232,7 @@ interface ChangeSet {
  * file that turns denylisted is the one case that *is* removed, to scrub it from the store.
  */
 async function computeChanges(shadow: Shadow): Promise<ChangeSet> {
-  const { ignored, keptOthers, modified, deleted } = await listCategorized(shadow);
+  const { ignored, keptOthers, modified, deleted, trackedIgnored } = await listCategorized(shadow);
   const toAdd: string[] = [];
   const toDelete: string[] = [...deleted];
   const skipped: SkippedFile[] = [];
@@ -237,6 +241,14 @@ async function computeChanges(shadow: Shadow): Promise<ChangeSet> {
     if (matchesDenylist(path)) {
       skipped.push({ path: isDirBoundary(path) ? path.slice(0, -1) : path, reason: 'denylist' });
     }
+  }
+
+  // A tracked file that now matches the project's own .gitignore (added after the file was first
+  // snapshotted) is pruned the same way a tracked-then-denylisted file is: removed from the shadow
+  // index and reported, so it stops reappearing in every future digest.
+  for (const path of trackedIgnored) {
+    skipped.push({ path, reason: 'denylist' });
+    toDelete.push(path);
   }
 
   const checkOne = async (path: string, tracked: boolean): Promise<void> => {
