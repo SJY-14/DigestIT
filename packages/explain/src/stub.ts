@@ -1,8 +1,21 @@
 import { NO_CHANGE, truncateWords } from './validate.js';
 import type {
-  BriefingFacts, BriefingResult, BriefingSentence, ExplanationInput, ExplanationProvider,
+  BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult, ExplanationInput, ExplanationProvider,
   ProviderResult, RangeInput, RollupInput, RollupResult,
 } from './provider.js';
+
+function firstSentence(text: string): string {
+  const line = text.split('\n').map((l) => l.trim()).find((l) => l !== '' && !l.startsWith('#')) ?? text.trim();
+  const m = /^(.*?[.!?])(\s|$)/.exec(line);
+  return (m ? m[1]! : line).trim();
+}
+
+function topExtension(extensions: Record<string, number>): string {
+  const entries = Object.entries(extensions).filter(([e]) => e !== '');
+  if (entries.length === 0) return 'files with no extension';
+  entries.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  return `.${entries[0]![0]} files`;
+}
 
 /** Deterministic placeholder built from the commit message and diffstat. No network, no process. */
 export class StubProvider implements ExplanationProvider {
@@ -80,5 +93,26 @@ export class StubProvider implements ExplanationProvider {
       sentences.push({ text: `${u.key}: ${truncateWords(u.l0, 30)}`, units: [u.key] });
     }
     return { sentences: sentences.slice(0, 5), provider: this.id, model: this.model };
+  }
+
+  /** Deterministic placeholder built from the map's own directories and manifests. No network, no process. */
+  async explainContext(input: ContextInput): Promise<ContextResult> {
+    const { map } = input;
+    const topDirs = map.dirs.filter((d) => d.path !== '').sort((a, b) => b.fileCount - a.fileCount || (a.path < b.path ? -1 : 1)).slice(0, 5);
+    const modules = topDirs.map((d) => ({ path: d.path, role: `${d.fileCount} file(s), mostly ${topExtension(d.extensions)}` }));
+    const manifestNames = map.manifests.map((m) => m.name).filter((n): n is string => n !== null);
+    const purpose = map.readme
+      ? truncateWords(firstSentence(map.readme.content), 20)
+      : `A ${map.manifests[0]?.kind ?? 'code'} project with ${map.totalFiles} file(s).`;
+    return {
+      provider: this.id,
+      model: this.model,
+      content: {
+        purpose,
+        modules,
+        glossary: manifestNames.slice(0, 5).map((n) => ({ term: n, meaning: 'a package in this project' })),
+        conventions: map.manifests.flatMap((m) => m.scripts ?? []).slice(0, 10).map((s) => `Run "${s}" via the package manager.`),
+      },
+    };
   }
 }

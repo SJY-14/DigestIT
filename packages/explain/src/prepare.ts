@@ -44,7 +44,7 @@ export interface PreparedInput {
   truncated: string[];
 }
 
-const LOCKFILES = new Set([
+export const LOCKFILES = new Set([
   'pnpm-lock.yaml', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'bun.lockb', 'bun.lock',
   'cargo.lock', 'gemfile.lock', 'poetry.lock', 'pipfile.lock', 'composer.lock', 'go.sum',
   'packages.lock.json', 'pubspec.lock', 'podfile.lock', 'flake.lock', 'uv.lock', 'gradle.lockfile',

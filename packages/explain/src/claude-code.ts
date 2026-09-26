@@ -4,6 +4,8 @@ import type {
   AllLevels,
   BriefingFacts,
   BriefingResult,
+  ContextInput,
+  ContextResult,
   ExplanationInput,
   ExplanationProvider,
   ProviderResult,
@@ -14,6 +16,7 @@ import type {
 import { buildPrompt } from './prompt.js';
 import { buildRangePrompt, buildRollupPrompt } from './range.js';
 import { buildBriefingPrompt } from './briefing.js';
+import { buildContextPrompt } from './context.js';
 
 export type SpawnFn = (cmd: string, args: string[]) => ChildProcessWithoutNullStreams;
 
@@ -96,6 +99,14 @@ export class ClaudeCodeProvider implements ExplanationProvider {
     const v = parseJson(await this.call(buildBriefingPrompt(input)));
     if (!Array.isArray(v.sentences)) throw new Error('invalid sentences');
     return { sentences: v.sentences as BriefingResult['sentences'], provider: this.id, model: this.model };
+  }
+
+  async explainContext(input: ContextInput): Promise<ContextResult> {
+    const v = parseJson(await this.call(buildContextPrompt(input)));
+    if (typeof v.purpose !== 'string' || !Array.isArray(v.modules) || !Array.isArray(v.glossary) || !Array.isArray(v.conventions)) {
+      throw new Error('invalid project context');
+    }
+    return { content: v as unknown as ContextResult['content'], provider: this.id, model: this.model };
   }
 
   /** Runs one prompt and returns the model's text result. */

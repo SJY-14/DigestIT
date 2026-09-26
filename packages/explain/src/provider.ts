@@ -1,4 +1,4 @@
-import type { L0Content, L1Content, L2Content, L3Content } from '@digestit/core';
+import type { L0Content, L1Content, L2Content, L3Content, ProjectContextContent } from '@digestit/core';
 
 export interface ProviderFile {
   path: string;
@@ -133,6 +133,67 @@ export interface BriefingResult {
   model: string;
 }
 
+// ---- Project context (DIG-36, docs/direction-v2.md §3) ----
+
+/** Per-directory rollup inside a `ProjectMap`; `path` is `''` for the project root. */
+export interface ProjectMapDir {
+  path: string;
+  fileCount: number;
+  /** Extension (no dot; `''` for none) to file count, within this directory only. */
+  extensions: Record<string, number>;
+}
+
+export type ManifestKind = 'package.json' | 'pyproject.toml' | 'Cargo.toml' | 'go.mod';
+
+export interface ProjectManifest {
+  path: string;
+  kind: ManifestKind;
+  name: string | null;
+  description: string | null;
+  /** `package.json` script names only (no commands); `null` for other manifest kinds. */
+  scripts: string[] | null;
+  /** `package.json` workspaces globs; `null` for other manifest kinds. */
+  workspaces: string[] | null;
+}
+
+export interface ProjectDoc {
+  path: string;
+  headings: string[];
+}
+
+/**
+ * Deterministic structural map of a project: no LLM call. Built from the
+ * (already ignore/denylist-filtered) tracked file list.
+ */
+export interface ProjectMap {
+  /** Up to 400 paths, sorted; the full set is still reflected in `dirs` and `totalFiles`. */
+  paths: string[];
+  truncatedPaths: boolean;
+  totalFiles: number;
+  /** First path segment of every non-root file, sorted and de-duplicated. */
+  topLevelDirs: string[];
+  dirs: ProjectMapDir[];
+  readme: { path: string; content: string; truncated: boolean } | null;
+  manifests: ProjectManifest[];
+  docs: ProjectDoc[];
+  /** Deterministic hash of everything above; equal maps hash equal. */
+  sourceHash: string;
+}
+
+export interface ContextInput {
+  repoName: string;
+  map: ProjectMap;
+  /** Redacted and capped by the caller; `null` when the project has no user-authored context. */
+  userMd: string | null;
+  retryFeedback?: string[];
+}
+
+export interface ContextResult {
+  content: ProjectContextContent;
+  provider: string;
+  model: string;
+}
+
 export interface ExplanationProvider {
   readonly id: string;
   readonly model: string;
@@ -144,4 +205,6 @@ export interface ExplanationProvider {
   rollup?(input: RollupInput): Promise<RollupResult>;
   /** One text-only call returns a ≤5-sentence narrative over facts + unit L0/L1 text. */
   briefing?(input: BriefingFacts): Promise<BriefingResult>;
+  /** One call returns the project's purpose, key modules, glossary and conventions. */
+  explainContext?(input: ContextInput): Promise<ContextResult>;
 }

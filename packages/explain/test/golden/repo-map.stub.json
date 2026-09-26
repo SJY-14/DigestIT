@@ -1,0 +1,573 @@
+{
+ "map": {
+  "paths": [
+   ".dockerignore",
+   ".gitignore",
+   "Dockerfile",
+   "LICENSE",
+   "README.md",
+   "apps/server/fixtures/insights-90d.json",
+   "apps/server/package.json",
+   "apps/server/scripts/export-insights-snapshot.mjs",
+   "apps/server/src/app.test.ts",
+   "apps/server/src/app.ts",
+   "apps/server/src/areas.test.ts",
+   "apps/server/src/areas.ts",
+   "apps/server/src/auth.test.ts",
+   "apps/server/src/auth.ts",
+   "apps/server/src/cli.ts",
+   "apps/server/src/csp.ts",
+   "apps/server/src/fixture.test.ts",
+   "apps/server/src/fixture.ts",
+   "apps/server/src/index.ts",
+   "apps/server/src/insights.perf.test.ts",
+   "apps/server/src/insights.route.test.ts",
+   "apps/server/src/insights.test.ts",
+   "apps/server/src/insights.ts",
+   "apps/server/src/live.test.ts",
+   "apps/server/src/live.ts",
+   "apps/server/src/serve.ts",
+   "apps/server/src/servecli.test.ts",
+   "apps/server/src/servecli.ts",
+   "apps/server/src/uievents.test.ts",
+   "apps/server/src/uievents.ts",
+   "apps/server/tsconfig.json",
+   "apps/web/index.html",
+   "apps/web/package.json",
+   "apps/web/src/App.test.tsx",
+   "apps/web/src/App.tsx",
+   "apps/web/src/DrillList.test.tsx",
+   "apps/web/src/DrillList.tsx",
+   "apps/web/src/Graph.tsx",
+   "apps/web/src/Insights.test.tsx",
+   "apps/web/src/Insights.tsx",
+   "apps/web/src/Panel.tsx",
+   "apps/web/src/Units.test.tsx",
+   "apps/web/src/Units.tsx",
+   "apps/web/src/api.ts",
+   "apps/web/src/charts/BarSeries.tsx",
+   "apps/web/src/charts/DotStrip.tsx",
+   "apps/web/src/charts/GridHeatmap.tsx",
+   "apps/web/src/charts/Legend.tsx",
+   "apps/web/src/charts/LineSeries.tsx",
+   "apps/web/src/charts/PrimitivesGallery.tsx",
+   "apps/web/src/charts/charts.test.tsx",
+   "apps/web/src/charts/fixtures.ts",
+   "apps/web/src/charts/gallery.test.tsx",
+   "apps/web/src/charts/roving.ts",
+   "apps/web/src/charts/scale.test.ts",
+   "apps/web/src/charts/scale.ts",
+   "apps/web/src/diff.test.ts",
+   "apps/web/src/diff.ts",
+   "apps/web/src/feed.test.ts",
+   "apps/web/src/feed.ts",
+   "apps/web/src/format.test.ts",
+   "apps/web/src/format.ts",
+   "apps/web/src/lanes.test.ts",
+   "apps/web/src/lanes.ts",
+   "apps/web/src/level.test.ts",
+   "apps/web/src/level.ts",
+   "apps/web/src/liveClient.test.ts",
+   "apps/web/src/liveClient.ts",
+   "apps/web/src/main.tsx",
+   "apps/web/src/styles.css",
+   "apps/web/src/useLive.ts",
+   "apps/web/src/useTimeline.ts",
+   "apps/web/tsconfig.json",
+   "apps/web/vite.config.ts",
+   "bin/digest.js",
+   "docs/abstraction-levels.md",
+   "docs/architecture.md",
+   "docs/direction-v2.md",
+   "docs/milestone-2.md",
+   "docs/milestone-3.md",
+   "docs/operations.md",
+   "docs/packaging.md",
+   "docs/roadmap.md",
+   "docs/ui/metrics-dark.png",
+   "docs/ui/metrics-light.png",
+   "docs/ui/panel-dark.png",
+   "docs/ui/panel-light.png",
+   "docs/ui/primitives-dark.png",
+   "docs/ui/primitives-light.png",
+   "docs/ui/timeline-dark.png",
+   "docs/ui/timeline-light.png",
+   "docs/ui/units-dark.png",
+   "docs/ui/units-light.png",
+   "package.json",
+   "packages/core/package.json",
+   "packages/core/src/db.test.ts",
+   "packages/core/src/db.ts",
+   "packages/core/src/graph.test.ts",
+   "packages/core/src/graph.ts",
+   "packages/core/src/index.ts",
+   "packages/core/src/types.ts",
+   "packages/core/src/v2.ts",
+   "packages/core/tsconfig.json",
+   "packages/explain/package.json",
+   "packages/explain/src/briefing.test.ts",
+   "packages/explain/src/briefing.ts",
+   "packages/explain/src/claude-code.ts",
+   "packages/explain/src/cli.ts",
+   "packages/explain/src/config.ts",
+   "packages/explain/src/difflines.test.ts",
+   "packages/explain/src/difflines.ts",
+   "packages/explain/src/index.ts",
+   "packages/explain/src/pipeline.test.ts",
+   "packages/explain/src/pipeline.ts",
+   "packages/explain/src/prepare.test.ts",
+   "packages/explain/src/prepare.ts",
+   "packages/explain/src/prompt.ts",
+   "packages/explain/src/provider.ts",
+   "packages/explain/src/providers.test.ts",
+   "packages/explain/src/range.test.ts",
+   "packages/explain/src/range.ts",
+   "packages/explain/src/redact.ts",
+   "packages/explain/src/run-cli.ts",
+   "packages/explain/src/stub.ts",
+   "packages/explain/src/validate.test.ts",
+   "packages/explain/src/validate.ts",
+   "packages/explain/test/fixtures/3dd6389.json",
+   "packages/explain/test/fixtures/briefing-window.json",
+   "packages/explain/test/golden/3dd6389.claude.json",
+   "packages/explain/test/golden/3dd6389.stub.json",
+   "packages/explain/test/golden/briefing-sample.stub.json",
+   "packages/explain/test/golden/range-3-commits.stub.json",
+   "packages/explain/test/golden/range-oversize.golden.json",
+   "packages/explain/test/golden/rollup-3-units.stub.json",
+   "packages/explain/test/reference-3dd6389.json",
+   "packages/explain/tsconfig.json",
+   "packages/ingest/package.json",
+   "packages/ingest/src/cli.ts",
+   "packages/ingest/src/git.ts",
+   "packages/ingest/src/index.ts",
+   "packages/ingest/src/ingest.test.ts",
+   "packages/ingest/src/ingest.ts",
+   "packages/ingest/src/rollup.test.ts",
+   "packages/ingest/src/rollup.ts",
+   "packages/ingest/src/route.test.ts",
+   "packages/ingest/src/route.ts",
+   "packages/ingest/src/scheduler.test.ts",
+   "packages/ingest/src/scheduler.ts",
+   "packages/ingest/src/watch.test.ts",
+   "packages/ingest/src/watch.ts",
+   "packages/ingest/src/workunits.test.ts",
+   "packages/ingest/src/workunits.ts",
+   "packages/ingest/tsconfig.json",
+   "pnpm-workspace.yaml",
+   "scripts/packaging/build-sea.mjs",
+   "scripts/packaging/sea-entry.mjs",
+   "tsconfig.base.json"
+  ],
+  "truncatedPaths": false,
+  "totalFiles": 157,
+  "topLevelDirs": [
+   "apps",
+   "bin",
+   "docs",
+   "packages",
+   "scripts"
+  ],
+  "dirs": [
+   {
+    "path": "",
+    "fileCount": 8,
+    "extensions": {
+     "": 4,
+     "json": 2,
+     "md": 1,
+     "yaml": 1
+    }
+   },
+   {
+    "path": "apps/server",
+    "fileCount": 2,
+    "extensions": {
+     "json": 2
+    }
+   },
+   {
+    "path": "apps/server/fixtures",
+    "fileCount": 1,
+    "extensions": {
+     "json": 1
+    }
+   },
+   {
+    "path": "apps/server/scripts",
+    "fileCount": 1,
+    "extensions": {
+     "mjs": 1
+    }
+   },
+   {
+    "path": "apps/server/src",
+    "fileCount": 22,
+    "extensions": {
+     "ts": 22
+    }
+   },
+   {
+    "path": "apps/web",
+    "fileCount": 4,
+    "extensions": {
+     "html": 1,
+     "json": 2,
+     "ts": 1
+    }
+   },
+   {
+    "path": "apps/web/src",
+    "fileCount": 27,
+    "extensions": {
+     "css": 1,
+     "ts": 15,
+     "tsx": 11
+    }
+   },
+   {
+    "path": "apps/web/src/charts",
+    "fileCount": 12,
+    "extensions": {
+     "ts": 4,
+     "tsx": 8
+    }
+   },
+   {
+    "path": "bin",
+    "fileCount": 1,
+    "extensions": {
+     "js": 1
+    }
+   },
+   {
+    "path": "docs",
+    "fileCount": 8,
+    "extensions": {
+     "md": 8
+    }
+   },
+   {
+    "path": "docs/ui",
+    "fileCount": 10,
+    "extensions": {
+     "png": 10
+    }
+   },
+   {
+    "path": "packages/core",
+    "fileCount": 2,
+    "extensions": {
+     "json": 2
+    }
+   },
+   {
+    "path": "packages/core/src",
+    "fileCount": 7,
+    "extensions": {
+     "ts": 7
+    }
+   },
+   {
+    "path": "packages/explain",
+    "fileCount": 2,
+    "extensions": {
+     "json": 2
+    }
+   },
+   {
+    "path": "packages/explain/src",
+    "fileCount": 22,
+    "extensions": {
+     "ts": 22
+    }
+   },
+   {
+    "path": "packages/explain/test",
+    "fileCount": 1,
+    "extensions": {
+     "json": 1
+    }
+   },
+   {
+    "path": "packages/explain/test/fixtures",
+    "fileCount": 2,
+    "extensions": {
+     "json": 2
+    }
+   },
+   {
+    "path": "packages/explain/test/golden",
+    "fileCount": 6,
+    "extensions": {
+     "json": 6
+    }
+   },
+   {
+    "path": "packages/ingest",
+    "fileCount": 2,
+    "extensions": {
+     "json": 2
+    }
+   },
+   {
+    "path": "packages/ingest/src",
+    "fileCount": 15,
+    "extensions": {
+     "ts": 15
+    }
+   },
+   {
+    "path": "scripts/packaging",
+    "fileCount": 2,
+    "extensions": {
+     "mjs": 2
+    }
+   }
+  ],
+  "readme": {
+   "path": "README.md",
+   "content": "# DigestIT\n\nAI generates changes faster than people can read them. DigestIT tracks project\ndiffs and explains each change at multiple levels of abstraction — from a\none-line business summary down to line-by-line code detail — on a timeline\ndashboard, so humans can keep up with AI-driven work.\n\n## License\n\nDigestIT is source-available under the [Business Source License 1.1](LICENSE).\n\n- **Free** for individuals and for organizations using it internally, including in production.\n- **Not permitted:** offering DigestIT, or a substantially similar derivative, to third parties as a competing hosted/managed/SaaS service.\n- **Each version converts to Apache 2.0** four years after its release (first Change Date: 2030-09-24).\n\nFor other licensing arrangements, open an issue on this repository.\n",
+   "truncated": false
+  },
+  "manifests": [
+   {
+    "path": "apps/server/package.json",
+    "kind": "package.json",
+    "name": "@digestit/server",
+    "description": null,
+    "scripts": [
+     "build",
+     "test",
+     "fixture:snapshot"
+    ],
+    "workspaces": null
+   },
+   {
+    "path": "apps/web/package.json",
+    "kind": "package.json",
+    "name": "@digestit/web",
+    "description": null,
+    "scripts": [
+     "dev",
+     "build",
+     "test"
+    ],
+    "workspaces": null
+   },
+   {
+    "path": "package.json",
+    "kind": "package.json",
+    "name": "digestit",
+    "description": null,
+    "scripts": [
+     "build",
+     "digest",
+     "test"
+    ],
+    "workspaces": null
+   },
+   {
+    "path": "packages/core/package.json",
+    "kind": "package.json",
+    "name": "@digestit/core",
+    "description": null,
+    "scripts": [
+     "build",
+     "test"
+    ],
+    "workspaces": null
+   },
+   {
+    "path": "packages/explain/package.json",
+    "kind": "package.json",
+    "name": "@digestit/explain",
+    "description": null,
+    "scripts": [
+     "build",
+     "test"
+    ],
+    "workspaces": null
+   },
+   {
+    "path": "packages/ingest/package.json",
+    "kind": "package.json",
+    "name": "@digestit/ingest",
+    "description": null,
+    "scripts": [
+     "build",
+     "test"
+    ],
+    "workspaces": null
+   }
+  ],
+  "docs": [
+   {
+    "path": "docs/abstraction-levels.md",
+    "headings": [
+     "Abstraction levels (L0–L3)",
+     "Worked example — commit `3dd6389` \"Add Business Source License 1.1 and README\""
+    ]
+   },
+   {
+    "path": "docs/architecture.md",
+    "headings": [
+     "DigestIT MVP architecture",
+     "1. Board decisions (approved 2026-09-24)",
+     "D2 options in detail",
+     "2. Components",
+     "3. Data model",
+     "4. Explanation generation and caching",
+     "5. API (read-only, JSON)",
+     "6. Security posture"
+    ]
+   },
+   {
+    "path": "docs/direction-v2.md",
+    "headings": [
+     "Direction v2: standalone project digester",
+     "1. Data model (migration 6, additive)",
+     "2. Shadow tracking (O1)",
+     "3. Context building (O2)",
+     "4. Explain, lazy L3 and budget",
+     "5. UI flow",
+     "6. Migration from the current model",
+     "7. Open decisions for the Board"
+    ]
+   },
+   {
+    "path": "docs/milestone-2.md",
+    "headings": [
+     "Milestone 2 — real-time tracking of agent work",
+     "Decisions (options → recommendation)",
+     "Data model changes (SQLite, additive migrations)",
+     "Metrics (local only, no telemetry)",
+     "Security",
+     "Build issues",
+     "Risks"
+    ]
+   },
+   {
+    "path": "docs/milestone-3.md",
+    "headings": [
+     "Milestone 3 — thinking aids (proposal)",
+     "Candidates → recommendation",
+     "Decisions (options → recommendation)",
+     "Data and API changes",
+     "Build issues",
+     "Risks"
+    ]
+   },
+   {
+    "path": "docs/operations.md",
+    "headings": [
+     "Operations",
+     "Running locally (loopback only, no token)",
+     "Publishing over the tailnet (port 4780)",
+     "1. Create the token",
+     "2. Start the server with the allowlist + token",
+     "3. Log in from the browser",
+     "Rotating the token",
+     "Environment variables"
+    ]
+   },
+   {
+    "path": "docs/packaging.md",
+    "headings": [
+     "Packaging spike (DIG-32)",
+     "TL;DR",
+     "1. Single executable (Node SEA)",
+     "How it's built",
+     "Web assets: embedded + extracted at startup",
+     "`node:sqlite` and native modules",
+     "`import.meta` bundling fix (real source change, not a workaround)",
+     "Verified end to end (linux-x64, this sandbox)",
+     "GET /api/repos            -> 200",
+     "GET /                     -> 200, dashboard HTML referencing /assets/index-*.js",
+     "GET /assets/index-*.js    -> 200, application/javascript",
+     "Size",
+     "Cold startup (process start → first `200` on `/api/work-units`)",
+     "Platform matrix",
+     "How the owner would run it on their device",
+     "2. Container",
+     "Availability in this sandbox",
+     "What's committed anyway",
+     "Bind-address trade-off (unchanged, as instructed)",
+     "Recommendation"
+    ]
+   },
+   {
+    "path": "docs/roadmap.md",
+    "headings": [
+     "Roadmap",
+     "Direction v2 — standalone project digester (current priority)",
+     "Milestone 1 — MVP: explain DigestIT's own history",
+     "Acceptance criteria",
+     "Milestone 2 — real-time tracking of agent work",
+     "Milestone 3 — thinking aids (paused by direction v2)",
+     "Later"
+    ]
+   }
+  ],
+  "sourceHash": "2b63544f9ebb54beebf7dbfa456ba1579be1742c7d4b07706d30f68f6db18e8d"
+ },
+ "content": {
+  "purpose": "AI generates changes faster than people can read them.",
+  "modules": [
+   {
+    "path": "apps/web/src",
+    "role": "27 file(s), mostly .ts files"
+   },
+   {
+    "path": "apps/server/src",
+    "role": "22 file(s), mostly .ts files"
+   },
+   {
+    "path": "packages/explain/src",
+    "role": "22 file(s), mostly .ts files"
+   },
+   {
+    "path": "packages/ingest/src",
+    "role": "15 file(s), mostly .ts files"
+   },
+   {
+    "path": "apps/web/src/charts",
+    "role": "12 file(s), mostly .tsx files"
+   }
+  ],
+  "glossary": [
+   {
+    "term": "@digestit/server",
+    "meaning": "a package in this project"
+   },
+   {
+    "term": "@digestit/web",
+    "meaning": "a package in this project"
+   },
+   {
+    "term": "digestit",
+    "meaning": "a package in this project"
+   },
+   {
+    "term": "@digestit/core",
+    "meaning": "a package in this project"
+   },
+   {
+    "term": "@digestit/explain",
+    "meaning": "a package in this project"
+   }
+  ],
+  "conventions": [
+   "Run \"build\" via the package manager.",
+   "Run \"test\" via the package manager.",
+   "Run \"fixture:snapshot\" via the package manager.",
+   "Run \"dev\" via the package manager.",
+   "Run \"build\" via the package manager.",
+   "Run \"test\" via the package manager.",
+   "Run \"build\" via the package manager.",
+   "Run \"digest\" via the package manager.",
+   "Run \"test\" via the package manager.",
+   "Run \"build\" via the package manager."
+  ]
+ }
+}
