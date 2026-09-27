@@ -236,8 +236,8 @@ interface Categorized {
   trackedIgnored: string[];
   /**
    * Untracked paths ignored only via `shadow.gitExcludeFiles` (the project's own `info/exclude`
-   * or the global excludes file) — not `.gitignore`, not the denylist. File-level, no
-   * `--directory` collapsing (unlike `ignored`), computed by diffing two file-level listings.
+   * or the global excludes file) — not `.gitignore`, not the denylist. File-level: the
+   * `keptOthers` entries that disappear once `shadow.gitExcludeFiles` are applied too.
    */
   gitExcludedOthers: string[];
   /** Already-tracked paths that now match one of `shadow.gitExcludeFiles`. */
@@ -246,27 +246,29 @@ interface Categorized {
 
 async function listCategorized(shadow: Shadow): Promise<Categorized> {
   const excludeArgs = shadow.gitExcludeFiles.flatMap((f) => ['--exclude-from', f]);
-  const [ignoredOut, keptOut, modifiedOut, deletedOut, trackedIgnoredOut, ignoredFileLevelOut, extOthersOut, extTrackedOut] = await Promise.all([
+  const [ignoredOut, keptOut, modifiedOut, deletedOut, trackedIgnoredOut, keptWithExtOut, extTrackedOut] = await Promise.all([
     runGit(shadow, ['ls-files', '-z', '--others', '--ignored', '--directory', '--exclude-standard']),
     runGit(shadow, ['ls-files', '-z', '--others', '--exclude-standard']),
     runGit(shadow, ['ls-files', '-z', '--modified']),
     runGit(shadow, ['ls-files', '-z', '--deleted']),
     runGit(shadow, ['ls-files', '-z', '--cached', '--ignored', '--exclude-standard']),
-    excludeArgs.length ? runGit(shadow, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard']) : Promise.resolve(''),
-    excludeArgs.length ? runGit(shadow, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', ...excludeArgs]) : Promise.resolve(''),
+    // Only non-ignored listings here: a file-level `--ignored` listing would walk every file
+    // under node_modules/ and the like on every snapshot and pending() call.
+    excludeArgs.length ? runGit(shadow, ['ls-files', '-z', '--others', '--exclude-standard', ...excludeArgs]) : null,
     excludeArgs.length ? runGit(shadow, ['ls-files', '-z', '--cached', '--ignored', '--exclude-standard', ...excludeArgs]) : Promise.resolve(''),
   ]);
   const noDotGit = (paths: string[]) => paths.filter((p) => !p.split('/').includes('.git'));
+  const keptOthers = noDotGit(nul(keptOut));
   const trackedIgnored = noDotGit(nul(trackedIgnoredOut));
-  const ignoredFileLevel = new Set(noDotGit(nul(ignoredFileLevelOut)));
+  const keptWithExt = keptWithExtOut === null ? null : new Set(noDotGit(nul(keptWithExtOut)));
   const trackedIgnoredSet = new Set(trackedIgnored);
   return {
     ignored: noDotGit(nul(ignoredOut)),
-    keptOthers: noDotGit(nul(keptOut)),
+    keptOthers,
     modified: noDotGit(nul(modifiedOut)),
     deleted: noDotGit(nul(deletedOut)),
     trackedIgnored,
-    gitExcludedOthers: noDotGit(nul(extOthersOut)).filter((p) => !ignoredFileLevel.has(p)),
+    gitExcludedOthers: keptWithExt === null ? [] : keptOthers.filter((p) => !keptWithExt.has(p)),
     gitExcludedTracked: noDotGit(nul(extTrackedOut)).filter((p) => !trackedIgnoredSet.has(p)),
   };
 }
