@@ -95,16 +95,16 @@ function AreaFile({ file, annotations, focused, expandAllTick }: {
     }
   }, [focused]);
 
-  // Skip the mount-time invocation regardless of the tick's starting value: 'e' may have been
-  // pressed before this file existed (e.g. while status was 'none'), leaving expandAllTick > 0
-  // when it first mounts, which must not bypass the notes-gated collapse above.
-  const mounted = useRef(false);
+  // Expand only when the tick differs from its value at mount: 'e' may have been pressed before
+  // this file existed (e.g. while status was 'none'), and that must not bypass the notes-gated
+  // collapse above. Comparing values (not a "has mounted" flag) keeps StrictMode's double-invoked
+  // mount effect from counting as a press.
+  const mountTick = useRef(expandAllTick);
   useEffect(() => {
-    if (mounted.current) {
+    if (expandAllTick !== mountTick.current) {
       setOpen(true);
       setShowAll(true);
     }
-    mounted.current = true;
   }, [expandAllTick]);
 
   return (

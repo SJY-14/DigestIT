@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ReactElement } from 'react';
+import { act, StrictMode, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AreaDetailDto } from '@digestit/core';
@@ -189,6 +189,15 @@ describe('AreaView', () => {
     await render(<AreaView area={noNotes} title="x" onBack={noop} onGenerate={noop} />);
     const details = host.querySelector('details.file') as HTMLDetailsElement;
     expect(details.open).toBe(false);
+  });
+
+  it('a file with no notes starts collapsed under StrictMode (double-invoked mount effects)', async () => {
+    const noNotes: AreaDetailDto = { ...fixtureArea, files: [{ ...fixtureArea.files[0]!, path: 'apps/web/src/MainV2.tsx' }] };
+    await render(<StrictMode><AreaView area={noNotes} title="x" onBack={noop} onGenerate={noop} /></StrictMode>);
+    const details = host.querySelector('details.file') as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    await key('e');
+    expect(details.open).toBe(true);
   });
 
   it('lists filtered files separately under "Not analysed"', async () => {
