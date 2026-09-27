@@ -7,6 +7,7 @@ import { openDb } from '@digestit/core';
 import { createProvider } from '@digestit/explain';
 import { ensureDir0700, initProject, projectDataDir } from '@digestit/ingest';
 import { buildApp } from './app.js';
+import { SESSION_COOKIE } from './auth.js';
 import type { V2Options } from './v2.js';
 
 let root: string;
@@ -205,6 +206,42 @@ describe('v2 write-route auth/CSRF', () => {
     closers.push(app);
     const res = await post(app, `/api/projects/${repoId}/explain`, {}, auth);
     expect(res.statusCode).toBe(405);
+  });
+
+  it('413s a body over the write route body limit', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const res = await post(app, `/api/projects/${repoId}/explain`, { junk: 'x'.repeat(20_000) });
+    expect(res.statusCode).toBe(413);
+  });
+});
+
+describe('GET /?token= bootstrap (loopback, writeToken only, no DIGESTIT_ALLOWED_HOSTS)', () => {
+  it('sets a cookie good enough to authenticate a write, on a correct token', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const login = await app.inject({ method: 'GET', url: `/?token=${WRITE_TOKEN}` });
+    expect(login.statusCode).toBe(302);
+    expect(login.headers['set-cookie']).toContain(`${SESSION_COOKIE}=${WRITE_TOKEN}`);
+    const cookie = (login.headers['set-cookie'] as string).split(';', 1)[0]!;
+    const { authorization: _drop, ...withoutBearer } = auth;
+    const res = await post(app, `/api/projects/${repoId}/explain`, {}, { ...withoutBearer, cookie });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('401s a wrong token and sets no cookie', async () => {
+    const { db } = await setup();
+    const app = makeApp(db);
+    const res = await app.inject({ method: 'GET', url: '/?token=wrong' });
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('reads stay open with no ?token= at all (no regression for plain GETs)', async () => {
+    const { db } = await setup();
+    const app = makeApp(db);
+    const res = await app.inject({ method: 'GET', url: '/api/projects' });
+    expect(res.statusCode).toBe(200);
   });
 });
 

@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import fastifyStatic from '@fastify/static';
-import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { SESSION_COOKIE, tokensMatch, type AuthOptions } from './auth.js';
 import { checkSameOrigin, header } from './csrf.js';
 import { CSP } from './csp.js';
@@ -37,7 +37,8 @@ export interface AppOptions {
   /**
    * Token that gates every v2 write route (docs/direction-v2.md §4), even on plain loopback with no
    * `auth` configured. Defaults to `auth.token` when set (one token for the whole server); otherwise
-   * a dedicated write-only token (see `resolveOrCreateWriteToken`). Omitted with `v2` set: writes 500.
+   * a dedicated write-only token (see `resolveOrCreateWriteToken`). Omitted with `v2` set: those
+   * routes are treated as ordinary (unregistered) POSTs and get 405, same as before `v2` existed.
    */
   writeToken?: string;
 }
@@ -68,6 +69,27 @@ export function isAllowedHost(host: string | undefined, allowedHosts: ReadonlySe
   if (isLoopbackHost(host)) return true;
   if (!host) return false;
   return allowedHosts.has(host.trim().toLowerCase());
+}
+
+/**
+ * `GET /?token=<t>` bootstrap: sets the session cookie and redirects to `/` with the query string
+ * stripped, so the token never lands in browser history for that URL. Returns true once it has
+ * fully handled the request (a redirect or a 401 for a wrong token); false means "not this route,
+ * keep going" — the caller then applies whatever credential check fits its own mode.
+ */
+function tryTokenLoginBootstrap(req: FastifyRequest, reply: FastifyReply, urlPath: string, token: string): boolean {
+  const qIndex = req.url.indexOf('?');
+  if (req.method !== 'GET' || urlPath !== '/' || qIndex === -1) return false;
+  const params = new URLSearchParams(req.url.slice(qIndex + 1));
+  const supplied = params.get('token');
+  if (supplied === null) return false;
+  if (!tokensMatch(supplied, token)) {
+    reply.code(401).send({ error: 'unauthorized' });
+    return true;
+  }
+  reply.header('set-cookie', `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict`);
+  reply.redirect('/');
+  return true;
 }
 
 function bearerToken(req: FastifyRequest): string | undefined {
@@ -156,22 +178,19 @@ export function buildApp({
       if (!credential || !tokensMatch(credential, writeToken!)) return reply.code(401).send({ error: 'unauthorized' });
       return;
     }
-    if (!auth) return;
+    if (!auth) {
+      // Plain loopback with only a v2 write-token (no DIGESTIT_ALLOWED_HOSTS): reads stay open, but
+      // the dashboard still needs a way to get that token onto write requests, and `v2Api.ts` sends
+      // no Authorization header — only the cookie this bootstrap sets. A visit with no `?token=` at
+      // all (the common case) falls through untouched, same as before this existed.
+      if (writeToken !== undefined && tryTokenLoginBootstrap(req, reply, urlPath, writeToken)) return;
+      return;
+    }
 
     // Once DIGESTIT_ALLOWED_HOSTS is set (architecture §6), every route needs the token —
     // including loopback, since another local user on a shared host can also reach
-    // 127.0.0.1 directly. Bootstrap: GET /?token=<t> sets the cookie and redirects to / with the
-    // query string stripped, so the token never lands in a browser history entry for /.
-    const qIndex = req.url.indexOf('?');
-    if (req.method === 'GET' && urlPath === '/' && qIndex !== -1) {
-      const params = new URLSearchParams(req.url.slice(qIndex + 1));
-      const supplied = params.get('token');
-      if (supplied !== null) {
-        if (!tokensMatch(supplied, auth.token)) return reply.code(401).send({ error: 'unauthorized' });
-        reply.header('set-cookie', `${SESSION_COOKIE}=${auth.token}; Path=/; HttpOnly; SameSite=Strict`);
-        return reply.redirect('/');
-      }
-    }
+    // 127.0.0.1 directly.
+    if (tryTokenLoginBootstrap(req, reply, urlPath, auth.token)) return;
     const credential = bearerToken(req) ?? cookieValue(req, SESSION_COOKIE);
     if (!credential || !tokensMatch(credential, auth.token)) return reply.code(401).send({ error: 'unauthorized' });
   });
