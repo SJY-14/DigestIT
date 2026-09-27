@@ -260,7 +260,11 @@ function insertDigestChangeUnit(
 }
 
 export interface ExplainOptions {
-  context?: string;
+  /**
+   * Compact project context for grounding. `explainProject` calls a function form after the new
+   * checkpoint is recorded, so an Explain-time context refresh sees the current structure.
+   */
+  context?: string | (() => Promise<string | undefined>);
   /** Daily call cap shared with every other `explain_call` reason (default `DEFAULT_DAILY_BUDGET`). */
   budget?: number;
   now?: () => Date;
@@ -299,7 +303,8 @@ export async function explainProject(
       db.exec('ROLLBACK');
       throw e;
     }
-    const r = await explainDigest(db, changeUnitId, provider, { context: opts.context, budget, now });
+    const context = typeof opts.context === 'function' ? await opts.context() : opts.context;
+    const r = await explainDigest(db, changeUnitId, provider, { context, budget, now });
     return { noChanges: false, digestId: changeUnitId, outcome: r.outcome, calls: r.calls, detail: r.detail };
   });
 }
@@ -313,7 +318,8 @@ export async function retryDigest(
   const budget = opts.budget ?? DEFAULT_DAILY_BUDGET;
   const dataDir = projectDataDir(home, row.repo_id);
   return withProjectLock(dataDir, async () => {
-    const r = await explainDigest(db, digestId, provider, { context: opts.context, budget, now: opts.now });
+    const context = typeof opts.context === 'function' ? await opts.context() : opts.context;
+    const r = await explainDigest(db, digestId, provider, { context, budget, now: opts.now });
     return { noChanges: false, digestId, outcome: r.outcome, calls: r.calls, detail: r.detail };
   });
 }

@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { openProjectDb } from './datahome.js';
@@ -8,6 +7,7 @@ import {
   ProjectLockedError, explainProject, findProject, initProject, latestCheckpoint, listProjects,
   projectStatus, retryDigest, type ExplainProjectResult,
 } from './project.js';
+import { buildContext, ensureContext, latestContextText } from './project-context.js';
 
 export const INIT_USAGE = 'usage: digest init <path> [--name <name>] [--context <file.md>] [--db <file>]';
 
@@ -112,12 +112,6 @@ export async function runStatusCli(argv: string[]): Promise<number> {
 export const EXPLAIN_PROJECT_USAGE =
   'usage: digest explain [project] [--retry <digestId>] [--provider <name>] [--allow <repo,...>] [--budget <n>] [--db <file>]';
 
-/** Raw content; `explainDigest` (via `prepareDigestInput`) redacts it before any provider call. */
-function readContext(path: string | null): string | undefined {
-  if (!path || !existsSync(path)) return undefined;
-  return readFileSync(path, 'utf8');
-}
-
 function report(r: ExplainProjectResult): void {
   const suffix = r.detail ? ` (${r.detail.slice(0, 160)})` : '';
   console.log(`digest ${r.digestId}: ${r.outcome}${suffix}, ${r.calls} provider call(s)`);
@@ -155,8 +149,8 @@ export async function runProjectExplainCli(argv: string[]): Promise<number> {
         return 2;
       }
       const row = db.prepare(
-        'SELECT r.name AS name, r.context_path AS contextPath FROM digest d JOIN repo r ON r.id = d.repo_id WHERE d.change_unit_id = ?',
-      ).get(digestId) as { name: string; contextPath: string | null } | undefined;
+        'SELECT r.id AS id, r.name AS name FROM digest d JOIN repo r ON r.id = d.repo_id WHERE d.change_unit_id = ?',
+      ).get(digestId) as { id: number; name: string } | undefined;
       if (!row) {
         console.error(`no digest ${digestId}`);
         return 1;
@@ -166,7 +160,7 @@ export async function runProjectExplainCli(argv: string[]): Promise<number> {
         console.error('unknown provider');
         return 2;
       }
-      const r = await retryDigest(db, home, digestId, provider, { context: readContext(row.contextPath), budget: budget ?? DEFAULT_DAILY_BUDGET });
+      const r = await retryDigest(db, home, digestId, provider, { context: latestContextText(db, row.id), budget: budget ?? DEFAULT_DAILY_BUDGET });
       report(r);
       return outcomeExit(r);
     }
@@ -180,7 +174,16 @@ export async function runProjectExplainCli(argv: string[]): Promise<number> {
       console.error('unknown provider');
       return 2;
     }
-    const r = await explainProject(db, home, found, provider, { context: readContext(found.contextPath), budget: budget ?? DEFAULT_DAILY_BUDGET });
+    const limit = budget ?? DEFAULT_DAILY_BUDGET;
+    const context = async () => {
+      try {
+        if (await ensureContext(db, home, found, provider, { budget: limit })) console.log(contextLine(db, found.id));
+      } catch (e) {
+        console.error(`project context not built: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      return latestContextText(db, found.id);
+    };
+    const r = await explainProject(db, home, found, provider, { context, budget: limit });
     if (r.noChanges) {
       console.log('No changes since last check');
       return 0;
@@ -193,6 +196,60 @@ export async function runProjectExplainCli(argv: string[]): Promise<number> {
       return 1;
     }
     console.error(`explain failed: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  } finally {
+    db.close();
+  }
+}
+
+function contextLine(db: import('node:sqlite').DatabaseSync, repoId: number): string {
+  const row = db.prepare(
+    'SELECT status, from_files AS fromFiles FROM project_context WHERE repo_id = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+  ).get(repoId) as { status: string; fromFiles: number | null } | undefined;
+  return row ? `project context: ${row.status}, from ${row.fromFiles ?? '?'} file(s)` : 'project context: none';
+}
+
+export const CONTEXT_USAGE = 'usage: digest context [project] [--provider <name>] [--allow <repo,...>] [--budget <n>] [--db <file>]';
+
+/** `digest context [project]`: rebuilds the project context now (one call against the daily budget). */
+export async function runContextCli(argv: string[]): Promise<number> {
+  let values, positionals;
+  try {
+    ({ values, positionals } = parseArgs({
+      args: argv.slice(1),
+      allowPositionals: true,
+      options: { provider: { type: 'string' }, allow: { type: 'string' }, budget: { type: 'string' }, db: { type: 'string' } },
+    }));
+  } catch (e) {
+    console.error(`${e instanceof Error ? e.message : String(e)}\n${CONTEXT_USAGE}`);
+    return 2;
+  }
+  const budget = intOpt(values.budget ?? process.env.DIGESTIT_DAILY_BUDGET);
+  if (Number.isNaN(budget)) {
+    console.error(CONTEXT_USAGE);
+    return 2;
+  }
+  const { db, home } = openProjectDb(values.db ?? process.env.DIGESTIT_DB);
+  try {
+    const found = findProject(db, positionals[0]);
+    if ('error' in found) {
+      console.error(found.error);
+      return 1;
+    }
+    const provider = providerFromArgs({ provider: values.provider, allow: values.allow ?? process.env.DIGESTIT_ALLOWLIST ?? found.name });
+    if (!provider) {
+      console.error('unknown provider');
+      return 2;
+    }
+    const r = await buildContext(db, home, found, provider, { budget: budget ?? DEFAULT_DAILY_BUDGET });
+    if (r.outcome === 'budget') {
+      console.error('daily LLM budget exhausted; context not rebuilt');
+      return 1;
+    }
+    console.log(contextLine(db, found.id));
+    return r.outcome === 'error' ? 1 : 0;
+  } catch (e) {
+    console.error(`context failed: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   } finally {
     db.close();

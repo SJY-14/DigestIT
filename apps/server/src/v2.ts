@@ -2,7 +2,7 @@
 // DTOs are defined once in packages/core/src/v2.ts; this file only maps DB rows onto them and
 // wires the ingest/explain packages together. Auth/CSRF for the POST routes here lives in app.ts's
 // top-level onRequest hook (the write-token gate), not in this file.
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { join, resolve as resolvePath, sep } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance } from 'fastify';
@@ -12,12 +12,12 @@ import {
   type ProjectDto, type ProjectGraphDto, type SkipReason,
 } from '@digestit/core';
 import {
-  DEFAULT_DAILY_BUDGET, ProjectLockedError, budgetStatus, explainProject, initProject,
-  latestCheckpoint, listProjects, listTree, openShadow, projectDataDir,
+  DEFAULT_DAILY_BUDGET, ProjectLockedError, budgetStatus, buildContext, ensureContext, explainProject, initProject,
+  latestCheckpoint, latestContextText as sharedLatestContextText, listProjects, listTree, openShadow, projectDataDir,
   projectStatus, retryDigest, type ProjectRow,
 } from '@digestit/ingest';
 import {
-  buildProjectContext, buildProjectMap, compactContext, createProvider, explainArea,
+  createProvider, explainArea,
   type DigestOutcome, type ExplanationProvider,
 } from '@digestit/explain';
 
@@ -168,49 +168,35 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     };
   }
 
-  /** Latest usable project_context, compacted for grounding; undefined when none has ever built ok. */
-  function latestContextText(repoId: number): string | undefined {
-    const row = db.prepare(
-      `SELECT content FROM project_context WHERE repo_id = ? AND status IN ('ok','truncated')
-       ORDER BY created_at DESC, id DESC LIMIT 1`,
-    ).get(repoId) as { content: string } | undefined;
-    return row ? compactContext(parseJson(row.content, { purpose: '', modules: [], glossary: [], conventions: [] })) : undefined;
-  }
+  const latestContextText = (repoId: number) => sharedLatestContextText(db, repoId);
 
   /** Guarded by `contextInFlight`: throws `InFlightError` instead of racing a concurrent build for the same project. */
-  async function buildContextFor(row: ProjectRow, provider: ExplanationProvider): Promise<void> {
+  async function withContextGuard<T>(row: ProjectRow, fn: () => Promise<T>): Promise<T> {
     if (contextInFlight.has(row.id)) throw new InFlightError();
     contextInFlight.add(row.id);
     try {
-      const latest = latestCheckpoint(db, row.id);
-      if (!latest) throw new Error('project has no checkpoint yet');
-      const shadow = await openShadow(projectDataDir(home, row.id), row.path);
-      const tracked = await listTree(shadow, latest.treeSha);
-      const readFile = (p: string): string | null => {
-        try {
-          return readFileSync(join(row.path, p), 'utf8');
-        } catch {
-          return null;
-        }
-      };
-      const map = buildProjectMap(tracked, readFile);
-      const userMd = row.contextPath && existsSync(row.contextPath) ? readFileSync(row.contextPath, 'utf8') : null;
-      await buildProjectContext(db, row.id, latest.id, row.name, map, userMd, provider, { budget: budgetLimit, now });
+      return await fn();
     } finally {
       contextInFlight.delete(row.id);
     }
   }
 
-  /** First-Explain-ever convenience: builds context once so the first digest has grounding. Best-effort. */
-  async function maybeAutoBuildContext(row: ProjectRow, provider: ExplanationProvider): Promise<void> {
-    const has = db.prepare('SELECT 1 FROM project_context WHERE repo_id = ?').get(row.id);
-    if (has) return;
+  const buildContextFor = (row: ProjectRow, provider: ExplanationProvider) =>
+    withContextGuard(row, () => buildContext(db, home, row, provider, { budget: budgetLimit, now }));
+
+  /**
+   * Explain-time context, called by `explainProject` after the new checkpoint is recorded: builds it
+   * when missing, refreshes it on a structural change (at most daily), then returns the compact text.
+   * Best-effort: Explain still proceeds without grounding, e.g. while a manual refresh holds the guard.
+   */
+  const explainTimeContext = (row: ProjectRow, provider: ExplanationProvider) => async () => {
     try {
-      await buildContextFor(row, provider);
+      await withContextGuard(row, () => ensureContext(db, home, row, provider, { budget: budgetLimit, now }));
     } catch {
-      /* best-effort: Explain still proceeds without grounding, including when a concurrent refresh already has the lock */
+      /* see above */
     }
-  }
+    return latestContextText(row.id);
+  };
 
   function loadDigestL2(digestId: number): DigestL2Content | null {
     const row = latestExplanation.get(digestId, 2) as { content: string; status: string } | undefined;
@@ -444,9 +430,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     const provider = providerFactory([row.name]);
     if (!provider) return reply.code(500).send({ error: 'no_provider' });
     try {
-      await maybeAutoBuildContext(row, provider);
-      const context = latestContextText(row.id);
-      const r = await explainProject(db, home, row, provider, { context, budget: budgetLimit, now });
+      const r = await explainProject(db, home, row, provider, { context: explainTimeContext(row, provider), budget: budgetLimit, now });
       const budget = budgetStatus(db, now(), budgetLimit);
       if (r.noChanges) return { noChanges: true, digestId: null, status: null, budget };
       graphCache.deleteDigest(r.digestId!);

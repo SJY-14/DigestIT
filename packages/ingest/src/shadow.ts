@@ -382,8 +382,10 @@ export async function pending(shadow: Shadow, lastSha: string): Promise<PendingR
   const { keptOthers, modified, deleted } = await listCategorized(shadow);
   const keep = (paths: string[]) => paths.filter((p) => !isDirBoundary(p) && !matchesDenylist(p));
   const keptUntracked = keep(keptOthers);
-  const keptModified = keep(modified);
   const keptDeleted = keep(deleted);
+  // `ls-files --modified` also lists deleted files; count each of those once, as a deletion.
+  const deletedSet = new Set(keptDeleted);
+  const keptModified = keep(modified).filter((p) => !deletedSet.has(p));
 
   let additions = 0, deletions = 0;
   if (keptModified.length > 0 || keptDeleted.length > 0) {
@@ -419,4 +421,13 @@ export async function userGitInfo(projectRoot: string): Promise<UserGitInfo | nu
   const head = await execTrim(['rev-parse', '--verify', '-q', 'HEAD'], projectRoot);
   const branch = await execTrim(['symbolic-ref', '--short', '-q', 'HEAD'], projectRoot);
   return { head, branch };
+}
+
+/** Contents of `path` as stored in a checkpoint tree (utf8), or null if it is not in that tree. */
+export async function readTreeFile(shadow: Shadow, treeSha: string, path: string): Promise<string | null> {
+  try {
+    return await runGit(shadow, ['cat-file', 'blob', `${treeSha}:${path}`]);
+  } catch {
+    return null;
+  }
 }

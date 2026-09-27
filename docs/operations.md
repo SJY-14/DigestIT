@@ -4,6 +4,55 @@ How the operator runs DigestIT on the server and publishes it over the
 tailnet. See [architecture.md §6](architecture.md#6-security-posture) for the
 reasoning behind the allowlist + token.
 
+## Quick start: digest a project folder (v2)
+
+DigestIT tracks a project folder on its own. It keeps snapshots in its data dir
+(`$DIGESTIT_HOME`) and never writes into the project or its `.git`. Design:
+[direction-v2.md](direction-v2.md).
+
+```sh
+pnpm install --frozen-lockfile && pnpm build
+export DIGESTIT_PROVIDER=claude-code        # or `stub` to try it without LLM calls
+
+# 1. Select a project. This takes checkpoint #1 and makes no LLM call. Running it is the
+#    consent to send the project's redacted code to the provider. --context is optional.
+pnpm digest init /path/to/project --context /path/to/notes.md
+
+# 2. Work on the project with any tool. Then check what changed (no LLM call):
+pnpm digest status
+
+# 3. Explain what changed since the last check. On the first run this also builds the
+#    project context (one call). After that the context is rebuilt only when the README,
+#    a manifest, the context .md or the top-level folders changed, at most once a day.
+pnpm digest explain
+pnpm digest context                          # rebuild the context now (one call)
+pnpm digest explain --retry <digestId>       # after a budget stop or a provider error
+
+# 4. Open the dashboard. Visit the login URL once, so its buttons can spend the budget.
+pnpm digest serve                            # prints http://127.0.0.1:4780/?token=...
+```
+
+The dashboard shows the project bar (context status, **Refresh**, calls left today,
+**Explain changes since last check** with the pending count). Below it are two panes:
+- the change list: the digest's L0/L1, one row per L2 area, and a picker for past digests;
+- the project graph, with the changed files and folders in blue.
+
+Click a row (or a lit node, which filters the list) to see how and why that area changed.
+**Code (L3)** then generates the code-level explanation for that area only (one call,
+cached) and shows it in place of the graph, with folded diffs.
+
+Every LLM call (context builds, Explain, L3 clicks) counts toward one daily budget
+(`DIGESTIT_DAILY_BUDGET`, default 40). The budget is shared by the CLI and the dashboard.
+The provider may only see the project being explained: the dashboard always scopes it to
+that project, and the CLI does too unless `DIGESTIT_ALLOWLIST`/`--allow` says otherwise.
+Several projects can be registered. Each `init` adds one, the dashboard has a switcher,
+and with more than one project the CLI commands take the project name or id
+(`digest explain myproject`). To register projects from the browser, set
+`DIGESTIT_PROJECT_ROOTS` (below).
+
+The older commit-history mode (`digest ingest`/`watch`, the History menu) still works as
+described below.
+
 ## Running locally (loopback, reads open, writes need the token)
 
 No extra env vars needed. The server only answers requests whose `Host`
@@ -117,9 +166,10 @@ cookie or an `Authorization: Bearer <token>` header; anything else gets
 write-token described above into this same one: once it is set, no separate
 `$DIGESTIT_HOME/token` file is created.
 
-The v2 write routes also require `Content-Type: application/json` and an
-`Origin` matching the request's `Host` (CSRF); the dashboard already sends
-both, so this only matters if you are scripting against the API directly.
+The v2 write routes also require `Content-Type: application/json`, an
+`Origin` matching the request's `Host`, and an `X-DigestIT: 1` header (CSRF).
+The dashboard already sends all three, so this only matters if you are
+scripting against the API directly.
 
 ### Registering a project from the dashboard
 
@@ -155,7 +205,7 @@ resets on restart; no operator action needed.
 | Variable | Used by | Meaning |
 |---|---|---|
 | `DIGESTIT_DB` | `serve`, `watch`, `explain` | SQLite file path (default: package default, see `openDb`) |
-| `DIGESTIT_HOME` | `serve`, and any `project`/`digest`/`explain` CLI command | Data dir for `digestit.sqlite`, per-project shadow stores and the write-token file (default `$XDG_DATA_HOME/digestit` or `~/.local/share/digestit`; ignored if `--db`/`DIGESTIT_DB` is set, or in dev/tests where `.cache/digestit.sqlite` exists) |
+| `DIGESTIT_HOME` | `serve`, and the `init`/`projects`/`status`/`context`/`explain` CLI commands | Data dir for `digestit.sqlite`, per-project shadow stores and the write-token file (default `$XDG_DATA_HOME/digestit` or `~/.local/share/digestit`; ignored if `--db`/`DIGESTIT_DB` is set, or in dev/tests where `.cache/digestit.sqlite` exists) |
 | `DIGESTIT_PORT` | `serve` | Port to bind (default `4780`); host is always `127.0.0.1` |
 | `DIGESTIT_ALLOWED_HOSTS` | `serve` | Comma-separated `host[:port]` allowed besides loopback; unset = loopback only. Reads stay unauthenticated; writes always need a token regardless (see above) |
 | `DIGESTIT_TOKEN_FILE` | `serve`, `token init` (as a default for `--file`) | Path to the `0600` access-token file; mandatory once `DIGESTIT_ALLOWED_HOSTS` is set, and doubles as the write token |

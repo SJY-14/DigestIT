@@ -322,7 +322,7 @@ describe('POST /api/projects/:id/explain and the digest/area GETs', () => {
     // First-Explain-ever auto-builds the project context (best-effort).
     const projects = (await get(app, '/api/projects')).json();
     expect(projects[0].context.status).toBe('ok');
-    expect(projects[0].context.fromFiles).toBe(2); // README.md + src/a.ts tracked at checkpoint #1
+    expect(projects[0].context.fromFiles).toBe(3); // built after the new checkpoint: README.md, src/a.ts, src/b.ts
 
     const detail = (await get(app, `/api/digests/${digestId}`)).json();
     expect(detail.projectId).toBe(repoId);

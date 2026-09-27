@@ -348,6 +348,16 @@ describe('pending', () => {
     expect(listRefs(shadow)).toEqual(refsBefore); // pending never snapshots
   });
 
+  it('counts a deleted tracked file once, not also as modified', async () => {
+    write('a.txt', 'one\ntwo\n');
+    write('b.txt', 'keep\n');
+    const shadow = await openShadow(data, proj);
+    const r1 = await snapshot(shadow);
+    rmSync(join(proj, 'a.txt'));
+    const p = await pending(shadow, r1.treeSha);
+    expect(p).toEqual({ files: 1, additions: 0, deletions: 2 });
+  });
+
   it('excludes denylisted and gitignored files from the pending count', async () => {
     write('a.txt', 'a\n');
     const shadow = await openShadow(data, proj);
