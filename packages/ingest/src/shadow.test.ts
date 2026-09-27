@@ -312,6 +312,85 @@ describe('snapshot', () => {
   }, 15000);
 });
 
+describe('git-exclude sources: info/exclude and the global excludes file', () => {
+  it('honours the project\'s own .git/info/exclude, reported as git-exclude', async () => {
+    gitProj('init', '-q', '-b', 'main');
+    write('keep.txt', 'k\n');
+    write('local-only.txt', 'editor scratch file\n');
+    writeFileSync(join(proj, '.git', 'info', 'exclude'), 'local-only.txt\n');
+
+    const shadow = await openShadow(data, proj);
+    const r = await snapshot(shadow);
+    expect(r.skipped).toEqual([{ path: 'local-only.txt', reason: 'git-exclude' }]);
+    expect(await listTree(shadow, r.treeSha)).toEqual(['keep.txt']);
+  });
+
+  it('honours the configured global excludes file (core.excludesFile), reported as git-exclude', async () => {
+    gitProj('init', '-q', '-b', 'main');
+    const excludesFile = join(root, 'global-gitignore');
+    writeFileSync(excludesFile, 'scratch/\n');
+    gitProj('config', 'core.excludesFile', excludesFile);
+    write('keep.txt', 'k\n');
+    write('scratch/notes.txt', 'not for the provider\n');
+
+    const shadow = await openShadow(data, proj);
+    expect(shadow.gitExcludeFiles).toContain(excludesFile);
+    const r = await snapshot(shadow);
+    expect(r.skipped).toEqual([{ path: 'scratch/notes.txt', reason: 'git-exclude' }]);
+    expect(await listTree(shadow, r.treeSha)).toEqual(['keep.txt']);
+
+    // read-only: never written to
+    expect(readFileText(excludesFile)).toBe('scratch/\n');
+  });
+
+  it('drops a tracked file from the next snapshot once it matches info/exclude', async () => {
+    gitProj('init', '-q', '-b', 'main');
+    write('keep.txt', 'k\n');
+    write('was-tracked.txt', 'now local-only\n');
+    const shadow = await openShadow(data, proj);
+    const r1 = await snapshot(shadow);
+    expect(await listTree(shadow, r1.treeSha)).toEqual(['keep.txt', 'was-tracked.txt']);
+
+    writeFileSync(join(proj, '.git', 'info', 'exclude'), 'was-tracked.txt\n');
+    const r2 = await snapshot(shadow, { parent: r1.treeSha });
+    expect(r2.skipped).toContainEqual({ path: 'was-tracked.txt', reason: 'git-exclude' });
+    expect(await listTree(shadow, r2.treeSha)).toEqual(['keep.txt']);
+    const files = await diff(shadow, r1.treeSha, r2.treeSha);
+    expect(files.find((f) => f.path === 'was-tracked.txt')?.status).toBe('D');
+  });
+
+  it('does not affect a project with no info/exclude entries and no configured global excludes file', async () => {
+    // Points the "not configured" fallback default at an empty scratch dir, so this only
+    // exercises that fallback rather than whatever the host running the test has at its real
+    // $XDG_CONFIG_HOME/git/ignore (core.excludesFile itself, if set, is read from the host's
+    // real global git config regardless — that path isn't test-overridable).
+    const prevXdg = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = join(root, 'empty-xdg-config');
+    try {
+      write('a.txt', 'plain project, no git repo at all\n');
+      const shadow = await openShadow(data, proj);
+      expect(shadow.gitExcludeFiles).toEqual([]);
+      const r = await snapshot(shadow);
+      expect(r.skipped).toEqual([]);
+      expect(await listTree(shadow, r.treeSha)).toEqual(['a.txt']);
+    } finally {
+      if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prevXdg;
+    }
+  });
+
+  it('excludes info/exclude-matched files from the pending count', async () => {
+    gitProj('init', '-q', '-b', 'main');
+    write('a.txt', 'a\n');
+    const shadow = await openShadow(data, proj);
+    const r1 = await snapshot(shadow);
+    writeFileSync(join(proj, '.git', 'info', 'exclude'), 'local-only.txt\n');
+    write('local-only.txt', 'x\n');
+    write('real-change.txt', 'y\n');
+    const p = await pending(shadow, r1.treeSha);
+    expect(p.files).toBe(1); // only real-change.txt, not local-only.txt
+  });
+});
+
 function listRefs(shadow: Shadow): string[] {
   const out = execFileSync('git', ['--git-dir', shadow.gitDir, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/digestit/cp'], {
     encoding: 'utf8',
