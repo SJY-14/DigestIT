@@ -198,17 +198,23 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
               >
                 {box ? (
                   <>
-                    <rect className="graph-shape" x={-r} y={-r} width={r * 2} height={r * 2} rx={4} />
-                    <text className="graph-count" y={4} textAnchor="middle">{n.fileCount}</text>
+                    <rect className="graph-shape" vectorEffect="non-scaling-stroke" x={-r} y={-r} width={r * 2} height={r * 2} rx={4} />
+                    <g transform={`scale(${1 / view.scale})`}>
+                      <text className="graph-count" y={4} textAnchor="middle">{n.fileCount}</text>
+                    </g>
                   </>
                 ) : (
                   <>
-                    <circle className="graph-shape" r={r} />
-                    {isFolder(n) && <circle className="graph-ring" r={r + 3} />}
+                    <circle className="graph-shape" vectorEffect="non-scaling-stroke" r={r} />
+                    {isFolder(n) && <circle className="graph-ring" vectorEffect="non-scaling-stroke" r={r + 3} />}
                   </>
                 )}
-                {(lit || selected) && <circle className="graph-hilite-ring" r={r + (box ? 5 : 4)} />}
-                {label && <text className="graph-label" y={r + 12} textAnchor="middle">{label}</text>}
+                {(lit || selected) && <circle className="graph-hilite-ring" vectorEffect="non-scaling-stroke" r={r + (box ? 5 : 4)} />}
+                {label && (
+                  <g transform={`scale(${1 / view.scale})`}>
+                    <text className="graph-label" y={r * view.scale + 12} textAnchor="middle">{label}</text>
+                  </g>
+                )}
               </g>
             );
           })}

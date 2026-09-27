@@ -127,12 +127,19 @@ export interface View {
   scale: number;
 }
 
+// Node labels and strokes are drawn at a constant screen size regardless of `view.scale` (see
+// ProjectGraph's node rendering), so a large fitted scale no longer blows label text up — but it
+// still shrinks the bounding box's own margin relative to the pane, which is what actually
+// clips a label near the edge on a tiny graph. Capping the auto-fit scale keeps that margin
+// generous; manual zoom (ProjectGraph's MAX_SCALE) can still go well past this.
+export const MAX_FIT_SCALE = 1.5;
+
 /** View that centers and scales `b` to fit an area sized `viewport` (default a 640x640 viewBox). */
 export function fitView(b: Bounds | null, viewport = 640): View {
   if (!b) return { x: viewport / 2, y: viewport / 2, scale: 1 };
   const w = Math.max(1, b.maxX - b.minX);
   const h = Math.max(1, b.maxY - b.minY);
-  const scale = Math.min(4, Math.max(0.05, (viewport * 0.85) / Math.max(w, h)));
+  const scale = Math.min(MAX_FIT_SCALE, Math.max(0.05, (viewport * 0.85) / Math.max(w, h)));
   const cx = (b.minX + b.maxX) / 2;
   const cy = (b.minY + b.maxY) / 2;
   return { x: viewport / 2 - cx * scale, y: viewport / 2 - cy * scale, scale };

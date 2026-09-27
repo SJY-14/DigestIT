@@ -1,6 +1,6 @@
 import { buildProjectGraph } from '@digestit/core';
 import { describe, expect, it } from 'vitest';
-import { bounds, fitView, layoutGraph, nodeRadius, seedPositions } from './graphLayout.js';
+import { bounds, fitView, layoutGraph, MAX_FIT_SCALE, nodeRadius, seedPositions } from './graphLayout.js';
 
 const small = buildProjectGraph({
   paths: ['src/a.ts', 'src/b.ts', 'src/sub/c.ts', 'docs/readme.md'],
@@ -120,5 +120,17 @@ describe('bounds/fitView', () => {
     expect(Number.isFinite(view.x)).toBe(true);
     expect(Number.isFinite(view.y)).toBe(true);
     expect(view.scale).toBeGreaterThan(0);
+  });
+
+  it('caps the fitted scale for a tiny bounding box, so a small project does not zoom in far enough to clip labels', () => {
+    const tiny = { minX: 0, minY: 0, maxX: 10, maxY: 10 };
+    const view = fitView(tiny, 640);
+    expect(view.scale).toBe(MAX_FIT_SCALE);
+  });
+
+  it('does not cap the scale for a bounding box that genuinely needs to zoom out', () => {
+    const huge = { minX: -5000, minY: -5000, maxX: 5000, maxY: 5000 };
+    const view = fitView(huge, 640);
+    expect(view.scale).toBeLessThan(MAX_FIT_SCALE);
   });
 });

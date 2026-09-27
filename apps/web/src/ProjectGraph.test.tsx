@@ -169,4 +169,20 @@ describe('ProjectGraph', () => {
     await render(<ProjectGraph graph={fixture} onSelectNode={noop} onExpand={noop} />);
     expect(host.querySelectorAll('.graph-node.dimmed')).toHaveLength(0);
   });
+
+  it('keeps label text and node strokes at a constant screen size when zoomed in', async () => {
+    await render(<ProjectGraph graph={fixture} onSelectNode={noop} onExpand={noop} />);
+    const svg = host.querySelector('svg')!;
+    const outerScaleOf = () => Number(/scale\(([^)]+)\)/.exec(svg.querySelector('g')!.getAttribute('transform')!)![1]);
+    // Zoom in several steps so view.scale is well past 1.
+    for (let i = 0; i < 6; i++) act(() => { svg.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })); });
+    const scale = outerScaleOf();
+    expect(scale).toBeGreaterThan(2);
+    const label = host.querySelector<SVGGraphicsElement>('.graph-label')!;
+    const labelWrapper = label.parentElement as unknown as SVGGElement;
+    expect(labelWrapper.getAttribute('transform')).toBe(`scale(${1 / scale})`);
+    for (const shape of host.querySelectorAll('.graph-shape, .graph-ring, .graph-hilite-ring')) {
+      expect(shape.getAttribute('vector-effect')).toBe('non-scaling-stroke');
+    }
+  });
 });
