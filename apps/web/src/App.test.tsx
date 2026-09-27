@@ -112,4 +112,24 @@ describe('App: v2 nav (DIG-40)', () => {
     await waitFor(() => host.querySelector('.setup-form') === null);
     expect(location.pathname).toBe('/units');
   });
+
+  it('resets scroll when switching pages, so a list on the new page never opens scrolled past its own top', async () => {
+    // Regression for DIG-46: pushState-based page switches don't reset scroll on their own, so
+    // switching tabs while scrolled down (e.g. a tall main-screen digest) could land the new
+    // page's viewport scrolled straight past its own header and list.
+    history.replaceState(null, '', '/');
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
+    await render(<App />);
+    await waitFor(() => host.querySelector('.setup-form') !== null);
+
+    const menu = host.querySelector('.history-menu') as HTMLDetailsElement;
+    await click(menu.querySelector('a[href="/timeline"]'));
+    await waitFor(() => location.pathname === '/timeline');
+
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+
+    await click(host.querySelector('a[href="/"]'));
+    await waitFor(() => location.pathname === '/');
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+  });
 });

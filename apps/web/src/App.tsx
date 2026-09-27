@@ -48,6 +48,10 @@ function usePage(): [Page, (p: Page) => void] {
   }, []);
   return [page, (p) => {
     history.pushState(null, '', PATH_FOR[p]);
+    // Unlike a full navigation, pushState doesn't reset scroll: without this, switching tabs
+    // while scrolled down on one page (e.g. a tall main-screen digest) lands the new page's
+    // viewport at the same offset, which can scroll straight past its list and look empty/hidden.
+    window.scrollTo(0, 0);
     setPageRaw(p);
   }];
 }
