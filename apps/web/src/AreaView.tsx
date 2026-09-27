@@ -202,7 +202,9 @@ export function AreaView({ area, title, onBack, focusPath, onGenerate, callsRema
       )}
       {l3 && (
         <div className="area-l3">
+          <h3>Why</h3>
           <p>{l3.why}</p>
+          <h3>Design</h3>
           <p className="muted">{l3.design}</p>
           {l3.risks.length > 0 && (
             <>

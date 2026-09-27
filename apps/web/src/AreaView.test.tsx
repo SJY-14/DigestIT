@@ -40,9 +40,11 @@ function longHunkArea(): AreaDetailDto {
 }
 
 describe('AreaView', () => {
-  it('renders why/design/risks and calls onBack', async () => {
+  it('renders why/design/risks under their own headings and calls onBack', async () => {
     const onBack = vi.fn();
     await render(<AreaView area={fixtureArea} title="Project graph pane" onBack={onBack} onGenerate={noop} />);
+    const headings = [...host.querySelectorAll('.area-l3 h3')].map((h) => h.textContent);
+    expect(headings).toEqual(['Why', 'Design', 'Risks']);
     expect(host.textContent).toContain(fixtureArea.l3!.why);
     expect(host.textContent).toContain(fixtureArea.l3!.design);
     expect(host.textContent).toContain(fixtureArea.l3!.risks[0]);
