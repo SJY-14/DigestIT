@@ -5,7 +5,7 @@ import type { ChangeStatus, CommitStats, ExplanationStatus, FilteredReason, L0Co
 export type RepoMode = 'history' | 'project';
 export type CheckpointReason = 'init' | 'explain' | 'manual';
 /** Why a file was not stored in the shadow store at snapshot time. */
-export type SkipReason = 'denylist' | 'too_large' | 'nested_repo' | 'unreadable';
+export type SkipReason = 'denylist' | 'too_large' | 'nested_repo' | 'unreadable' | 'git-exclude';
 
 export interface Checkpoint {
   id: number;

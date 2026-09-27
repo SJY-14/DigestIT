@@ -2,7 +2,8 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { access, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import type { SkipReason } from '@digestit/core';
 import { DIFF_FLAGS, combineDiffTree, nul, parseDiffRaw, type GitFile } from './git.js';
@@ -46,6 +47,13 @@ export interface Shadow {
   projectRoot: string;
   indexFile: string;
   maxFileBytes: number;
+  /**
+   * Extra gitignore-pattern files honoured alongside `.gitignore`: the project's own
+   * `$GIT_DIR/info/exclude` (if the project is a git repo) and the resolved global excludes file
+   * (`core.excludesFile`, defaulting to `$XDG_CONFIG_HOME/git/ignore`), for each that exists.
+   * Read-only — never written to.
+   */
+  gitExcludeFiles: string[];
 }
 
 export interface ShadowOptions {
@@ -128,6 +136,36 @@ const exists = async (path: string): Promise<boolean> => {
   try { await lstat(path); return true; } catch { return false; }
 };
 
+/**
+ * The global excludes file git would use for `projectRoot`: `core.excludesFile` if configured
+ * (checked the same way git checks it, so a repo-local override of that setting is honoured too),
+ * else the standard default of `$XDG_CONFIG_HOME/git/ignore` (falling back to `~/.config`).
+ */
+async function resolveGlobalExcludesFile(projectRoot: string): Promise<string> {
+  const configured = await execTrim(['config', '--get', 'core.excludesFile'], projectRoot);
+  if (configured) return configured.startsWith('~/') ? join(homedir(), configured.slice(2)) : configured;
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+  return join(xdgConfigHome && xdgConfigHome.length > 0 ? xdgConfigHome : join(homedir(), '.config'), 'git', 'ignore');
+}
+
+/**
+ * Read-only lookup of the extra gitignore-pattern files git honours alongside `.gitignore`: the
+ * project's own `$GIT_DIR/info/exclude` (only if `projectRoot` is a git repo — worktree-aware, via
+ * `--git-common-dir`) and the resolved global excludes file. Only paths that actually exist are
+ * returned; neither is ever written to.
+ */
+async function resolveGitExcludeFiles(projectRoot: string): Promise<string[]> {
+  const files: string[] = [];
+  const commonDir = await execTrim(['rev-parse', '--git-common-dir'], projectRoot);
+  if (commonDir !== null) {
+    const infoExclude = join(isAbsolute(commonDir) ? commonDir : join(projectRoot, commonDir), 'info', 'exclude');
+    if (await exists(infoExclude)) files.push(infoExclude);
+  }
+  const globalExclude = await resolveGlobalExcludesFile(projectRoot);
+  if (await exists(globalExclude)) files.push(globalExclude);
+  return files;
+}
+
 /** Creates or opens `<dataDir>/shadow.git`, its index and its denylist `info/exclude`. */
 export async function openShadow(dataDir: string, projectRoot: string, opts: ShadowOptions = {}): Promise<Shadow> {
   const gitDir = join(dataDir, 'shadow.git');
@@ -143,7 +181,11 @@ export async function openShadow(dataDir: string, projectRoot: string, opts: Sha
   await runGitBare(gitDir, ['config', 'core.fsmonitor', 'false']);
   await writeFile(join(gitDir, 'info', 'exclude'), DEFAULT_DENYLIST.join('\n') + '\n');
 
-  return { dataDir, gitDir, projectRoot, indexFile, maxFileBytes: opts.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES };
+  const gitExcludeFiles = await resolveGitExcludeFiles(projectRoot);
+  return {
+    dataDir, gitDir, projectRoot, indexFile, gitExcludeFiles,
+    maxFileBytes: opts.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES,
+  };
 }
 
 async function writeTmpPathList(shadow: Shadow, paths: readonly string[]): Promise<string> {
@@ -192,23 +234,42 @@ interface Categorized {
   deleted: string[];
   /** Already-tracked paths that now match the project's own `.gitignore` (added after they were first snapshotted). */
   trackedIgnored: string[];
+  /**
+   * Untracked paths ignored only via `shadow.gitExcludeFiles` (the project's own `info/exclude`
+   * or the global excludes file) — not `.gitignore`, not the denylist. File-level: the
+   * `keptOthers` entries that disappear once `shadow.gitExcludeFiles` are applied too.
+   */
+  gitExcludedOthers: string[];
+  /** Already-tracked paths that now match one of `shadow.gitExcludeFiles`. */
+  gitExcludedTracked: string[];
 }
 
 async function listCategorized(shadow: Shadow): Promise<Categorized> {
-  const [ignoredOut, keptOut, modifiedOut, deletedOut, trackedIgnoredOut] = await Promise.all([
+  const excludeArgs = shadow.gitExcludeFiles.flatMap((f) => ['--exclude-from', f]);
+  const [ignoredOut, keptOut, modifiedOut, deletedOut, trackedIgnoredOut, keptWithExtOut, extTrackedOut] = await Promise.all([
     runGit(shadow, ['ls-files', '-z', '--others', '--ignored', '--directory', '--exclude-standard']),
     runGit(shadow, ['ls-files', '-z', '--others', '--exclude-standard']),
     runGit(shadow, ['ls-files', '-z', '--modified']),
     runGit(shadow, ['ls-files', '-z', '--deleted']),
     runGit(shadow, ['ls-files', '-z', '--cached', '--ignored', '--exclude-standard']),
+    // Only non-ignored listings here: a file-level `--ignored` listing would walk every file
+    // under node_modules/ and the like on every snapshot and pending() call.
+    excludeArgs.length ? runGit(shadow, ['ls-files', '-z', '--others', '--exclude-standard', ...excludeArgs]) : null,
+    excludeArgs.length ? runGit(shadow, ['ls-files', '-z', '--cached', '--ignored', '--exclude-standard', ...excludeArgs]) : Promise.resolve(''),
   ]);
   const noDotGit = (paths: string[]) => paths.filter((p) => !p.split('/').includes('.git'));
+  const keptOthers = noDotGit(nul(keptOut));
+  const trackedIgnored = noDotGit(nul(trackedIgnoredOut));
+  const keptWithExt = keptWithExtOut === null ? null : new Set(noDotGit(nul(keptWithExtOut)));
+  const trackedIgnoredSet = new Set(trackedIgnored);
   return {
     ignored: noDotGit(nul(ignoredOut)),
-    keptOthers: noDotGit(nul(keptOut)),
+    keptOthers,
     modified: noDotGit(nul(modifiedOut)),
     deleted: noDotGit(nul(deletedOut)),
-    trackedIgnored: noDotGit(nul(trackedIgnoredOut)),
+    trackedIgnored,
+    gitExcludedOthers: keptWithExt === null ? [] : keptOthers.filter((p) => !keptWithExt.has(p)),
+    gitExcludedTracked: noDotGit(nul(extTrackedOut)).filter((p) => !trackedIgnoredSet.has(p)),
   };
 }
 
@@ -232,7 +293,7 @@ interface ChangeSet {
  * file that turns denylisted is the one case that *is* removed, to scrub it from the store.
  */
 async function computeChanges(shadow: Shadow): Promise<ChangeSet> {
-  const { ignored, keptOthers, modified, deleted, trackedIgnored } = await listCategorized(shadow);
+  const { ignored, keptOthers, modified, deleted, trackedIgnored, gitExcludedOthers, gitExcludedTracked } = await listCategorized(shadow);
   const toAdd: string[] = [];
   const toDelete: string[] = [...deleted];
   const skipped: SkippedFile[] = [];
@@ -249,6 +310,21 @@ async function computeChanges(shadow: Shadow): Promise<ChangeSet> {
   for (const path of trackedIgnored) {
     skipped.push({ path, reason: 'denylist' });
     toDelete.push(path);
+  }
+
+  // Same pruning, for a tracked file that now matches the project's own info/exclude or the
+  // global excludes file instead of .gitignore.
+  for (const path of gitExcludedTracked) {
+    skipped.push({ path, reason: 'git-exclude' });
+    toDelete.push(path);
+  }
+
+  // Untracked files matched only by info/exclude or the global excludes file: reported here (not
+  // file-by-file through checkOne, which has no way to see them — the plain `keptOthers` listing
+  // doesn't know about `shadow.gitExcludeFiles`) and filtered out of `keptOthers` below.
+  const gitExcludedOthersSet = new Set(gitExcludedOthers);
+  for (const path of gitExcludedOthers) {
+    skipped.push({ path, reason: 'git-exclude' });
   }
 
   const checkOne = async (path: string, tracked: boolean): Promise<void> => {
@@ -275,7 +351,7 @@ async function computeChanges(shadow: Shadow): Promise<ChangeSet> {
   };
 
   await Promise.all([
-    ...keptOthers.map((p) => checkOne(p, false)),
+    ...keptOthers.filter((p) => !gitExcludedOthersSet.has(p)).map((p) => checkOne(p, false)),
     ...modified.map((p) => checkOne(p, true)),
   ]);
   return { toAdd, toDelete, skipped };
@@ -379,8 +455,9 @@ async function countAddedLines(absPath: string, maxBytes: number): Promise<numbe
  * changed file on argv (a mass change across thousands of files would otherwise risk E2BIG).
  */
 export async function pending(shadow: Shadow, lastSha: string): Promise<PendingResult> {
-  const { keptOthers, modified, deleted } = await listCategorized(shadow);
-  const keep = (paths: string[]) => paths.filter((p) => !isDirBoundary(p) && !matchesDenylist(p));
+  const { keptOthers, modified, deleted, gitExcludedOthers } = await listCategorized(shadow);
+  const gitExcludedOthersSet = new Set(gitExcludedOthers);
+  const keep = (paths: string[]) => paths.filter((p) => !isDirBoundary(p) && !matchesDenylist(p) && !gitExcludedOthersSet.has(p));
   const keptUntracked = keep(keptOthers);
   const keptDeleted = keep(deleted);
   // `ls-files --modified` also lists deleted files; count each of those once, as a deletion.
