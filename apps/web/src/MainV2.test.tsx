@@ -2,7 +2,7 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeFilter, MainV2 } from './MainV2.js';
+import { computeFilter, defaultProject, MainV2 } from './MainV2.js';
 import {
   fixtureArea, fixtureDigest, fixtureDigestPage, fixtureGraph, fixtureProject, fixtureStatus,
 } from './v2Fixtures.js';
@@ -52,6 +52,7 @@ function mockFetch() {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   calls = [];
   projectsResponse = [fixtureProject];
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
@@ -312,6 +313,30 @@ describe('MainV2: digest retry', () => {
     expect(retryBtn).toBeTruthy();
     await click(retryBtn);
     await waitFor(() => calls.some((c) => c.url === `/api/digests/${errored.id}/explain` && c.method === 'POST'));
+  });
+});
+
+describe('MainV2: default project (DIG-46)', () => {
+  const older = { ...fixtureProject, id: 5, name: 'old-empty', lastCheckpointAt: '2026-09-01T00:00:00Z', digestCount: 0 };
+
+  it('opens the project that has digests, not the oldest registered one, when the URL names none', async () => {
+    projectsResponse = [older, fixtureProject];
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.digest-overview') !== null);
+    expect(new URLSearchParams(location.search).get('project')).toBe(String(fixtureProject.id));
+    expect(calls.some((c) => c.url.startsWith(`/api/projects/${older.id}/`))).toBe(false);
+    expect(localStorage.getItem('digestit.lastProject')).toBe(String(fixtureProject.id));
+  });
+
+  it('defaultProject prefers the last used project, then the most recently checked one with digests', () => {
+    const a = { ...fixtureProject, id: 1, lastCheckpointAt: '2026-09-20T00:00:00Z', digestCount: 2 };
+    const b = { ...fixtureProject, id: 2, lastCheckpointAt: '2026-09-25T00:00:00Z', digestCount: 1 };
+    const c = { ...fixtureProject, id: 3, lastCheckpointAt: '2026-09-26T00:00:00Z', digestCount: 0 };
+    expect(defaultProject([a, b, c], 1)?.id).toBe(1);
+    expect(defaultProject([a, b, c], null)?.id).toBe(2);
+    expect(defaultProject([a, b, c], 99)?.id).toBe(2);
+    expect(defaultProject([c], null)?.id).toBe(3);
+    expect(defaultProject([], null)).toBeNull();
   });
 });
 

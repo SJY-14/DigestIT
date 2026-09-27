@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -131,5 +134,53 @@ describe('App: v2 nav (DIG-40)', () => {
     await click(host.querySelector('a[href="/"]'));
     await waitFor(() => location.pathname === '/');
     expect(scrollTo).toHaveBeenCalledTimes(2);
+  });
+
+  it('closes the History menu after picking a page, on an outside click and on Escape', async () => {
+    history.replaceState(null, '', '/');
+    await render(<App />);
+    await waitFor(() => host.querySelector('.setup-form') !== null);
+    const menu = host.querySelector('.history-menu') as HTMLDetailsElement;
+
+    menu.open = true;
+    await click(menu.querySelector('a[href="/timeline"]'));
+    await waitFor(() => location.pathname === '/timeline');
+    expect(menu.open).toBe(false);
+
+    menu.open = true;
+    await click(host.querySelector('.top h1'));
+    expect(menu.open).toBe(false);
+
+    menu.open = true;
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+    expect(menu.open).toBe(false);
+  });
+
+  it('returns Home to the same project/digest query it left from', async () => {
+    history.replaceState(null, '', '/?project=2&digest=7');
+    await render(<App />);
+    await flush();
+    const menu = host.querySelector('.history-menu') as HTMLDetailsElement;
+    await click(menu.querySelector('a[href="/units"]'));
+    await waitFor(() => location.pathname === '/units');
+    expect(location.search).toBe('');
+
+    await click(host.querySelector('a[href="/"]'));
+    await waitFor(() => location.pathname === '/');
+    expect(location.search).toBe('?project=2&digest=7');
+  });
+});
+
+describe('styles: History dropdown is not clipped (DIG-46)', () => {
+  it('the header that contains the absolutely positioned History menu has no clip-path or overflow clipping', () => {
+    // jsdom has no layout, so guard the rule itself: an earlier full-bleed trick
+    // (clip-path: inset(0 -100vmax)) clipped the dropdown to the header's height, hiding it.
+    // (Vitest stubs CSS imports, even ?raw, so read the file.)
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = [...css.matchAll(/(^|})\s*([^{}]*)\{([^}]*)\}/g)]
+      .filter((m) => m[2]!.split(',').some((sel) => /^\s*\.(top|nav|history-menu)\s*$/.test(sel)))
+      .map((m) => m[3]!);
+    expect(rules.length).toBeGreaterThan(0);
+    for (const body of rules) expect(body).not.toMatch(/clip-path|overflow\s*:|contain\s*:/);
   });
 });
