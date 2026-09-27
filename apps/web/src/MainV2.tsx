@@ -443,6 +443,38 @@ function useProjectStatus(projectId: number | null) {
   return { status, error, refresh };
 }
 
+// --- default project ---------------------------------------------------------------------------------
+
+const LAST_PROJECT_KEY = 'digestit.lastProject';
+
+function loadLastProject(): number | null {
+  try {
+    const v = Number(localStorage.getItem(LAST_PROJECT_KEY));
+    return Number.isInteger(v) && v > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLastProject(id: number): void {
+  try {
+    localStorage.setItem(LAST_PROJECT_KEY, String(id));
+  } catch {
+    // storage unavailable (private mode, quota): the default below still applies
+  }
+}
+
+/** The project to show when the URL names none: the one used last on this browser, else the most
+ * recently checked project that has digests, else the first. Projects are listed oldest first, so
+ * "the first" alone would open an old (often empty) project instead of the one being worked on. */
+export function defaultProject(projects: readonly ProjectDto[], lastUsedId: number | null): ProjectDto | null {
+  const last = projects.find((p) => p.id === lastUsedId);
+  if (last) return last;
+  const withDigests = projects.filter((p) => p.digestCount > 0);
+  const newest = [...withDigests].sort((a, b) => (b.lastCheckpointAt ?? '').localeCompare(a.lastCheckpointAt ?? '') || b.id - a.id)[0];
+  return newest ?? projects[0] ?? null;
+}
+
 // --- top level ------------------------------------------------------------------------------------
 
 function useNarrow(breakpoint = 1000): boolean {
@@ -491,11 +523,15 @@ export function MainV2() {
     return () => ac.abort();
   }, []);
 
-  const currentProjectId = url.project ?? projects?.[0]?.id ?? null;
+  const fallbackProjectId = useMemo(() => (projects ? defaultProject(projects, loadLastProject())?.id ?? null : null), [projects]);
+  const currentProjectId = url.project ?? fallbackProjectId;
   useEffect(() => {
-    if (url.project === null && projects && projects.length > 0) replace({ project: projects[0]!.id });
+    if (url.project === null && fallbackProjectId !== null) replace({ project: fallbackProjectId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projects, url.project]);
+  }, [fallbackProjectId, url.project]);
+  useEffect(() => {
+    if (url.project !== null && projects?.some((p) => p.id === url.project)) saveLastProject(url.project);
+  }, [url.project, projects]);
 
   const { status, error: statusError, refresh: refreshStatus } = useProjectStatus(currentProjectId);
   const digests = useDigests(currentProjectId);

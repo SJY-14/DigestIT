@@ -46,8 +46,16 @@ function usePage(): [Page, (p: Page) => void] {
     window.addEventListener('popstate', on);
     return () => window.removeEventListener('popstate', on);
   }, []);
+  // The v2 main screen keeps its state in the query (?project=&digest=&node=&area=). Remember it
+  // when leaving so Home returns to the same project/digest instead of the first project.
+  const mainSearch = useRef(page === 'main' ? location.search : '');
   return [page, (p) => {
-    history.pushState(null, '', PATH_FOR[p]);
+    if (pageFor(location.pathname) === 'main') mainSearch.current = location.search;
+    history.pushState(null, '', PATH_FOR[p] + (p === 'main' ? mainSearch.current : ''));
+    // Unlike a full navigation, pushState doesn't reset scroll: without this, switching tabs
+    // while scrolled down on one page (e.g. a tall main-screen digest) lands the new page's
+    // viewport at the same offset, which can scroll straight past its list and look empty/hidden.
+    window.scrollTo(0, 0);
     setPageRaw(p);
   }];
 }
@@ -108,6 +116,22 @@ export function App() {
     saveLevel(l);
   }, []);
   const sentinel = useRef<HTMLDivElement>(null);
+  const historyMenu = useRef<HTMLDetailsElement>(null);
+  const closeHistoryMenu = useCallback(() => historyMenu.current?.removeAttribute('open'), []);
+
+  // The History dropdown is a <details>: close it on an outside click or Escape, like a menu.
+  useEffect(() => {
+    const onPointer = (e: MouseEvent) => {
+      if (historyMenu.current?.open && !historyMenu.current.contains(e.target as Node)) closeHistoryMenu();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeHistoryMenu(); };
+    document.addEventListener('click', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [closeHistoryMenu]);
 
   // Infinite scroll: fetch the next page of commits when the sentinel nears the viewport.
   useEffect(() => {
@@ -179,7 +203,7 @@ export function App() {
           <a href={PATH_FOR.main} aria-current={page === 'main' ? 'page' : undefined} onClick={(e) => { e.preventDefault(); setPage('main'); }}>
             {PAGE_LABEL.main}
           </a>
-          <details className="history-menu">
+          <details className="history-menu" ref={historyMenu}>
             <summary>History</summary>
             <div className="history-menu-list" role="menu">
               {HISTORY_PAGES.map((p) => (
@@ -188,7 +212,7 @@ export function App() {
                   href={PATH_FOR[p]}
                   role="menuitem"
                   aria-current={page === p ? 'page' : undefined}
-                  onClick={(e) => { e.preventDefault(); setPage(p); }}
+                  onClick={(e) => { e.preventDefault(); closeHistoryMenu(); setPage(p); }}
                 >
                   {PAGE_LABEL[p]}
                 </a>

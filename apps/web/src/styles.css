@@ -74,7 +74,13 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Conso
 h1, h2, h3 { margin: 0; }
 .app { max-width: 1012px; margin: 0 auto; padding: 0 16px 48px; }
 .app.with-panel { max-width: 1600px; }
-.top { display: flex; align-items: center; gap: 12px; margin: 0 -16px 16px; padding: 12px 16px; background: var(--bg-inset); border-bottom: 1px solid var(--border-muted); box-shadow: 0 0 0 100vmax var(--bg-inset); clip-path: inset(0 -100vmax); }
+/* Full-bleed header band without clipping: the border-image outset paints the band (and its bottom
+   rule) out to the viewport edges as ink overflow, so it adds no horizontal scroll. Don't use
+   clip-path/overflow here: they would clip the History dropdown, which hangs below the header. */
+.top {
+  display: flex; align-items: center; gap: 12px; margin: 0 -16px 16px; padding: 12px 16px 13px;
+  border-image: linear-gradient(to top, var(--border-muted) 1px, var(--bg-inset) 1px) fill 0 / 0 / 0 100vmax;
+}
 .top h1 { font-size: 14px; font-weight: 600; }
 .repo-name, .muted { color: var(--muted); }
 select, button { font: inherit; color: inherit; }
