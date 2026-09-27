@@ -11,6 +11,10 @@
   --hover: #f3f4f6;
   --selected: #ddf4ff;
   --accent: #0969da;
+  /* Background for solid fills paired with white text (buttons, pills). Kept distinct from
+     --accent, which is also used for text/borders/rings against --bg and doesn't need the extra
+     contrast dark mode requires for white-on-fill. */
+  --accent-solid: #0969da;
   --focus: #0969da;
   --add: #1a7f37;
   --del: #cf222e;
@@ -42,6 +46,9 @@
     --hover: #151b23;
     --selected: #1a2a44;
     --accent: #4493f8;
+    /* #4493f8 gives white text ~3.1:1 (below WCAG AA's 4.5:1 for normal text); this fill is
+       darker so white text on it reaches ~4.6:1. */
+    --accent-solid: #1f6feb;
     --focus: #4493f8;
     --add: #3fb950;
     --del: #f85149;
@@ -200,7 +207,7 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .viewbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .view-tabs { border-bottom: 0; margin: 0; padding: 0; }
 .new-pill-slot { min-height: 28px; display: flex; align-items: center; }
-.new-pill { border: 0; border-radius: 2em; padding: 3px 14px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+.new-pill { border: 0; border-radius: 2em; padding: 3px 14px; background: var(--accent-solid); color: #fff; font-weight: 600; cursor: pointer; }
 .new-pill:hover { filter: brightness(1.1); }
 
 .units { list-style: none; margin: 0; padding: 0; }
@@ -234,8 +241,8 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .unit-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12px; }
 .unit-info p { margin: 6px 0 0; }
 .unit-actions { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-.btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
+.btn.primary { background: var(--accent-solid); border-color: var(--accent-solid); color: #fff; font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.08); background: var(--accent-solid); }
 .btn:disabled { opacity: 0.6; cursor: default; }
 
 /* insights page */
