@@ -157,6 +157,60 @@ describe('POST /api/projects (register)', () => {
       unlinkSync(link);
     }
   });
+
+  it('accepts a contextPath nested inside the registered project root', async () => {
+    const { db } = await setup();
+    const other = join(root, 'ctx-project');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'x.txt'), 'x\n');
+    writeFileSync(join(other, 'NOTES.md'), 'notes\n');
+    const app = makeApp(db, { projectRoots: [root] });
+    const res = await post(app, '/api/projects', { rootPath: other, contextPath: join(other, 'NOTES.md') });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('403s a contextPath outside the registered project root', async () => {
+    const { db } = await setup();
+    const other = join(root, 'ctx-project-2');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'x.txt'), 'x\n');
+    const outsideNotes = join(root, 'OUTSIDE.md');
+    writeFileSync(outsideNotes, 'secret notes\n');
+    const app = makeApp(db, { projectRoots: [root] });
+    const res = await post(app, '/api/projects', { rootPath: other, contextPath: outsideNotes });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe('context_not_allowed');
+  });
+
+  it('403s a contextPath that is a symlink escaping the project root', async () => {
+    const { db } = await setup();
+    const other = join(root, 'ctx-project-3');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'x.txt'), 'x\n');
+    const outsideNotes = join(root, 'OUTSIDE2.md');
+    writeFileSync(outsideNotes, 'secret notes\n');
+    const link = join(other, 'notes-link.md');
+    symlinkSync(outsideNotes, link);
+    try {
+      const app = makeApp(db, { projectRoots: [root] });
+      const res = await post(app, '/api/projects', { rootPath: other, contextPath: link });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error).toBe('context_not_allowed');
+    } finally {
+      unlinkSync(link);
+    }
+  });
+
+  it('400s a contextPath that does not exist', async () => {
+    const { db } = await setup();
+    const other = join(root, 'ctx-project-4');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'x.txt'), 'x\n');
+    const app = makeApp(db, { projectRoots: [root] });
+    const res = await post(app, '/api/projects', { rootPath: other, contextPath: join(other, 'nope.md') });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('context_not_found');
+  });
 });
 
 describe('v2 write-route auth/CSRF', () => {
@@ -347,6 +401,54 @@ describe('POST /api/projects/:id/context/refresh', () => {
     expect(body.fromFiles).toBe(2);
     expect(body.builtAt).toBe(NOW().toISOString());
     expect(body.hasUserContext).toBe(false);
+  });
+});
+
+function deferred<T = void>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe('one-at-a-time in-process guards (area explain, context refresh)', () => {
+  it('409s a second click on the same area while the first explainArea call is still running', async () => {
+    const { db, repoId } = await setup();
+    write('src/b.ts', 'b\n');
+    const gate = deferred<void>();
+    const app = makeApp(db, {
+      providerFactory: (allow) => {
+        const inner = createProvider({ provider: 'stub', repoAllowlist: allow });
+        return { ...inner, explainArea: async (input) => (await gate.promise, inner.explainArea!(input)) };
+      },
+    });
+    const digestId = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId;
+    const first = post(app, `/api/digests/${digestId}/areas/src/explain`);
+    await new Promise((r) => setTimeout(r, 20));
+    const second = await post(app, `/api/digests/${digestId}/areas/src/explain`);
+    expect(second.statusCode).toBe(409);
+    expect(second.json().error).toBe('explain_running');
+    gate.resolve();
+    expect((await first).statusCode).toBe(200);
+  });
+
+  it('409s a second context refresh while the first is still running', async () => {
+    const { db, repoId } = await setup();
+    const gate = deferred<void>();
+    const app = makeApp(db, {
+      providerFactory: (allow) => {
+        const inner = createProvider({ provider: 'stub', repoAllowlist: allow });
+        return { ...inner, explainContext: async (input) => (await gate.promise, inner.explainContext!(input)) };
+      },
+    });
+    const first = post(app, `/api/projects/${repoId}/context/refresh`);
+    await new Promise((r) => setTimeout(r, 20));
+    const second = await post(app, `/api/projects/${repoId}/context/refresh`);
+    expect(second.statusCode).toBe(409);
+    expect(second.json().error).toBe('explain_running');
+    gate.resolve();
+    expect((await first).statusCode).toBe(200);
   });
 });
 

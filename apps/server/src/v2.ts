@@ -92,6 +92,9 @@ class Lru<V> {
   }
 }
 
+/** Thrown by the in-flight guards below; always mapped to 409, never anything the caller retries on its own. */
+class InFlightError extends Error {}
+
 function outcomeToStatus(outcome: DigestOutcome | null): ExplanationStatus | null {
   if (outcome === null) return null;
   if (outcome === 'cached' || outcome === 'ok') return 'ok';
@@ -114,6 +117,12 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
   const now = opts.now ?? (() => new Date());
   const graphCache = new Lru<ProjectGraphDto>(opts.graphCacheSize ?? 50);
   const projectRoots = opts.projectRoots ?? [];
+  // In-process one-at-a-time guards (409 `explain_running`): a project's own explain/retry is
+  // already serialized by ingest's file lock, but an area click or a context refresh has no such
+  // lock, and `maybeAutoBuildContext` runs ahead of the explain lock too -- a double click or an
+  // Explain racing a Refresh would otherwise spend two budget calls for one piece of work.
+  const contextInFlight = new Set<number>();
+  const areaInFlight = new Set<string>();
   const providerFactory =
     opts.providerFactory ??
     ((allow: string[]): ExplanationProvider | null => {
@@ -168,21 +177,28 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     return row ? compactContext(parseJson(row.content, { purpose: '', modules: [], glossary: [], conventions: [] })) : undefined;
   }
 
+  /** Guarded by `contextInFlight`: throws `InFlightError` instead of racing a concurrent build for the same project. */
   async function buildContextFor(row: ProjectRow, provider: ExplanationProvider): Promise<void> {
-    const latest = latestCheckpoint(db, row.id);
-    if (!latest) throw new Error('project has no checkpoint yet');
-    const shadow = await openShadow(projectDataDir(home, row.id), row.path);
-    const tracked = await listTree(shadow, latest.treeSha);
-    const readFile = (p: string): string | null => {
-      try {
-        return readFileSync(join(row.path, p), 'utf8');
-      } catch {
-        return null;
-      }
-    };
-    const map = buildProjectMap(tracked, readFile);
-    const userMd = row.contextPath && existsSync(row.contextPath) ? readFileSync(row.contextPath, 'utf8') : null;
-    await buildProjectContext(db, row.id, latest.id, row.name, map, userMd, provider, { budget: budgetLimit, now });
+    if (contextInFlight.has(row.id)) throw new InFlightError();
+    contextInFlight.add(row.id);
+    try {
+      const latest = latestCheckpoint(db, row.id);
+      if (!latest) throw new Error('project has no checkpoint yet');
+      const shadow = await openShadow(projectDataDir(home, row.id), row.path);
+      const tracked = await listTree(shadow, latest.treeSha);
+      const readFile = (p: string): string | null => {
+        try {
+          return readFileSync(join(row.path, p), 'utf8');
+        } catch {
+          return null;
+        }
+      };
+      const map = buildProjectMap(tracked, readFile);
+      const userMd = row.contextPath && existsSync(row.contextPath) ? readFileSync(row.contextPath, 'utf8') : null;
+      await buildProjectContext(db, row.id, latest.id, row.name, map, userMd, provider, { budget: budgetLimit, now });
+    } finally {
+      contextInFlight.delete(row.id);
+    }
   }
 
   /** First-Explain-ever convenience: builds context once so the first digest has grounding. Best-effort. */
@@ -192,7 +208,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     try {
       await buildContextFor(row, provider);
     } catch {
-      /* best-effort: Explain still proceeds without grounding */
+      /* best-effort: Explain still proceeds without grounding, including when a concurrent refresh already has the lock */
     }
   }
 
@@ -345,7 +361,9 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       const expand = raw === undefined ? [] : (Array.isArray(raw) ? raw : [raw]).map(String);
       if (expand.length > MAX_EXPAND) return reply.code(400).send({ error: 'too_many_expand' });
 
-      const cacheKey = `${id}|${[...expand].sort().join(',')}`;
+      // JSON-encoded, not comma-joined: a folder name can itself contain a comma, which would
+      // otherwise let e.g. expand=["a,b"] collide with expand=["a","b"].
+      const cacheKey = `${id}|${JSON.stringify([...expand].sort())}`;
       const cached = graphCache.get(cacheKey);
       if (cached) return cached;
 
@@ -396,8 +414,22 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       }
       const allowed = projectRoots.some((root) => real === root || real.startsWith(root + sep));
       if (!allowed) return reply.code(403).send({ error: 'root_not_allowed' });
+
+      let realContextPath: string | undefined;
+      if (typeof contextPath === 'string') {
+        let rc: string;
+        try {
+          rc = realpathSync(resolvePath(contextPath));
+        } catch {
+          return reply.code(400).send({ error: 'context_not_found' });
+        }
+        // Its content is sent to the LLM as project context: it must live inside the project root
+        // just validated above, not anywhere else readable by the server (same symlink-escape rule).
+        if (rc !== real && !rc.startsWith(real + sep)) return reply.code(403).send({ error: 'context_not_allowed' });
+        realContextPath = rc;
+      }
       try {
-        const result = await initProject(db, home, real, { contextPath: (contextPath as string | undefined) ?? undefined }, now);
+        const result = await initProject(db, home, real, { contextPath: realContextPath }, now);
         return reply.code(201).send(projectRowToDto(findProjectRow(result.repoId)!));
       } catch (e) {
         return reply.code(400).send({ error: e instanceof Error ? e.message : 'init_failed' });
@@ -458,11 +490,16 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       }
       const provider = providerFactory([project.name]);
       if (!provider) return reply.code(500).send({ error: 'no_provider' });
+      const key = `${id}:${req.params.areaId}`;
+      if (areaInFlight.has(key)) return reply.code(409).send({ error: 'explain_running' });
+      areaInFlight.add(key);
       try {
         const context = latestContextText(project.id);
         await explainArea(db, id!, req.params.areaId, provider, { context, budget: budgetLimit, now });
       } catch (e) {
         return reply.code(500).send({ error: e instanceof Error ? e.message : 'explain_failed' });
+      } finally {
+        areaInFlight.delete(key);
       }
       const detail = loadAreaDetail(id!, req.params.areaId, l2);
       return 'error' in detail ? reply.code(404).send({ error: detail.error }) : detail;
@@ -478,6 +515,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     try {
       await buildContextFor(row, provider);
     } catch (e) {
+      if (e instanceof InFlightError) return reply.code(409).send({ error: 'explain_running' });
       return reply.code(500).send({ error: e instanceof Error ? e.message : 'context_failed' });
     }
     return contextStatusOf(row.id, row.contextPath !== null);
