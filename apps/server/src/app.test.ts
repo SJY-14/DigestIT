@@ -1,11 +1,11 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '@digestit/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp, isAllowedHost } from './app.js';
 import { SESSION_COOKIE } from './auth.js';
-import { DEFAULT_HOST, DEFAULT_PORT, resolvePort, startServer } from './serve.js';
+import { DEFAULT_HOST, DEFAULT_PORT, parseProjectRoots, prepareServer, resolvePort, startServer } from './serve.js';
 
 function seed() {
   const db = openDb(':memory:');
@@ -254,5 +254,85 @@ describe('serve', () => {
       (await app.inject({ url: '/api/repos', headers: { host: 'h:4780', authorization: 'Bearer good-token' } }))
         .statusCode,
     ).toBe(200);
+  });
+
+  it('creates a write-token file under DIGESTIT_HOME and requires it on a v2 write route', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'digestit-home-'));
+    try {
+      const dbPath = join(dir, 'digestit.sqlite');
+      const { app, loginUrl } = prepareServer({ dbPath, webDir: '/nonexistent', env: {} });
+      apps.push(app);
+      expect(loginUrl).toBeTruthy(); // freshly created: printed once
+      const tokenFile = join(dir, 'token');
+      expect(statSync(tokenFile).mode & 0o777).toBe(0o600);
+      const token = readFileSync(tokenFile, 'utf8').trim();
+      expect(token).toBe(loginUrl);
+
+      const headers = { origin: 'http://localhost:4780', host: 'localhost:4780', 'x-digestit': '1', 'content-type': 'application/json' };
+      const noToken = await app.inject({ method: 'POST', url: '/api/projects', headers, payload: '{}' });
+      expect(noToken.statusCode).toBe(401);
+      const withToken = await app.inject({
+        method: 'POST', url: '/api/projects', headers: { ...headers, authorization: `Bearer ${token}` }, payload: '{}',
+      });
+      expect(withToken.statusCode).toBe(403); // no DIGESTIT_PROJECT_ROOTS configured, but past the auth gate
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reuses an existing write-token file on a second prepareServer call (no new login URL)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'digestit-home-'));
+    try {
+      const dbPath = join(dir, 'digestit.sqlite');
+      const first = prepareServer({ dbPath, webDir: '/nonexistent', env: {} });
+      apps.push(first.app);
+      const second = prepareServer({ dbPath, webDir: '/nonexistent', env: {} });
+      apps.push(second.app);
+      expect(second.loginUrl).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reuses auth.token as the write token when DIGESTIT_ALLOWED_HOSTS is configured (one token, no extra file)', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'digestit-home-'));
+    const tokenDir = mkdtempSync(join(tmpdir(), 'digestit-token-'));
+    try {
+      const file = join(tokenDir, 'token');
+      writeFileSync(file, 'shared-token\n', { mode: 0o600 });
+      const dbPath = join(homeDir, 'digestit.sqlite');
+      const { app, loginUrl } = prepareServer({
+        dbPath, webDir: '/nonexistent', env: { DIGESTIT_ALLOWED_HOSTS: 'h:4780', DIGESTIT_TOKEN_FILE: file },
+      });
+      apps.push(app);
+      expect(loginUrl).toBeNull(); // the full auth token already gates everything; nothing new to print
+      expect(existsSync(join(homeDir, 'token'))).toBe(false);
+      const headers = {
+        origin: 'http://h:4780', host: 'h:4780', 'x-digestit': '1', 'content-type': 'application/json',
+        authorization: 'Bearer shared-token',
+      };
+      const res = await app.inject({ method: 'POST', url: '/api/projects', headers, payload: '{}' });
+      expect(res.statusCode).toBe(403); // past both auth gates, rejected only for missing DIGESTIT_PROJECT_ROOTS
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+      rmSync(tokenDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('parseProjectRoots', () => {
+  it('realpaths each configured root and drops ones that do not exist', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'digestit-roots-'));
+    try {
+      mkdirSync(join(dir, 'a'));
+      const roots = parseProjectRoots({ DIGESTIT_PROJECT_ROOTS: `${join(dir, 'a')},${join(dir, 'missing')}` });
+      expect(roots).toEqual([join(dir, 'a')]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is empty when unset', () => {
+    expect(parseProjectRoots({})).toEqual([]);
   });
 });

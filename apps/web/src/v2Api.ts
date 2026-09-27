@@ -1,6 +1,5 @@
 // v2 API client (docs/direction-v2.md §5, DIG-39 contract in packages/core/src/v2.ts).
-// DIG-39 has not landed yet: these calls 404 against today's server. Component tests use
-// fixtures (v2Fixtures.ts) instead of a live fixture server.
+// Component tests use fixtures (v2Fixtures.ts) instead of a live server.
 import type {
   AreaDetailDto, ContextStatusDto, DigestDetailDto, DigestPageDto, ExplainResultDto,
   ProjectDto, ProjectGraphDto, ProjectStatusDto,

@@ -2,12 +2,14 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import fastifyStatic from '@fastify/static';
-import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { SESSION_COOKIE, tokensMatch, type AuthOptions } from './auth.js';
+import { checkSameOrigin, header } from './csrf.js';
 import { CSP } from './csp.js';
 import { registerInsights, type InsightsOptions } from './insights.js';
 import { registerLive, type LiveOptions } from './live.js';
 import { registerUiEvents, UI_EVENTS_PATH, type UiEventsOptions } from './uievents.js';
+import { isV2WritePath, registerV2, type V2Options } from './v2.js';
 
 export { CSP };
 export type { AuthOptions };
@@ -19,6 +21,8 @@ export interface AppOptions {
   live?: LiveOptions;
   uiEvents?: UiEventsOptions;
   insights?: InsightsOptions;
+  /** v2 (DIG-39) project/digest/area routes; omitted leaves those paths 404 (v1-only server). */
+  v2?: V2Options;
   /** Called for every registered route (used by the route-enumeration test). */
   onRoute?: (method: string, url: string) => void;
   /** Host header values allowed besides loopback (host[:port], compared case-insensitively). */
@@ -30,6 +34,13 @@ export interface AppOptions {
    * so once the server is reachable off-box (allowedHosts configured) loopback is not a boundary.
    */
   auth?: AuthOptions;
+  /**
+   * Token that gates every v2 write route (docs/direction-v2.md §4), even on plain loopback with no
+   * `auth` configured. Defaults to `auth.token` when set (one token for the whole server); otherwise
+   * a dedicated write-only token (see `resolveOrCreateWriteToken`). Omitted with `v2` set: those
+   * routes are treated as ordinary (unregistered) POSTs and get 405, same as before `v2` existed.
+   */
+  writeToken?: string;
 }
 
 // Lazy: a bundled entry point (e.g. the SEA build, see docs/packaging.md) has no meaningful
@@ -58,6 +69,27 @@ export function isAllowedHost(host: string | undefined, allowedHosts: ReadonlySe
   if (isLoopbackHost(host)) return true;
   if (!host) return false;
   return allowedHosts.has(host.trim().toLowerCase());
+}
+
+/**
+ * `GET /?token=<t>` bootstrap: sets the session cookie and redirects to `/` with the query string
+ * stripped, so the token never lands in browser history for that URL. Returns true once it has
+ * fully handled the request (a redirect or a 401 for a wrong token); false means "not this route,
+ * keep going" — the caller then applies whatever credential check fits its own mode.
+ */
+function tryTokenLoginBootstrap(req: FastifyRequest, reply: FastifyReply, urlPath: string, token: string): boolean {
+  const qIndex = req.url.indexOf('?');
+  if (req.method !== 'GET' || urlPath !== '/' || qIndex === -1) return false;
+  const params = new URLSearchParams(req.url.slice(qIndex + 1));
+  const supplied = params.get('token');
+  if (supplied === null) return false;
+  if (!tokensMatch(supplied, token)) {
+    reply.code(401).send({ error: 'unauthorized' });
+    return true;
+  }
+  reply.header('set-cookie', `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict`);
+  reply.redirect('/');
+  return true;
 }
 
 function bearerToken(req: FastifyRequest): string | undefined {
@@ -113,7 +145,9 @@ const LATEST_EXPLANATION = `SELECT content, status, provider, model, prompt_vers
   FROM explanation WHERE change_unit_id = ? AND level = ?
   ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`;
 
-export function buildApp({ db, webDir = defaultWebDir(), live, uiEvents, insights, onRoute, allowedHosts, auth }: AppOptions): FastifyInstance {
+export function buildApp({
+  db, webDir = defaultWebDir(), live, uiEvents, insights, v2, onRoute, allowedHosts, auth, writeToken,
+}: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const latest = db.prepare(LATEST_EXPLANATION);
   const allowed = new Set([...(allowedHosts ?? [])].map((h) => h.trim().toLowerCase()));
@@ -122,30 +156,41 @@ export function buildApp({ db, webDir = defaultWebDir(), live, uiEvents, insight
   // Loopback-or-allowlisted only (architecture §6): the listener is always 127.0.0.1, and
   // rejecting any other Host also closes DNS rebinding, where a foreign name resolves to us and
   // Origin == Host. Read-only surface: anything but GET/HEAD is rejected before routing, except
-  // the single append-only viewer-event endpoint (M8).
+  // the single append-only viewer-event endpoint (M8) and the v2 write routes below.
   app.addHook('onRequest', async (req, reply) => {
     if (!isAllowedHost(req.headers.host, allowed)) return reply.code(421).send({ error: 'bad_host' });
-    const isUiEventsPost = req.method === 'POST' && req.url.split('?', 1)[0] === UI_EVENTS_PATH;
-    if (!isUiEventsPost && req.method !== 'GET' && req.method !== 'HEAD') {
+    const urlPath = req.url.split('?', 1)[0]!;
+    const isUiEventsPost = req.method === 'POST' && urlPath === UI_EVENTS_PATH;
+    const isV2Write = writeToken !== undefined && isV2WritePath(req.method, urlPath);
+    if (!isUiEventsPost && !isV2Write && req.method !== 'GET' && req.method !== 'HEAD') {
       return reply.code(405).header('allow', 'GET, HEAD').send({ error: 'method_not_allowed' });
     }
-    if (!auth) return;
+
+    // v2 writes (docs/direction-v2.md §4) always need the token, even on plain loopback with no
+    // `auth` configured: another local user sharing the host, or a page open in the browser, could
+    // otherwise spend the LLM budget. Checked ahead of (and independent of) the `auth` gate below.
+    if (isV2Write) {
+      const bad = checkSameOrigin(req);
+      if (bad) return reply.code(bad.code).send({ error: bad.error });
+      const ct = (header(req, 'content-type') ?? '').split(';', 1)[0]!.trim().toLowerCase();
+      if (ct !== 'application/json') return reply.code(415).send({ error: 'unsupported_media_type' });
+      const credential = bearerToken(req) ?? cookieValue(req, SESSION_COOKIE);
+      if (!credential || !tokensMatch(credential, writeToken!)) return reply.code(401).send({ error: 'unauthorized' });
+      return;
+    }
+    if (!auth) {
+      // Plain loopback with only a v2 write-token (no DIGESTIT_ALLOWED_HOSTS): reads stay open, but
+      // the dashboard still needs a way to get that token onto write requests, and `v2Api.ts` sends
+      // no Authorization header — only the cookie this bootstrap sets. A visit with no `?token=` at
+      // all (the common case) falls through untouched, same as before this existed.
+      if (writeToken !== undefined && tryTokenLoginBootstrap(req, reply, urlPath, writeToken)) return;
+      return;
+    }
 
     // Once DIGESTIT_ALLOWED_HOSTS is set (architecture §6), every route needs the token —
     // including loopback, since another local user on a shared host can also reach
-    // 127.0.0.1 directly. Bootstrap: GET /?token=<t> sets the cookie and redirects to / with the
-    // query string stripped, so the token never lands in a browser history entry for /.
-    const urlPath = req.url.split('?', 1)[0];
-    const qIndex = req.url.indexOf('?');
-    if (req.method === 'GET' && urlPath === '/' && qIndex !== -1) {
-      const params = new URLSearchParams(req.url.slice(qIndex + 1));
-      const supplied = params.get('token');
-      if (supplied !== null) {
-        if (!tokensMatch(supplied, auth.token)) return reply.code(401).send({ error: 'unauthorized' });
-        reply.header('set-cookie', `${SESSION_COOKIE}=${auth.token}; Path=/; HttpOnly; SameSite=Strict`);
-        return reply.redirect('/');
-      }
-    }
+    // 127.0.0.1 directly.
+    if (tryTokenLoginBootstrap(req, reply, urlPath, auth.token)) return;
     const credential = bearerToken(req) ?? cookieValue(req, SESSION_COOKIE);
     if (!credential || !tokensMatch(credential, auth.token)) return reply.code(401).send({ error: 'unauthorized' });
   });
@@ -301,6 +346,7 @@ export function buildApp({ db, webDir = defaultWebDir(), live, uiEvents, insight
   registerLive(app, db, live);
   registerUiEvents(app, db, uiEvents);
   registerInsights(app, db, insights);
+  if (v2) registerV2(app, db, v2);
 
   app.get('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
 

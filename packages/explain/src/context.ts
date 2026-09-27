@@ -518,12 +518,12 @@ function logCall(db: DatabaseSync, at: Date, durationMs: number, outcome: 'ok' |
 function storeProjectContext(
   db: DatabaseSync, repoId: number, checkpointId: number | null, content: ProjectContextContent,
   status: 'ok' | 'truncated' | 'error', sourceHash: string, userContextHash: string | null,
-  provider: { provider: string; model: string }, promptVersion: string, at: string,
+  provider: { provider: string; model: string }, promptVersion: string, at: string, fromFiles: number,
 ): void {
   db.prepare(
-    `INSERT INTO project_context (repo_id, checkpoint_id, content, status, source_hash, user_context_hash, provider, model, prompt_version, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(repoId, checkpointId, JSON.stringify(content), status, sourceHash, userContextHash, provider.provider, provider.model, promptVersion, at);
+    `INSERT INTO project_context (repo_id, checkpoint_id, content, status, source_hash, user_context_hash, provider, model, prompt_version, created_at, from_files)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(repoId, checkpointId, JSON.stringify(content), status, sourceHash, userContextHash, provider.provider, provider.model, promptVersion, at, fromFiles);
 }
 
 const EMPTY_CONTEXT: ProjectContextContent = { purpose: '', modules: [], glossary: [], conventions: [] };
@@ -578,9 +578,9 @@ export async function buildProjectContext(
   const userContextHash = hashUserMd(userMd);
   const used = result.provider ?? { provider: provider.id, model: provider.model };
   if (result.outcome === 'ok' || result.outcome === 'truncated') {
-    storeProjectContext(db, repoId, checkpointId, result.content!, result.outcome, map.sourceHash, userContextHash, used, promptVersion, at);
+    storeProjectContext(db, repoId, checkpointId, result.content!, result.outcome, map.sourceHash, userContextHash, used, promptVersion, at, map.totalFiles);
   } else {
-    storeProjectContext(db, repoId, checkpointId, EMPTY_CONTEXT, 'error', map.sourceHash, userContextHash, used, promptVersion, at);
+    storeProjectContext(db, repoId, checkpointId, EMPTY_CONTEXT, 'error', map.sourceHash, userContextHash, used, promptVersion, at, map.totalFiles);
   }
   return { outcome: result.outcome, content: result.content, calls: result.calls, detail: result.detail };
 }

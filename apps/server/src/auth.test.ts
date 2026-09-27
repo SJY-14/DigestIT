@@ -2,7 +2,9 @@ import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { generateToken, loadTokenFile, resolveAccess, runTokenCli, tokensMatch } from './auth.js';
+import {
+  generateToken, loadTokenFile, resolveAccess, resolveOrCreateWriteToken, runTokenCli, tokensMatch,
+} from './auth.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'digestit-token-'));
 
@@ -28,6 +30,25 @@ describe('loadTokenFile', () => {
     const file = join(dir(), 'token');
     writeFileSync(file, '', { mode: 0o600 });
     expect(() => loadTokenFile(file)).toThrow(/empty/);
+  });
+});
+
+describe('resolveOrCreateWriteToken', () => {
+  it('creates a fresh 0600 token file and reports created: true', () => {
+    const file = join(dir(), 'token');
+    const r = resolveOrCreateWriteToken(file);
+    expect(r.created).toBe(true);
+    expect(r.token).toHaveLength(43); // 32 random bytes, base64url
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(readFileSync(file, 'utf8').trim()).toBe(r.token);
+  });
+
+  it('reuses an existing token file as-is, reporting created: false', () => {
+    const file = join(dir(), 'token');
+    const first = resolveOrCreateWriteToken(file);
+    const second = resolveOrCreateWriteToken(file);
+    expect(second.created).toBe(false);
+    expect(second.token).toBe(first.token);
   });
 });
 

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { checkSameOrigin, header, type Reject } from './csrf.js';
 
 // M8 (docs/milestone-2.md, Security): the only non-GET route. It appends viewer events to
 // `unit_event` and does nothing else: no ingest, git, LLM, config or delete.
@@ -19,8 +20,6 @@ export interface UiEventsOptions {
   now?: () => number;
 }
 
-type Reject = { code: number; error: string };
-
 export class TokenBucket {
   private tokens: number;
   private last: number;
@@ -36,28 +35,6 @@ export class TokenBucket {
     this.tokens -= 1;
     return true;
   }
-}
-
-const header = (req: FastifyRequest, name: string): string | undefined => {
-  const v = req.headers[name];
-  return Array.isArray(v) ? v[0] : v;
-};
-
-/** CSRF gate: same-origin browser fetch with our custom header. Returns a rejection or null. */
-function checkSameOrigin(req: FastifyRequest): Reject | null {
-  const origin = header(req, 'origin');
-  const host = header(req, 'host');
-  let originHost: string | null = null;
-  try {
-    originHost = origin ? new URL(origin).host : null;
-  } catch {
-    /* malformed → rejected below */
-  }
-  if (!originHost || !host || originHost !== host) return { code: 403, error: 'bad_origin' };
-  const site = header(req, 'sec-fetch-site');
-  if (site !== undefined && site !== 'same-origin') return { code: 403, error: 'cross_site' };
-  if (header(req, 'x-digestit') !== '1') return { code: 403, error: 'missing_header' };
-  return null;
 }
 
 const isInt = (v: unknown, min: number, max: number): v is number =>

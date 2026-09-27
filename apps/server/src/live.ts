@@ -16,6 +16,7 @@ export interface LiveOptions {
 }
 
 type Row = Record<string, unknown>;
+interface AreaFingerprint { digestId: number; areaId: string; fp: string }
 
 const DEFAULT_POLL_MS = 1000;
 const DEFAULT_HEARTBEAT_MS = 15_000;
@@ -281,6 +282,8 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
   let seq = 0;
   let version = -1;
   let fingerprints = new Map<number, string>();
+  let digestFingerprints = new Map<number, string>();
+  let areaFingerprints = new Map<string, AreaFingerprint>();
 
   const dataVersion = () => (db.prepare('PRAGMA data_version').get() as { data_version: number }).data_version;
 
@@ -303,6 +306,38 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
     return m;
   };
 
+  /**
+   * Per-digest fingerprint (v2, DIG-39): its own L0-2 (one status/timestamp, since `explainDigest`
+   * always stores all three levels together) so the UI can drop its poll and refetch on `event: digest`.
+   */
+  const digestSnapshot = () => {
+    const m = new Map<number, string>();
+    const rows = db
+      .prepare(
+        `SELECT cu.id AS id,
+           (SELECT status || '|' || created_at FROM explanation e
+              WHERE e.change_unit_id = cu.id AND e.level = 0
+              ORDER BY (e.status = 'ok') DESC, e.created_at DESC, e.rowid DESC LIMIT 1) AS fp
+         FROM change_unit cu WHERE cu.kind = 'digest'`,
+      )
+      .all() as Row[];
+    for (const r of rows) m.set(r.id as number, (r.fp as string | null) ?? '');
+    return m;
+  };
+
+  /** Per-(digest, area) fingerprint (v2, DIG-39): lazy L3 result, for `event: area`. */
+  const areaSnapshot = () => {
+    const m = new Map<string, AreaFingerprint>();
+    const rows = db.prepare('SELECT change_unit_id AS digestId, area_id AS areaId, status, created_at FROM area_explanation').all() as Row[];
+    for (const r of rows) {
+      m.set(`${r.digestId}:${r.areaId}`, {
+        digestId: r.digestId as number, areaId: r.areaId as string,
+        fp: `${r.status}|${r.created_at}`,
+      });
+    }
+    return m;
+  };
+
   const send = (chunk: string) => {
     for (const s of streams) s.write(chunk);
   };
@@ -311,23 +346,38 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
   const tick = () => {
     let v: number;
     let next: Map<number, string>;
+    let nextDigest: Map<number, string>;
+    let nextArea: Map<string, AreaFingerprint>;
     try {
       v = dataVersion();
       if (v === version) return;
       next = snapshot();
+      nextDigest = digestSnapshot();
+      nextArea = areaSnapshot();
     } catch {
       return;
     }
     version = v;
     const unitIds = [...next].filter(([id, f]) => fingerprints.get(id) !== f).map(([id]) => id);
     fingerprints = next;
-    send(`id: ${++seq}\nevent: changed\ndata: ${JSON.stringify({ unitIds })}\n\n`);
+    if (unitIds.length > 0) send(`id: ${++seq}\nevent: changed\ndata: ${JSON.stringify({ unitIds })}\n\n`);
+
+    const digestIds = [...nextDigest].filter(([id, f]) => digestFingerprints.get(id) !== f).map(([id]) => id);
+    digestFingerprints = nextDigest;
+    if (digestIds.length > 0) send(`id: ${++seq}\nevent: digest\ndata: ${JSON.stringify({ digestIds })}\n\n`);
+
+    const areas = [...nextArea.values()].filter((a) => areaFingerprints.get(`${a.digestId}:${a.areaId}`)?.fp !== a.fp)
+      .map(({ digestId, areaId }) => ({ digestId, areaId }));
+    areaFingerprints = nextArea;
+    if (areas.length > 0) send(`id: ${++seq}\nevent: area\ndata: ${JSON.stringify({ areas })}\n\n`);
   };
 
   const start = () => {
     if (timer) return;
     version = dataVersion();
     fingerprints = snapshot();
+    digestFingerprints = digestSnapshot();
+    areaFingerprints = areaSnapshot();
     timer = setInterval(tick, pollMs);
     heartbeat = setInterval(() => send(': heartbeat\n\n'), heartbeatMs);
     timer.unref();

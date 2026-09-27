@@ -221,6 +221,27 @@ describe('sse', () => {
     expect(text).toContain(': heartbeat');
   });
 
+  it('emits digest{digestIds} and area{areas} (v2, DIG-39) after another connection writes them', async () => {
+    const path = tmpDb();
+    const { url } = await listen(path);
+    const ctrl = new AbortController();
+    const res = await fetch(url, { signal: ctrl.signal });
+    const writer = openDb(path);
+    setTimeout(() => {
+      writer.prepare("INSERT INTO change_unit (id, repo_id, kind, head_sha, title) VALUES (20, 1, 'digest', 'tree1', 'digest 1')").run();
+      writer.prepare(
+        "INSERT INTO explanation VALUES (20, 0, '{\"text\":\"why\"}', 'ok', 'stub', 'm', 'd1', 'h', '2026-09-24')",
+      ).run();
+      writer.prepare(
+        "INSERT INTO area_explanation VALUES (20, 'area-a', '{}', 'ok', 'stub', 'm', 'a1', 'h', '2026-09-24')",
+      ).run();
+    }, 100);
+    const text = await readUntil(res, (t) => t.includes('event: digest') && t.includes('event: area'));
+    ctrl.abort();
+    expect(text).toMatch(/event: digest\ndata: {"digestIds":\[20\]}/);
+    expect(text).toMatch(/event: area\ndata: {"areas":\[{"digestId":20,"areaId":"area-a"}\]}/);
+  });
+
   it('caps concurrent streams and frees a slot on disconnect', async () => {
     const { url } = await listen(tmpDb(), { maxStreams: 1 });
     const a = new AbortController();

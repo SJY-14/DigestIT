@@ -98,15 +98,35 @@ the schema.
    backfill command processes history oldest-first with a concurrency limit and
    a per-run budget cap. The UI shows `pending` for units not generated yet.
 
-## 5. API (read-only, JSON)
+## 5. API (JSON)
+
+v1, read-only (the old commit history; secondary in the v2 UI):
 
 - `GET /api/repos` — list of repos
 - `GET /api/repos/:id/timeline?cursor=&limit=` — commits with parents, refs, stats and L0 (for timeline labels)
 - `GET /api/changes/:id` — metadata + file list
 - `GET /api/changes/:id/explanations/:level` — one level (L3 includes patches)
 
-Ingestion and generation are CLI commands, not HTTP endpoints, so the web
-surface cannot trigger outbound LLM calls.
+v2 (DIG-33/39, docs/direction-v2.md), the standalone project digester. DTOs
+live in `packages/core/src/v2.ts`. GETs are read-only and follow the v1 rules
+above:
+
+- `GET /api/projects`, `GET /api/projects/:id/status`, `GET /api/budget`
+- `GET /api/projects/:id/digests?cursor=&limit=`, `GET /api/digests/:id`
+- `GET /api/digests/:id/areas/:areaId` — lazy L3, if generated
+- `GET /api/digests/:id/graph?expand=` — the project graph (§5 of direction-v2.md), deterministic from the checkpoint tree, no LLM call
+
+POSTs *do* trigger outbound LLM calls, the one place in the system where the
+web surface can:
+
+- `POST /api/projects` — register (only under `DIGESTIT_PROJECT_ROOTS`)
+- `POST /api/projects/:id/explain` — snapshot + checkpoint + digest (L0-2); 409 while one is already running for that project
+- `POST /api/digests/:id/explain` — retry an `error`/`truncated` digest
+- `POST /api/digests/:id/areas/:areaId/explain` — lazy L3 for one area
+- `POST /api/projects/:id/context/refresh` — rebuild the project context
+
+Every POST is bounded by the same daily call budget the CLI shares, and
+always requires the access token — see §6.
 
 ## 6. Security posture
 
@@ -134,10 +154,31 @@ surface cannot trigger outbound LLM calls.
   requires it, via an `Authorization: Bearer` header or the `digestit_session`
   cookie set by visiting `/?token=<t>` once; comparisons are constant-time and
   the token is never written to a log. Plain loopback access with no
-  `DIGESTIT_ALLOWED_HOSTS` configured (local dev/tests) stays unauthenticated.
-  See [operations.md](operations.md) for the exact operator commands.
+  `DIGESTIT_ALLOWED_HOSTS` configured (local dev/tests) stays unauthenticated
+  for GETs. See [operations.md](operations.md) for the exact operator commands.
+- The v2 write routes (§5: registration, Explain, L3, context refresh) are the
+  exception to "plain loopback stays unauthenticated": they always require a
+  token, even with no `DIGESTIT_ALLOWED_HOSTS` configured, because another
+  local user — or just a stray browser tab — could otherwise spend the LLM
+  budget. `digest serve` creates a dedicated write-token file under
+  `$DIGESTIT_HOME` the first time it runs (reusing `DIGESTIT_TOKEN_FILE`
+  instead, when that is already configured, so there is one token to manage,
+  not two) and prints the one-time login URL, the same way `digest token
+  init` does. These routes also require `Content-Type: application/json` and
+  an `Origin` that matches the request's `Host` (CSRF; a cross-origin
+  `<form>` post cannot set the custom header the dashboard sends either), and
+  are capped by the same daily call budget as the CLI — a compromised or
+  malicious page can spend at most that many calls before every project stops
+  responding to Explain until the next day.
+- A project can only be *registered* from the browser (`POST /api/projects`)
+  under a directory listed in `DIGESTIT_PROJECT_ROOTS` (comma-separated,
+  realpath'd at startup so a symlink cannot point outside an allowed root);
+  unset or outside every root is `403`. `digest init <path>` from the CLI has
+  no such restriction — running it is itself the consent to send that
+  project's code to the provider.
 - The only outbound path is the chosen LLM provider (D2), and it only
-  processes repos on the allowlist. There is no telemetry, no CDN (UI assets are
+  processes repos on the allowlist (v2: always scoped to the one project
+  being explained). There is no telemetry, no CDN (UI assets are
   bundled) and no third-party fonts or scripts.
 - Secrets (if D2 = A) come from an env file outside the repo and are never
   logged. Diffs are redacted before sending.
