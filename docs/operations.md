@@ -53,6 +53,57 @@ and with more than one project the CLI commands take the project name or id
 The older commit-history mode (`digest ingest`/`watch`, the History menu) still works as
 described below.
 
+## Ignore patterns for non-git projects and generated output
+
+Some projects — a research folder with `out/`, hundreds of scheduler job logs
+(`*.o1234`), `__pycache__`, no `.gitignore` at all — have areas that should
+never reach the shadow store or the provider. DigestIT always honours the
+project's own `.gitignore` if it has one, but a folder with none needs its
+own way to say "don't track this," without DigestIT ever writing into the
+project to do it (see "Never writes into the project" below).
+
+Each project has its own ignore patterns (gitignore syntax: `out/`, `*.log`,
+`*.o[0-9]*`, …), stored in DigestIT's data dir next to that project's shadow
+store — never in the project, and independent of any `.gitignore` the
+project does or doesn't have.
+
+```sh
+# Register with patterns from the start:
+pnpm digest init /path/to/project --ignore 'out/' --ignore '*.log'
+
+# Manage them later:
+pnpm digest ignore myproject list
+pnpm digest ignore myproject add '__pycache__/' '*.o[0-9]*'
+pnpm digest ignore myproject remove '*.log'
+```
+
+**Suggestions.** On `init` of a folder that has no `.gitignore` of its own,
+`digest init` looks (two levels deep, cheaply — counting a directory's own
+entries is one `readdir`, not a walk) for likely output areas: a directory
+with a few thousand entries or mostly large files, scheduler job logs
+(`*.o<N>`/`*.e<N>`), `__pycache__`, `*.log`. It prints what it found; nothing
+is ever applied automatically. Add the ones you want with `digest ignore …
+add`. The dashboard shows the same suggestions as one-click chips right
+after registering a project from the browser, with the same rule: click to
+add, nothing applied on its own.
+
+**Dashboard.** The project's ⓘ info popover has an "Ignore patterns"
+section: the current list (add/remove), and a "Not tracked" summary of
+what the last checkpoint left out, with *why* — DigestIT's own denylist,
+the project's `.gitignore`, a git-exclude source, or one of this project's
+own ignore patterns — so a newly-added pattern's effect is visible without
+guessing.
+
+## Never writes into the project
+
+DigestIT never creates, modifies or deletes anything under a project's own
+folder — not the project's `.gitignore`, not its `.git`, nothing. `init` and
+`explain` read the project (and, if it's a git repo, its `.git/info/exclude`
+and configured global excludes file, read-only) and write only into
+DigestIT's own data dir. This holds even for an entirely read-only project
+folder (e.g. a read-only bind mount): `init`/`explain` still succeed, since
+there is nothing in the project they ever need to write.
+
 ## Running locally (loopback, reads open, writes need the token)
 
 No extra env vars needed. The server only answers requests whose `Host`
