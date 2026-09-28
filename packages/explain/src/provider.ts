@@ -1,6 +1,7 @@
 import type {
-  AreaL3Content,
+  AreaWalkthrough,
   DigestL2Content,
+  ExplainLanguage,
   L0Content,
   L1Content,
   L2Content,
@@ -193,6 +194,8 @@ export interface ContextInput {
   map: ProjectMap;
   /** Redacted and capped by the caller; `null` when the project has no user-authored context. */
   userMd: string | null;
+  /** Language the description is written in. */
+  language: ExplainLanguage;
   retryFeedback?: string[];
 }
 
@@ -210,6 +213,8 @@ export interface DigestInput {
   repoName: string;
   files: ProviderFile[];
   context?: string;
+  /** Language every prose field is written in; code stays as written. */
+  language: ExplainLanguage;
   retryFeedback?: string[];
 }
 
@@ -237,11 +242,13 @@ export interface AreaInput {
   digest: { l0: string; l1Bullets: string[] };
   area: { id: string; title: string; effect: string; how: string; why: string };
   files: ProviderFile[];
+  /** Language every prose field is written in; code stays as written. */
+  language: ExplainLanguage;
   retryFeedback?: string[];
 }
 
 export interface AreaResult {
-  content: AreaL3Content;
+  content: AreaWalkthrough;
   provider: string;
   model: string;
 }
@@ -261,6 +268,6 @@ export interface ExplanationProvider {
   explainContext?(input: ContextInput): Promise<ContextResult>;
   /** One call returns L0 + L1 + L2 areas for a digest. */
   digest?(input: DigestInput): Promise<DigestResult>;
-  /** One call returns the lazy L3 (why/design/risks/notes) for one L2 area. */
+  /** One call returns the lazy L3 walkthrough (overview, steps over hunks, what to check) for one L2 area. */
   explainArea?(input: AreaInput): Promise<AreaResult>;
 }

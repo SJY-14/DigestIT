@@ -134,13 +134,41 @@ export interface View {
 // generous; manual zoom (ProjectGraph's MAX_SCALE) can still go well past this.
 export const MAX_FIT_SCALE = 1.5;
 
-/** View that centers and scales `b` to fit an area sized `viewport` (default a 640x640 viewBox). */
-export function fitView(b: Bounds | null, viewport = 640): View {
-  if (!b) return { x: viewport / 2, y: viewport / 2, scale: 1 };
+/** Screen-space margin kept around the fitted box, so edge labels (drawn under their node and
+ * centered on it) are not clipped by the pane. */
+export function fitPadding(width: number, height: number): { x: number; y: number } {
+  return { x: Math.min(56, width * 0.1), y: Math.min(32, height * 0.08) };
+}
+
+/** View that centers and scales `b` to fill an area `width` x `height` (default a 640x640 box),
+ * leaving `fitPadding` on each side. */
+export function fitView(b: Bounds | null, width = 640, height = width): View {
+  if (!b) return { x: width / 2, y: height / 2, scale: 1 };
+  const pad = fitPadding(width, height);
   const w = Math.max(1, b.maxX - b.minX);
   const h = Math.max(1, b.maxY - b.minY);
-  const scale = Math.min(MAX_FIT_SCALE, Math.max(0.05, (viewport * 0.85) / Math.max(w, h)));
+  const scale = Math.min(MAX_FIT_SCALE, Math.max(0.05, Math.min((width - 2 * pad.x) / w, (height - 2 * pad.y) / h)));
   const cx = (b.minX + b.maxX) / 2;
   const cy = (b.minY + b.maxY) / 2;
-  return { x: viewport / 2 - cx * scale, y: viewport / 2 - cy * scale, scale };
+  return { x: width / 2 - cx * scale, y: height / 2 - cy * scale, scale };
+}
+
+/** Quarter turn of a layout: (x, y) → (y, −x). */
+export function rotatePositions(positions: ReadonlyMap<string, Point>): Map<string, Point> {
+  const out = new Map<string, Point>();
+  for (const [id, p] of positions) out.set(id, { x: p.y, y: -p.x });
+  return out;
+}
+
+/**
+ * Whether turning the layout a quarter makes `b` fill a `width` x `height` pane noticeably
+ * better: a tall tree in a wide pane (or the reverse) otherwise leaves wide empty margins.
+ */
+export function shouldRotate(b: Bounds | null, width: number, height: number): boolean {
+  if (!b) return false;
+  const bw = Math.max(1, b.maxX - b.minX);
+  const bh = Math.max(1, b.maxY - b.minY);
+  const upright = Math.min(width / bw, height / bh);
+  const turned = Math.min(width / bh, height / bw);
+  return turned > upright * 1.15;
 }

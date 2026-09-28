@@ -509,52 +509,52 @@
     ]
    }
   ],
-  "sourceHash": "2b63544f9ebb54beebf7dbfa456ba1579be1742c7d4b07706d30f68f6db18e8d"
+  "sourceHash": "ffa586d507149ab1f1f60552a22e649a21fc0866ffcd63b5908d945faed27630"
  },
  "content": {
   "purpose": "AI generates changes faster than people can read them.",
   "modules": [
    {
     "path": "apps/web/src",
-    "role": "27 file(s), mostly .ts files"
+    "role": "27 files, mostly .ts"
    },
    {
     "path": "apps/server/src",
-    "role": "22 file(s), mostly .ts files"
+    "role": "22 files, mostly .ts"
    },
    {
     "path": "packages/explain/src",
-    "role": "22 file(s), mostly .ts files"
+    "role": "22 files, mostly .ts"
    },
    {
     "path": "packages/ingest/src",
-    "role": "15 file(s), mostly .ts files"
+    "role": "15 files, mostly .ts"
    },
    {
     "path": "apps/web/src/charts",
-    "role": "12 file(s), mostly .tsx files"
+    "role": "12 files, mostly .tsx"
    }
   ],
   "glossary": [
    {
     "term": "@digestit/server",
-    "meaning": "a package in this project"
+    "meaning": "A package of this project, named in its manifest."
    },
    {
     "term": "@digestit/web",
-    "meaning": "a package in this project"
+    "meaning": "A package of this project, named in its manifest."
    },
    {
     "term": "digestit",
-    "meaning": "a package in this project"
+    "meaning": "A package of this project, named in its manifest."
    },
    {
     "term": "@digestit/core",
-    "meaning": "a package in this project"
+    "meaning": "A package of this project, named in its manifest."
    },
    {
     "term": "@digestit/explain",
-    "meaning": "a package in this project"
+    "meaning": "A package of this project, named in its manifest."
    }
   ],
   "conventions": [

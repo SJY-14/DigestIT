@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkLevels } from './validate.js';
+import { checkLevels, cleanText, hasUnsafeMarkup } from './validate.js';
 import type { ProviderFile } from './provider.js';
 
 const files: ProviderFile[] = [
@@ -73,5 +73,17 @@ describe('checkLevels', () => {
     const g = good();
     g.l0.text = 'Updates `parse()` in a.ts.';
     expect(checkLevels(g, files)!.violations).toContain('l0: mentions a file name or code identifier');
+  });
+});
+
+describe('markup check', () => {
+  it('flags real HTML tags and links, but keeps generics and JSX components in prose about code', () => {
+    expect(hasUnsafeMarkup('see <b>this</b>')).toBe(true);
+    expect(hasUnsafeMarkup('<script>alert(1)</script>')).toBe(true);
+    expect(hasUnsafeMarkup('<a href="x">x</a>')).toBe(true);
+    expect(hasUnsafeMarkup('see https://example.com')).toBe(true);
+    expect(hasUnsafeMarkup('runQueue now returns Outcome<R> records and Promise<void>.')).toBe(false);
+    expect(hasUnsafeMarkup('App renders <Settings /> under /settings.')).toBe(false);
+    expect(cleanText('returns Outcome<R> records')).toBe('returns Outcome<R> records');
   });
 });

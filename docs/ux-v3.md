@@ -60,6 +60,11 @@ Replaces `AreaL3Content {why, design, risks, notes}` with `AreaWalkthrough`:
   "Changed here.", "Changes in <dir>").
 - The area prompt version is bumped; old `a1` rows are not shown (status `none`, regenerated on
   request).
+- Implementation (DIG-48): the UI numbers hunks with `splitHunks(patch)` from
+  `@digestit/core/hunks` (pure, browser-safe), the same walker the prompt and the validator use.
+  A generated "Other changes" step (`OTHER_CHANGES` in `packages/explain/src/area.ts`) collects
+  hunks the model left uncovered; the row is then `truncated`. Area rows are read only at the
+  current `AREA_PROMPT_VERSION` (`a2`).
 
 ## 3. Language
 
@@ -74,6 +79,9 @@ Replaces `AreaL3Content {why, design, risks, notes}` with `AreaWalkthrough`:
 - API: `ProjectDto.language`, `PATCH /api/projects/:id {language}` (token-gated like the other
   writes). CLI: `digest init --language ko` and `digest config <project> --language ko`.
 - UI chrome stays English; every string goes through `copy.ts` so a `ko` copy can be added later.
+- Implementation (DIG-48): `explainDigest`, `explainArea` and `buildProjectContext` take
+  `language` (default `en`); DIG-49 passes the digest's or project's language. Korean uses the same
+  word limits (words = 어절) plus a cap of 5 characters per allowed word; English is capped at 12.
 
 ## 4. Header, picker, progress, graph
 

@@ -1,0 +1,302 @@
+{
+ "language": "en",
+ "provider": {
+  "id": "claude-subagent-replay",
+  "model": "claude-opus-5-5"
+ },
+ "digest": {
+  "outcome": "ok",
+  "calls": 1,
+  "l0": {
+   "text": "Backups now retry failed uploads and keep going past broken files, so one network hiccup no longer aborts a run."
+  },
+  "l1": {
+   "userVisible": true,
+   "bullets": [
+    "New --retries flag (or SNAPBACK_RETRIES), 0-10, default 3, retries network errors and 5xx replies with growing, jittered waits.",
+    "A failing file no longer stops the run: the other files keep uploading and the failures are listed at the end.",
+    "The summary now reads \"uploaded X of Y files\", and the exit code is 2 when any file failed."
+   ]
+  },
+  "l2": {
+   "items": [
+    {
+     "id": "retry-backoff",
+     "paths": [
+      "src/retry.ts",
+      "test/retry.test.ts"
+     ],
+     "title": "Retry with exponential backoff",
+     "effect": "Brief network errors and 5xx replies get retried. 4xx replies, such as a denied key, fail at once.",
+     "how": "New withRetry retries while isRetryable accepts the error (ECONNRESET, ETIMEDOUT, EAI_AGAIN, EPIPE, or status >= 500). Waits start at 200 ms, double up to 10 s, jittered.",
+     "why": "Retrying a 4xx would only repeat a bad key or a missing permission. The injectable sleep and random let tests check the delays without waiting."
+    },
+    {
+     "id": "upload-error",
+     "paths": [
+      "src/upload.ts",
+      "test/upload.test.ts"
+     ],
+     "title": "Upload failures carry file and attempt count",
+     "effect": "Each failed file is reported with its path and how many attempts were made.",
+     "how": "uploadFile takes a retries argument (default 0), wraps client.put in withRetry, counts attempts, and throws UploadError with filePath, attempts and the original cause.",
+     "why": "The CLI needs the path and attempt count for its failure list. Because retries defaults to 0, existing callers still make a single attempt."
+    },
+    {
+     "id": "queue-and-exit",
+     "paths": [
+      "src/queue.ts",
+      "src/cli.ts"
+     ],
+     "title": "Keep uploading after a file fails",
+     "effect": "The run finishes every file, prints \"uploaded X of Y files\" and each failure, then exits with 2.",
+     "how": "runQueue now catches errors per item and returns Outcome<R> records. main parses --retries, collects the failures, prints them to stderr and picks the exit code.",
+     "why": "Before, the first failed upload rejected the whole queue, so one bad file cost the entire backup. Exit code 2 lets scripts detect a partial failure."
+    },
+    {
+     "id": "retries-config",
+     "paths": [
+      "src/config.ts",
+      "README.md"
+     ],
+     "title": "Retries setting and its documentation",
+     "effect": "Operators set retries with --retries or SNAPBACK_RETRIES. loadConfig throws an error for values outside 0-10.",
+     "how": "loadConfig adds retries to Config. It takes args.retries, then SNAPBACK_RETRIES, then 3, and checks it against MAX_RETRIES = 10. README documents the flag and the new failure behaviour.",
+     "why": "The flag overrides the environment variable, which overrides the default. The diff does not say why the ceiling is 10; the ticket or the author would settle that."
+    }
+   ],
+   "notAnalysed": []
+  }
+ },
+ "areas": [
+  {
+   "id": "retry-backoff",
+   "outcome": "ok",
+   "calls": 1,
+   "walkthrough": {
+    "overview": "This area adds src/retry.ts, a small helper that retries an async call when it fails for a transient reason: a network error code or a 5xx reply. 4xx replies such as a denied key fail at once, because retrying them only repeats the same bad key or missing permission. Waits start at 200 ms, double up to 10 s and are jittered, and tests inject sleep and random so they can check the delays without waiting.",
+    "steps": [
+     {
+      "title": "Decide which failures deserve another try",
+      "body": "isRetryable treats the error as an object with optional code and status fields. It returns true when code is in RETRYABLE_CODES (ECONNRESET, ETIMEDOUT, EAI_AGAIN, EPIPE) or when status is a number of 500 or more. Everything else is final, including every 4xx reply. The doc comment gives the reason: a bad key or a missing permission will not fix itself on a second attempt. The trade-off is that only an explicit allow-list of codes is retried, so a transient error with any other code fails at once.",
+      "hunks": [
+       {
+        "path": "src/retry.ts",
+        "hunk": 1
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "Retry loop with capped, jittered exponential backoff",
+      "body": "withRetry calls fn in an open-ended loop and returns { value, attempts }, so callers can report how many tries an upload took. On an error, it rethrows when attempt > opts.retries or when isRetryable rejects the error. This means retries: 0 makes exactly one call. Otherwise it computes delay = min(maxDelayMs, baseDelayMs * 2^(attempt-1)), with defaults of 200 ms and 10_000 ms, and sleeps delay/2 + random() * delay/2. The jitter keeps each wait in the upper half of the delay, which spreads out clients that fail together while keeping a floor on the wait. sleep and random default to setTimeout and Math.random but can be injected through RetryOptions.",
+      "hunks": [
+       {
+        "path": "src/retry.ts",
+        "hunk": 1
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "Tests pin attempts, 4xx refusal and delay schedule",
+      "body": "The new test/retry.test.ts passes a no-op sleep, so the suite never actually waits. The first test fails twice with ECONNRESET and expects { value: 'ok', attempts: 3 }. The second throws status 403 and checks that fn was called exactly once. The third always throws 503 with retries: 4, baseDelayMs: 100, maxDelayMs: 300 and random fixed at 1. It expects the delays [100, 200, 300, 300], which shows both the doubling and the cap. The isRetryable tests check 502 and ETIMEDOUT (true) against 404 (false).",
+      "hunks": [
+       {
+        "path": "test/retry.test.ts",
+        "hunk": 1
+       }
+      ],
+      "mechanical": false
+     }
+    ],
+    "check": [
+     "The jitter is only tested with random() fixed at 1, so the lower bound (delay/2 when random returns 0) is never tested.",
+     "isRetryable reads e.code without a null check, so if fn throws null or undefined, the caller gets a TypeError instead of the original error.",
+     "Only four error codes are retried. Confirm that ECONNREFUSED and similar transient errors from the upload client should really fail at once.",
+     "Every status >= 500 is retried, including 501 Not Implemented, which a retry will not fix. Confirm this is acceptable.",
+     "This area does not validate the 0-10 range of --retries or SNAPBACK_RETRIES. Check that the caller clamps or rejects out-of-range values before passing opts.retries."
+    ]
+   }
+  },
+  {
+   "id": "upload-error",
+   "outcome": "ok",
+   "calls": 2,
+   "walkthrough": {
+    "overview": "uploadFile now retries failed puts through withRetry and, when every attempt fails, throws an UploadError carrying the file path, the attempt count and the original error. The CLI needs those details for its end-of-run failure list. Because retries defaults to 0, existing callers still make exactly one attempt.",
+    "steps": [
+     {
+      "title": "Retry the put and count attempts",
+      "body": "Before, uploadFile read the file, built the key with objectKey and called client.put once, so any error went straight to the caller. Now it takes a fourth argument, retries = 0, and wraps client.put in withRetry(..., { retries }), which is imported from ./retry.js. A local attempts counter goes up inside the retried callback, so it records how many puts actually ran rather than assuming retries + 1. Defaulting retries to 0 keeps the old single-attempt behaviour for every existing caller. The --retries value only takes effect where the CLI passes it in. The file is still read only once, before the retry loop, and the same body buffer is reused on every attempt.",
+      "hunks": [
+       {
+        "path": "src/upload.ts",
+        "hunk": 1
+       },
+       {
+        "path": "src/upload.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "UploadError carries path, attempts and cause",
+      "body": "The new UploadError class extends Error and exposes filePath, attempts and cause as readonly constructor properties. Its message reads \"upload of <filePath> failed after N attempt(s)\", with the plural dropped when N is 1. uploadFile catches whatever withRetry finally throws and rethrows it as UploadError(filePath, attempts, err), so callers get one error type with structured fields instead of a raw network error. The original error stays reachable through cause, so its details, such as an ECONNRESET code, are not lost.",
+      "hunks": [
+       {
+        "path": "src/upload.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "Rename path parameter to filePath",
+      "body": "objectKey and uploadFile rename their path parameter to filePath, and the bodies now use the new name. objectKey's behaviour is unchanged: it still returns prefix plus basename. The rename matches the filePath field on UploadError.",
+      "hunks": [
+       {
+        "path": "src/upload.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": true
+     },
+     {
+      "title": "Test the failure report for one attempt",
+      "body": "The test import now also brings in UploadError and uploadFile. A new uploadFile test uses a stub client whose put always throws an error with code ECONNRESET, uploads __filename with retries 0, and checks that the rejection is an UploadError with attempts equal to 1. This covers the default no-retry path and the error wrapping. The retrying path is not tested.",
+      "hunks": [
+       {
+        "path": "test/upload.test.ts",
+        "hunk": 1
+       },
+       {
+        "path": "test/upload.test.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     }
+    ],
+    "check": [
+     "Only retries 0 is tested; add a case with retries above 0 to confirm that attempts equals retries plus 1 and that a later success returns the key.",
+     "Declaring readonly cause on UploadError shadows Error's built-in cause property; confirm this compiles cleanly under the project's TypeScript target and lib settings.",
+     "The test uses __filename, which is undefined in ESM modules; confirm that vitest provides it in this setup.",
+     "A readFile failure happens outside the try block, so it is not wrapped in UploadError; confirm the CLI failure list handles that error type too.",
+     "Confirm that the CLI caller actually passes the --retries value into uploadFile, since the default of 0 disables retries."
+    ]
+   }
+  },
+  {
+   "id": "queue-and-exit",
+   "outcome": "ok",
+   "calls": 1,
+   "walkthrough": {
+    "overview": "runQueue no longer rejects on the first failed item. It now records a success or failure Outcome for every file, and main counts those outcomes. The run uploads every file it can, prints \"uploaded X of Y files\" plus one stderr line per failure, and exits with 2 if any file failed so scripts can detect a partial backup.",
+    "steps": [
+     {
+      "title": "Record per-item outcomes instead of rejecting",
+      "body": "runQueue used to return Promise<R[]>. Each worker awaited work(items[i]) directly, so the first thrown error rejected the whole queue and the in-flight uploads were lost to the caller. Now each call sits in a try/catch and stores either { ok: true, value } or { ok: false, error } in results[i]. The new exported type Outcome<R> describes that record, and the function returns Promise<Outcome<R>[]>. Results keep their input order and the concurrency limit is unchanged. The trade-off is that runQueue never rejects for a work failure, so every caller has to check o.ok itself.",
+      "hunks": [
+       {
+        "path": "src/queue.ts",
+        "hunk": 1
+       },
+       {
+        "path": "src/queue.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "Report failures and exit with 2",
+      "body": "main used to print \"uploaded ${keys.length} files\" and always return 0. It now receives outcomes from runQueue and uses flatMap to collect the errors from entries where ok is false. It logs \"uploaded X of Y files\" to stdout, where Y is outcomes.length. For each failure it writes a line to stderr. An UploadError prints its filePath and attempts count; any other error is shown with String(err). The function returns 2 when failed is non-empty and 0 otherwise, which lets scripts tell a partial failure apart from a clean run. The call also passes config.retries as a new fourth argument to uploadFile.",
+      "hunks": [
+       {
+        "path": "src/cli.ts",
+        "hunk": 3
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "Parse the --retries flag",
+      "body": "The argument loop in main now accepts --retries and stores Number(argv[++i]) in args.retries, the same way --concurrency is handled. The args type gains an optional retries field. The import line also pulls in UploadError so the failure report can recognise it. This diff does not show how args.retries becomes config.retries or where the 0-10 range and the default of 3 are enforced. Presumably loadConfig does this, and checking it would settle the question.",
+      "hunks": [
+       {
+        "path": "src/cli.ts",
+        "hunk": 1
+       },
+       {
+        "path": "src/cli.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     }
+    ],
+    "check": [
+     "Confirm that loadConfig maps args.retries and SNAPBACK_RETRIES to config.retries and rejects NaN or values outside 0-10, since Number(argv[++i]) accepts any input.",
+     "Check every other caller of runQueue: it now returns Outcome<R>[] and never rejects, so code expecting R[] or a rejection will misbehave.",
+     "Add tests for a mixed run: some files fail, the others still upload, the summary counts are right, and main returns 2.",
+     "If readdir throws on a missing directory, main still rejects before runQueue runs, so that case never reaches exit code 2."
+    ]
+   }
+  },
+  {
+   "id": "retries-config",
+   "outcome": "ok",
+   "calls": 1,
+   "walkthrough": {
+    "overview": "This area adds a retries setting that operators control with --retries or SNAPBACK_RETRIES. loadConfig puts it on Config and rejects values outside 0-10. The README documents the flag, the backoff and the new keep-going failure behaviour, so the configuration surface matches the retry and partial-failure work elsewhere in the change.",
+    "steps": [
+     {
+      "title": "Add retries to Config with a ceiling",
+      "body": "The Config interface gains a required retries: number field next to concurrency. A new exported constant, MAX_RETRIES = 10, sets the upper bound. Before this change Config had only bucket and concurrency. Exporting the constant lets other modules and tests use the same limit instead of repeating 10. The diff does not say why the ceiling is 10; the ticket or the author would settle that. Because the field is required, any code that builds a Config by hand now has to supply retries.",
+      "hunks": [
+       {
+        "path": "src/config.ts",
+        "hunk": 1
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "Resolve and validate retries in loadConfig",
+      "body": "loadConfig now works out retries as args.retries ?? Number(env.SNAPBACK_RETRIES ?? 3), so the CLI flag wins over the environment variable and the environment variable wins over the default of 3. It then requires Number.isInteger(retries) and 0 <= retries <= MAX_RETRIES. Anything else throws \"retries must be an integer from 0 to 10\", the same fail-fast style as the concurrency check above it. The return value changes from { bucket, concurrency } to { bucket, concurrency, retries }. A downside of using Number() is that an empty SNAPBACK_RETRIES becomes 0 and passes validation, so it quietly turns retries off.",
+      "hunks": [
+       {
+        "path": "src/config.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "Document the flag and the new failure behaviour",
+      "body": "The README usage example now passes --retries 3. The Options list documents --retries <n>: it retries per file after a network error or a 5xx reply, accepts 0-10, defaults to 3, and can also be set with SNAPBACK_RETRIES. The waits are 200 ms, 400 ms, 800 ms and so on, with jitter and a 10 s cap. The old line \"The first failed upload stops the run.\" is replaced: a file that still fails is listed at the end, the other files keep uploading, and the exit code is 2 when any file failed. The backoff numbers and the exit code are implemented outside this area, so the README only states them.",
+      "hunks": [
+       {
+        "path": "README.md",
+        "hunk": 1
+       },
+       {
+        "path": "README.md",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     }
+    ],
+    "check": [
+     "An empty SNAPBACK_RETRIES (\"\") makes Number(\"\") return 0, which passes validation and silently disables retries. Decide whether that should throw instead.",
+     "No loadConfig tests are shown for precedence (args over env over 3), the 0 and 10 bounds, or rejection of 11, -1 and 2.5. Confirm they exist.",
+     "Confirm the uploader's backoff really starts at 200 ms, doubles, adds jitter and caps at 10 s, as the README says.",
+     "Confirm the CLI parses --retries into args.retries as a number, and that any code building Config by hand now sets retries."
+    ]
+   }
+  }
+ ]
+}

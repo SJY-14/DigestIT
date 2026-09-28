@@ -52,7 +52,22 @@ export const LEVELS = [
 // Each issue adds its own section below (header, digest picker, reader, walkthrough, graph,
 // empty states, history). Keep strings as plain values or small functions of numbers/dates.
 
-// ---- Header (DIG-49): project switcher, Explain button, calls-left badge, info popover ----
+// --- Header (DIG-49): project switcher, digest picker, Explain, calls left, info popover --------
+
+export const HEADER = {
+  projectLabel: 'Project',
+  loadingStatus: 'Loading…',
+  statusError: (msg: string) => `Could not load the project status: ${msg}`,
+  infoLabel: 'Project context and language',
+  refreshContext: 'Refresh context',
+  refreshingContext: 'Refreshing…',
+  languageLabel: 'Explanation language',
+  languageHint: 'New digests use this language. Older digests stay as they were written.',
+  languageError: (msg: string) => `Could not change the language: ${msg}`,
+  nothingPendingHint: 'Nothing has changed since the last check.',
+  noCallsHint: 'No calls left today. Explain works again after the reset.',
+  resets: (when: string) => `Resets ${when}`,
+} as const;
 
 /** The primary Explain button's label: the pending count, or a plain "nothing to do" state
  * that must not look like a broken primary action. */
@@ -72,9 +87,17 @@ export function explainingLabel(elapsedSeconds: number): string {
   return `Explaining… ${elapsedLabel(elapsedSeconds)}`;
 }
 
-/** "35 calls left today" for the small budget badge; flags 0 as fully spent, not just "0 left". */
-export function callsLeftLabel(remaining: number): string {
-  return remaining === 0 ? 'No calls left today' : `${plural(remaining, 'call')} left today`;
+/** When the daily budget comes back: just the clock ("00:00") within the next day, else a date. */
+export function resetsLabel(iso: string, now: number = Date.now()): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return iso;
+  return t > now && t - now <= 86_400_000 ? time.format(t) : humanDateTime(iso, now);
+}
+
+/** The calls-left badge: "35 calls left today", or, when spent, what happens next
+ * ("No calls left today · resets 00:00"). */
+export function callsLeftLabel(remaining: number, resetsAt: string, now: number = Date.now()): string {
+  return remaining === 0 ? `No calls left today · resets ${resetsLabel(resetsAt, now)}` : `${plural(remaining, 'call')} left today`;
 }
 
 /** The info popover's context line: "Built just now, from 42 files, with your notes" /
@@ -85,7 +108,7 @@ export function contextSummary(
   fromFiles: number | null,
   hasUserContext: boolean,
 ): string {
-  if (status === 'none') return 'No context built yet';
+  if (status === 'none') return 'No context built yet. It is built on the first Explain.';
   if (status === 'pending' || !builtLabel) return 'Building context…';
   const built = status === 'error' ? `Failed to build (last try ${builtLabel})` : `Built ${builtLabel}`;
   const from = fromFiles !== null ? `, from ${plural(fromFiles, 'file')}` : '';
@@ -96,45 +119,56 @@ export function contextSummary(
 /** Explain outcomes that land back on the header instead of a new digest. `detail`, when given,
  * is already a user-facing sentence (see `apiErrorMessage` below), not a raw server code. */
 export function explainOutcomeMessage(
-  outcome: 'error' | 'budget' | 'no_changes', detail: string | undefined, resetsLabel: string,
+  outcome: 'error' | 'budget' | 'no_changes', detail: string | undefined, resets: string,
 ): string {
-  if (outcome === 'no_changes') return 'Nothing changed since the last check.';
-  if (outcome === 'budget') return `Daily budget used up. It resets ${resetsLabel}.`;
-  return detail ?? 'Explain failed. Try again.';
+  if (outcome === 'no_changes') return 'Nothing changed since the last check. Work in the project with any tool, then press Explain again.';
+  if (outcome === 'budget') return `The daily budget ran out, so this digest is not explained yet. Retry it after the reset at ${resets}.`;
+  return `Explain failed.${detail ? ` ${detail}` : ''} Try again, or check the server log if it keeps failing.`;
 }
 
-// ---- Digest picker (DIG-49): one row per digest ----
+// --- Digest picker (DIG-49): an overlay list, one row per digest ---------------------------------
 
 /** "Today, 17:05 · 15 files · Adds retry to uploads" (or "Not explained yet" with no L0). */
-export function digestRowLabel(atIso: string, files: number, l0Text: string | null): string {
-  return `${humanDateTime(atIso)} · ${plural(files, 'file')} · ${l0Text ?? 'Not explained yet'}`;
+export function digestRowLabel(atIso: string, files: number, l0Text: string | null, now: number = Date.now()): string {
+  return `${humanDateTime(atIso, now)} · ${plural(files, 'file')} · ${l0Text ?? 'Not explained yet'}`;
 }
 
-export const DIGEST_STATUS_LABEL: Record<'pending' | 'error' | 'truncated', string> = {
-  pending: 'Explaining…',
-  error: 'Could not explain this digest',
-  truncated: 'Only partly explained',
-};
+export const PICKER = {
+  label: 'Digests',
+  choose: 'Choose a digest',
+  listLabel: 'Past digests, newest first',
+  loading: 'Loading…',
+  loadError: (msg: string) => `Could not load digests: ${msg}`,
+  startOfHistory: 'Start of history',
+  retry: 'Retry',
+  retrying: 'Retrying…',
+  retryNoBudget: 'No calls left today',
+  status: {
+    pending: 'Not explained yet',
+    error: 'Explain failed',
+    truncated: 'Partly explained',
+  } as Record<'pending' | 'error' | 'truncated', string>,
+} as const;
 
-// ---- First-run empty states (DIG-49) ----
+// --- First-run empty states (DIG-49): teach register → work → Explain ----------------------------
 
-export const NO_PROJECTS_EMPTY_STATE = {
-  heading: 'Start your first project',
-  steps: [
-    'Register a project folder below.',
-    'Work in it with any tool — an editor, an agent, a script.',
-    'Come back and press Explain to see what changed.',
-  ],
-};
+export const EMPTY = {
+  noProjects: {
+    heading: 'Start your first project',
+    steps: [
+      'Register a project folder below.',
+      'Work in it with any tool: an editor, an AI agent, a script.',
+      'Come back and press Explain to see what changed.',
+    ],
+  },
+  noDigests: {
+    heading: 'No digests yet',
+    body: 'Work in this project with any tool, then press Explain above. Each Explain turns the changes since the last one into a digest.',
+  },
+  digestNoChanges: 'This digest has no file changes to explain. Keep working, then press Explain again.',
+} as const;
 
-export const NO_DIGESTS_EMPTY_STATE = {
-  heading: 'No digests yet',
-  body: 'Work in this project with any tool, then press Explain above to build the first digest.',
-};
-
-export const DIGEST_NO_CHANGES_EMPTY_STATE = 'This digest has nothing to show: every change was filtered out.';
-
-// ---- Server error codes -> user-facing sentences (DIG-49 copy sweep) ----
+// --- Server error codes -> sentences (DIG-49 copy sweep) ------------------------------------------
 // The API returns a short machine code (`{error: 'bad_root_path'}`) so other code and tests can
 // branch on it; this is the one place that turns it into something a person reads.
 
@@ -146,15 +180,113 @@ const API_ERROR_MESSAGE: Record<string, string> = {
   context_not_found: 'That context file does not exist.',
   context_not_allowed: 'The context file must be inside the project folder.',
   project_roots_not_configured: 'This server has no allowed project folders configured.',
-  bad_language: 'Unknown language.',
-  bad_body: 'That request was missing required fields.',
+  bad_language: 'That language is not supported.',
+  bad_body: 'The request was missing required fields.',
   not_found: 'That project or digest no longer exists.',
   explain_running: 'An Explain is already running for this project.',
   no_provider: 'No explanation provider is configured on this server.',
+  explain_failed: 'The explanation provider returned an error.',
+  context_failed: 'Building the project context failed.',
   unauthorized: 'Your session expired. Reload the page and sign in again.',
 };
 
 /** A server error code (or an arbitrary message, for network/parse failures) as a sentence. */
 export function apiErrorMessage(code: string): string {
-  return API_ERROR_MESSAGE[code] ?? (/^[a-z][a-z0-9_]*$/.test(code) ? 'Something went wrong. Try again.' : code);
+  return API_ERROR_MESSAGE[code] ?? (/^[a-z][a-z0-9_]*$/.test(code) ? 'Something went wrong on the server.' : code);
 }
+
+// --- Reader (DIG-50): level switcher, breadcrumb, the L0–L3 views -------------------------------
+
+export const READER = {
+  switcherLabel: 'Explanation level',
+  switcherHint: 'Press 0–3 to switch level',
+  breadcrumbLabel: 'You are here',
+  digestCrumb: (when: string) => `Digest · ${when}`,
+  loadingDigest: 'Loading this digest…',
+  digestLoadError: (msg: string) => `Couldn't load this digest: ${msg}`,
+  // Digest-level status notices, shown above every level.
+  digestPending: 'This digest is still being explained.',
+  digestError: "This digest couldn't be explained. Try again, or pick another digest.",
+  digestTruncated: 'Part of this digest was cut to fit the size limit, so some areas may be missing.',
+  retry: 'Try again',
+  retrying: 'Trying again…',
+  retryNoBudget: 'No calls left today',
+  // L0
+  noHeadline: 'This digest has no summary yet.',
+  period: (from: string, to: string) => `${from} → ${to}`,
+  // L1
+  noImpact: 'This digest has no impact summary yet.',
+  internalOnly: 'Nothing a user would notice: these changes are internal.',
+  // L2
+  noAreas: 'This digest has no areas yet.',
+  areaHow: 'What changed',
+  areaWhy: 'Why',
+  openArea: 'Walk through the code',
+  filteredTo: (shown: number, total: number) => `${shown} of ${plural(total, 'area')} touch`,
+  noAreaForNode: 'No area covers this part of the project.',
+  clearFilter: 'Show all areas',
+  filterAnnounce: (path: string) => `Showing the areas that touch ${path}`,
+  filterCleared: 'Showing all areas',
+  notAnalysed: 'Not analysed',
+  // L3 without an area
+  pickArea: 'Pick an area to walk through its code.',
+  // "Next level" link at the bottom of L0–L2
+  nextLevel: (key: string, label: string) => `Next: ${key} ${label}`,
+} as const;
+
+// --- L3 walkthrough (DIG-50) -------------------------------------------------------------------
+
+export const WALKTHROUGH = {
+  regionLabel: (title: string) => `Code walkthrough: ${title}`,
+  loading: 'Loading this area…',
+  loadError: (msg: string) => `Couldn't load this area: ${msg}`,
+  generate: 'Explain this code',
+  generateCost: (left: number) => `Uses 1 of ${plural(left, 'call')} left today`,
+  noBudget: 'No calls left today. The walkthrough can be generated after the daily limit resets.',
+  notGenerated: 'This area has no walkthrough yet. The diff is below.',
+  generating: 'Writing the walkthrough…',
+  generateError: "Couldn't write the walkthrough.",
+  retry: 'Try again',
+  truncated: 'The walkthrough was cut short; the parts it skipped are listed at the end.',
+  overview: 'Overview',
+  stepLabel: (n: number) => `Step ${n}`,
+  stepOf: (n: number, total: number) => `Step ${n} of ${total}`,
+  mechanical: 'Mechanical',
+  stepsNav: 'Steps',
+  previous: 'Previous',
+  next: 'Next',
+  stepKeysHint: 'Press n / p for the next or previous step',
+  check: 'What to check',
+  uncovered: 'Not covered by the walkthrough',
+  uncoveredNote: 'These hunks did not fit in the explanation, so no step describes them.',
+  fullDiff: 'The diff',
+  missingHunk: (path: string, hunk: number) => `Hunk ${hunk} of ${path} is not in the stored diff.`,
+  showAll: (n: number) => `Show all ${plural(n, 'line')}`,
+  showLess: 'Show less',
+  noTextChange: 'No text changes to show (binary or mode change).',
+  notAnalysed: 'Not analysed',
+} as const;
+
+// --- Graph pane (DIG-50) -------------------------------------------------------------------------
+
+export const GRAPH = {
+  label: 'Project graph',
+  legendChanged: 'Blue: changed in this digest',
+  legendSelected: 'Outlined: selected area',
+  fitChanges: 'Fit to changes',
+  fitAll: 'Show everything',
+  zoomIn: 'Zoom in',
+  zoomOut: 'Zoom out',
+  loading: 'Loading the graph…',
+  loadError: (msg: string) => `Couldn't load the graph: ${msg}`,
+  folded: 'Some unchanged folders are folded to keep the graph readable.',
+  keysHint: 'Arrow keys move between nodes; Enter opens one.',
+  show: 'Show graph',
+  hide: 'Hide graph',
+  nodeFiles: (n: number) => plural(n, 'file'),
+  summaryNone: 'No files changed.',
+  summary: (files: number, folders: number) =>
+    folders > 0 ? `${plural(files, 'file')} changed in ${plural(folders, 'folder')}.` : `${plural(files, 'file')} changed.`,
+  openHint: (areas: number) => (areas === 1 ? 'Opens its area at L3' : areas > 1 ? `Touches ${plural(areas, 'area')}; opens them at L2` : 'Not in any area'),
+  expandHint: 'Folded; press to unfold',
+} as const;

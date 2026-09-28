@@ -81,12 +81,57 @@ describe('ProjectHeader: Explain button states', () => {
     }
   });
 
-  it('disables with a reason once the daily budget is spent', async () => {
-    const status = { ...fixtureStatus, budget: { ...fixtureStatus.budget, remaining: 0 } };
-    await render(<ProjectHeader {...baseProps({ status })} />);
-    const btn = host.querySelector('.explain-btn') as HTMLButtonElement;
-    expect(btn.disabled).toBe(true);
-    expect(btn.title).toBe('Daily budget used up');
+  it('keeps counting from the click until the server reports explainStartedAt', async () => {
+    vi.useFakeTimers();
+    try {
+      // Right after the click: explaining locally, but the last status poll has no start time yet.
+      await render(<ProjectHeader {...baseProps({ explaining: true })} />);
+      const btn = host.querySelector('.explain-btn') as HTMLButtonElement;
+      expect(btn.textContent).toContain('Explaining… 0s');
+      expect(btn.className).toContain('primary');
+      await act(async () => { vi.advanceTimersByTime(4000); });
+      expect(btn.textContent).toContain('Explaining… 4s');
+      // The next poll brings the server's start time, which wins.
+      const status = { ...fixtureStatus, explaining: true, explainStartedAt: new Date(Date.now() - 6000).toISOString() };
+      await render(<ProjectHeader {...baseProps({ status, explaining: true })} />);
+      expect(btn.textContent).toContain('Explaining… 6s');
+      // Finished: back to the idle label, and a later run starts from 0 again.
+      await render(<ProjectHeader {...baseProps()} />);
+      expect(btn.textContent).toContain('Explain 12 changes');
+      await render(<ProjectHeader {...baseProps({ explaining: true })} />);
+      expect(btn.textContent).toContain('Explaining… 0s');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says visibly when the daily budget is spent, and when it comes back', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 28, 17, 5));
+    try {
+      const resetsAt = new Date(2026, 8, 29, 0, 0).toISOString();
+      const status = { ...fixtureStatus, budget: { ...fixtureStatus.budget, remaining: 0, resetsAt } };
+      await render(<ProjectHeader {...baseProps({ status })} />);
+      const btn = host.querySelector('.explain-btn') as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+      expect(btn.className).not.toContain('primary');
+      const badge = host.querySelector('.calls-left')!;
+      expect(badge.textContent).toBe('No calls left today · resets 00:00');
+      expect(badge.className).toContain('spent');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows a status error in words, with no Explain button to press', async () => {
+    await render(<ProjectHeader {...baseProps({ status: null, statusError: 'Internal Server Error' })} />);
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe('Could not load the project status: Internal Server Error');
+    expect(host.querySelector('.explain-btn')).toBeNull();
+  });
+
+  it('puts the digest picker in the same row', async () => {
+    await render(<ProjectHeader {...baseProps({ picker: <span className="fake-picker">picker</span> })} />);
+    expect(host.querySelector('.project-header .header-picker .fake-picker')).toBeTruthy();
   });
 
   it('shows the calls-left badge', async () => {
@@ -102,7 +147,7 @@ describe('ProjectHeader: info popover', () => {
     await click(summary);
     expect((host.querySelector('.info-popover') as HTMLDetailsElement).open).toBe(true);
     expect(host.querySelector('.info-popover-panel')?.textContent).toContain('Built');
-    expect(host.querySelector('select[aria-label="Explanation language"]')).toBeTruthy();
+    expect(host.querySelector('.language-field select')).toBeTruthy();
 
     await key(document, 'Escape');
     expect((host.querySelector('.info-popover') as HTMLDetailsElement).open).toBe(false);
@@ -113,7 +158,7 @@ describe('ProjectHeader: info popover', () => {
     const onSetLanguage = vi.fn();
     await render(<ProjectHeader {...baseProps({ onSetLanguage })} />);
     await click(host.querySelector('.info-popover > summary'));
-    const select = host.querySelector('select[aria-label="Explanation language"]') as HTMLSelectElement;
+    const select = host.querySelector('.language-field select') as HTMLSelectElement;
     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')!.set!;
     await act(async () => {
       setter.call(select, 'ko');

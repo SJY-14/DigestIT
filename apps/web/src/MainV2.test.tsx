@@ -2,7 +2,8 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeFilter, defaultProject, MainV2 } from './MainV2.js';
+import { computeFilter, defaultProject, MainV2, nodeTarget } from './MainV2.js';
+import { humanDateTime, plural } from './copy.js';
 import {
   fixtureArea, fixtureDigest, fixtureDigestPage, fixtureGraph, fixtureProject, fixtureStatus,
 } from './v2Fixtures.js';
@@ -134,109 +135,221 @@ describe('MainV2: project bar', () => {
     await waitFor(() => host.querySelector('.explain-btn') !== null);
     const btn = host.querySelector('.explain-btn') as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
-    expect(btn.title).toBe('Nothing pending since last check');
+    expect(btn.textContent).toBe('No new changes');
+    expect(btn.title).toBe('Nothing has changed since the last check.');
   });
 });
 
-describe('MainV2: two-pane digest view', () => {
-  it('renders the L0/L1 overview, one row per L2 area, and the project graph', async () => {
+const params = () => new URLSearchParams(location.search);
+const pressKey = async (key: string, target: EventTarget = document.body) => {
+  await act(async () => { target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })); });
+};
+const selectedTab = () => host.querySelector('[role="tab"][aria-selected="true"]')?.textContent;
+const ready = () => waitFor(() => host.querySelector('.l0-headline') !== null || host.querySelector('.level-view') !== null);
+
+describe('MainV2: reading flow', () => {
+  it('opens a digest at L0: the headline, a stats line, the breadcrumb, the switcher and the graph', async () => {
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.area-row') !== null);
-    expect(host.textContent).toContain(fixtureDigest.l0!.text);
-    expect(host.textContent).toContain(fixtureDigest.l1!.bullets[0]);
-    expect(host.querySelectorAll('.area-row')).toHaveLength(fixtureDigest.l2!.items.length);
+    await ready();
+    expect(host.querySelector('.l0-headline')?.textContent).toBe(fixtureDigest.l0!.text);
+    expect(host.querySelector('.l0-stats')?.textContent).toContain('12 files · +340 −25');
+    expect(selectedTab()).toBe('L0 Summary');
+    const pane = host.querySelector('#reading-pane')!;
+    expect(pane.getAttribute('role')).toBe('tabpanel');
+    expect(pane.getAttribute('aria-labelledby')).toBe('level-tab-0');
+    expect([...host.querySelectorAll('.breadcrumb button')].map((b) => b.textContent)).toEqual([expect.stringMatching(/^Digest · /), 'L0 Summary']);
     await waitFor(() => host.querySelector('.graph-canvas') !== null);
   });
 
-  it('expands a row in place to how/why with a Code (L3) button', async () => {
+  it('keys 0–3 switch level and write it to the URL; they are ignored while typing', async () => {
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.area-row-main') !== null);
-    await click(host.querySelector('.area-row-main'));
-    expect(host.textContent).toContain(fixtureDigest.l2!.items[0]!.how);
-    expect(host.textContent).toContain(fixtureDigest.l2!.items[0]!.why);
-    expect(host.querySelector('.area-detail button')?.textContent).toBe('Code (L3)');
+    await ready();
+    await pressKey('1');
+    expect(selectedTab()).toBe('L1 Impact');
+    expect(host.querySelector('.l1-bullets')?.textContent).toContain(fixtureDigest.l1!.bullets[0]);
+    expect(params().get('level')).toBe('1');
+    await pressKey('2');
+    expect(host.querySelectorAll('.area-card')).toHaveLength(2);
+    await pressKey('3');
+    expect(host.querySelector('.area-picker')).toBeTruthy();
+    expect(params().get('level')).toBe('3');
+    await pressKey('0');
+    expect(host.querySelector('.l0-headline')).toBeTruthy();
+    expect(params().get('level')).toBeNull();
+
+    const input = document.createElement('input');
+    host.append(input);
+    await pressKey('2', input);
+    expect(selectedTab()).toBe('L0 Summary');
   });
 
-  it('clicking Code (L3) swaps the right pane to the area view; Back to graph restores it', async () => {
+  it('clicking a tab switches level', async () => {
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.area-row-main') !== null);
-    await click(host.querySelector('.area-row-main'));
-    await click([...host.querySelectorAll('.area-detail button')].find((b) => b.textContent === 'Code (L3)'));
-    await waitFor(() => host.querySelector('.area-view') !== null);
-    expect(host.querySelector('.graph-canvas')).toBeFalsy();
-    expect(location.search).toContain(`area=${fixtureDigest.l2!.items[0]!.id}`);
-
-    await click(host.querySelector('.area-view .back'));
-    await waitFor(() => host.querySelector('.graph-canvas') !== null);
-    expect(host.querySelector('.area-view')).toBeFalsy();
+    await ready();
+    await click(host.querySelector('#level-tab-2'));
+    expect(selectedTab()).toBe('L2 Structure');
+    expect(host.querySelector('#reading-pane')?.getAttribute('aria-labelledby')).toBe('level-tab-2');
   });
 
-  it('clicking a path chip filters the list the same way a node click would, with a clearable header', async () => {
+  it('an L2 card opens that area at L3; the breadcrumb then reads digest › area › L3', async () => {
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.chip') !== null);
-    const chip = host.querySelector('.chip') as HTMLButtonElement;
-    const path = chip.textContent!;
-    await click(chip);
-    await waitFor(() => host.querySelector('.filter-header') !== null);
-    expect(host.querySelector('.filter-header')?.textContent).toContain(path);
-    expect(new URLSearchParams(location.search).get('node')).toBe(`f:${path}`);
-
-    await click(host.querySelector('.clear-filter'));
-    await waitFor(() => host.querySelector('.filter-header') === null);
+    await ready();
+    await pressKey('2');
+    await click(host.querySelector('.area-card-title button'));
+    await waitFor(() => host.querySelector('.walkthrough') !== null);
+    expect(params().get('level')).toBe('3');
+    expect(params().get('area')).toBe('graph-pane');
+    expect([...host.querySelectorAll('.breadcrumb button')].map((b) => b.textContent)).toEqual([
+      expect.stringMatching(/^Digest · /), fixtureDigest.l2!.items[0]!.title, 'L3 Code',
+    ]);
+    // The digest crumb goes back to L0 and drops the area.
+    await click(host.querySelector('.breadcrumb button'));
+    expect(host.querySelector('.l0-headline')).toBeTruthy();
+    expect(params().get('area')).toBeNull();
   });
 
-  it('clicking a changed graph node filters the change list to that node\'s areas', async () => {
+  it('n / p step through the walkthrough, and the step is in the URL', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=3&area=graph-pane`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('section.step') !== null);
+    // At the overview, p has nowhere earlier to go.
+    await pressKey('p');
+    expect(params().get('step')).toBeNull();
+    await pressKey('n');
+    expect(params().get('step')).toBe('1');
+    await pressKey('n');
+    await pressKey('n');
+    expect(params().get('step')).toBe('3');
+    expect(host.querySelector('#step-3')?.classList.contains('current')).toBe(true);
+    await pressKey('p');
+    expect(params().get('step')).toBe('2');
+    // Clamped at both ends.
+    for (let i = 0; i < 6; i++) await pressKey('n');
+    expect(params().get('step')).toBe('4');
+    await click(host.querySelector('.step-toc button'));
+    expect(params().get('step')).toBe('1');
+    await pressKey('p');
+    expect(params().get('step')).toBe('1');
+  });
+
+  it('restores digest, level, area and step from the URL on load, and follows back/forward', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=3&area=graph-pane&step=2`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('#step-2.current') !== null);
+    expect(selectedTab()).toBe('L3 Code');
+    expect(host.querySelector('.step-toc [aria-current="step"]')?.textContent).toContain('Fit to changes on every new digest');
+
+    await pressKey('1');
+    expect(selectedTab()).toBe('L1 Impact');
+    await act(async () => {
+      history.back();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await waitFor(() => selectedTab() === 'L3 Code');
+    await waitFor(() => host.querySelector('#step-2.current') !== null);
+  });
+
+  it('L3 with no area shows the area picker; picking one opens its walkthrough', async () => {
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=3`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.area-picker') !== null);
+    await click(host.querySelector('.area-pick'));
+    await waitFor(() => host.querySelector('.walkthrough') !== null);
+    expect(params().get('area')).toBe('graph-pane');
+  });
+
+  it('a graph node in one area opens it at L3; a node touching several opens L2 filtered to it', async () => {
     await render(<MainV2 />);
     await waitFor(() => host.querySelector('.graph-node.changed') !== null);
-    await click(host.querySelector('.graph-node.changed'));
+    const single = fixtureGraph.nodes.find((n) => n.changed && !n.collapsed && n.areaIds.length === 1)!;
+    const multi = fixtureGraph.nodes.find((n) => n.changed && !n.collapsed && n.areaIds.length > 1)!;
+    const nodeEl = (id: string) => [...host.querySelectorAll('.graph-node')].find((g) => g.getAttribute('aria-label')?.startsWith(fixtureGraph.nodes.find((n) => n.id === id)!.path));
+    await click(nodeEl(single.id));
+    await waitFor(() => host.querySelector('.walkthrough') !== null || host.querySelector('.level-view') !== null);
+    expect(params().get('level')).toBe('3');
+    expect(params().get('area')).toBe(single.areaIds[0]);
+
+    await click(nodeEl(multi.id));
+    expect(params().get('level')).toBe('2');
+    expect(params().get('node')).toBe(multi.id);
     await waitFor(() => host.querySelector('.filter-header') !== null);
-    expect(host.querySelectorAll('.area-row').length).toBeLessThanOrEqual(fixtureDigest.l2!.items.length);
+    expect(host.querySelectorAll('.area-card')).toHaveLength(multi.areaIds.length);
   });
 
-  it('never announces "Filter cleared" on first load, only on a real filter -> no-filter transition', async () => {
+  it('outlines the selected area\'s nodes in the graph at L2/L3', async () => {
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=3&area=area-view`);
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.area-row') !== null);
-    expect(host.querySelector('[aria-live="polite"]')?.textContent).not.toBe('Filter cleared');
+    await waitFor(() => host.querySelector('.graph-node.ringed') !== null);
+    const ringed = [...host.querySelectorAll('.graph-node.ringed')];
+    const expected = fixtureGraph.nodes.filter((n) => n.areaIds.includes('area-view'));
+    expect(ringed).toHaveLength(expected.length);
+  });
 
-    const chip = host.querySelector('.chip') as HTMLButtonElement;
-    await click(chip);
+  it('never announces "Showing all areas" on first load, only when a filter is cleared', async () => {
+    const multi = fixtureGraph.nodes.find((n) => n.changed && n.areaIds.length > 1)!;
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=2`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.area-card') !== null);
+    expect(host.querySelector('[aria-live="polite"]')?.textContent).not.toBe('Showing all areas');
+    await act(async () => {
+      history.pushState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=2&node=${encodeURIComponent(multi.id)}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
     await waitFor(() => host.querySelector('.filter-header') !== null);
     await click(host.querySelector('.clear-filter'));
-    await waitFor(() => host.querySelector('[aria-live="polite"]')?.textContent === 'Filter cleared');
+    await waitFor(() => host.querySelector('[aria-live="polite"]')?.textContent === 'Showing all areas');
   });
 
-  it('resets expanded rows when the digest changes', async () => {
+  it('picking another digest keeps the level but drops the area and step', async () => {
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=3&area=graph-pane&step=2`);
+    Element.prototype.scrollIntoView = vi.fn();
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.area-row-main') !== null);
-    await click(host.querySelector('.area-row-main'));
-    expect(host.querySelector('.area-detail')).toBeTruthy();
-
+    await waitFor(() => host.querySelector('.walkthrough') !== null);
     const other = fixtureDigestPage.items.find((d) => d.id !== fixtureDigest.id)!;
+    await click(host.querySelector('.digest-picker-trigger'));
     await click([...host.querySelectorAll('.digest-row-main')].find((b) => b.textContent?.includes(other.l0?.text ?? `#${other.seq}`)));
-    await waitFor(() => new URLSearchParams(location.search).get('digest') === String(other.id));
-    expect(host.querySelector('.area-detail')).toBeFalsy();
+    await waitFor(() => params().get('digest') === String(other.id));
+    expect(params().get('level')).toBe('3');
+    expect(params().get('area')).toBeNull();
+    expect(params().get('step')).toBeNull();
+    await waitFor(() => host.querySelector('.area-picker') !== null);
+  });
+
+  it('shows a Try again notice on an errored digest', async () => {
+    const errored = fixtureDigestPage.items.find((d) => d.status === 'error')!;
+    history.replaceState(null, '', `/?project=1&digest=${errored.id}`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('#reading-pane .notice.error') !== null);
+    await click(host.querySelector('#reading-pane .notice.error button'));
+    await waitFor(() => calls.some((c) => c.url === `/api/digests/${errored.id}/explain` && c.method === 'POST'));
+  });
+});
+
+describe('nodeTarget', () => {
+  it('follows docs/ux-v3.md §1', () => {
+    expect(nodeTarget({ id: 'f:a.ts', areaIds: ['x'] })).toEqual({ level: 3, area: 'x', step: null, node: null });
+    expect(nodeTarget({ id: 'd:src', areaIds: ['x', 'y'] })).toEqual({ level: 2, node: 'd:src', step: null });
+    expect(nodeTarget({ id: 'f:b.ts', areaIds: [] })).toEqual({ level: 2, node: 'f:b.ts', step: null });
   });
 });
 
 describe('MainV2: resizable divider', () => {
-  it('moves the left pane\'s width with the arrow keys, and Home/End jump to the ends', async () => {
+  it('moves the reading pane\'s width with the arrow keys, and Home/End jump to the ends', async () => {
     await render(<MainV2 />);
     await waitFor(() => host.querySelector('.split-divider') !== null);
     const divider = host.querySelector('.split-divider') as HTMLElement;
-    const leftPane = host.querySelector('.left-pane') as HTMLElement;
-    expect(leftPane.style.flexBasis).toBe('40%');
-
+    const pane = host.querySelector('#reading-pane') as HTMLElement;
+    expect(pane.style.flexBasis).toBe('60%');
     await act(async () => divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
-    expect(leftPane.style.flexBasis).toBe('42%');
-
+    expect(pane.style.flexBasis).toBe('62%');
     await act(async () => divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })));
-    expect(leftPane.style.flexBasis).toBe('40%');
-
+    expect(pane.style.flexBasis).toBe('60%');
     await act(async () => divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })));
-    expect(leftPane.style.flexBasis).toBe('70%');
-
+    expect(pane.style.flexBasis).toBe('75%');
     await act(async () => divider.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })));
-    expect(leftPane.style.flexBasis).toBe('20%');
+    expect(pane.style.flexBasis).toBe('35%');
   });
 });
 
@@ -253,8 +366,9 @@ describe('MainV2: empty and error states', () => {
       throw new Error(`unhandled: ${method} ${url}`);
     }));
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.empty') !== null);
-    expect(host.querySelector('.empty')?.textContent).toContain('press Explain');
+    await waitFor(() => host.querySelector('.empty-state') !== null);
+    expect(host.querySelector('.empty-state')?.textContent).toContain('press Explain');
+    expect(host.querySelector('.digest-picker')).toBeNull();
     expect(host.textContent).not.toContain('Loading digest…');
   });
 
@@ -295,17 +409,17 @@ describe('MainV2: digest retry', () => {
       throw new Error(`unhandled: ${method} ${url}`);
     }));
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.digest-picker summary') !== null);
-    await click(host.querySelector('.digest-picker summary'));
+    await waitFor(() => host.querySelector('.digest-picker-trigger') !== null);
+    await click(host.querySelector('.digest-picker-trigger'));
     const retryBtn = [...host.querySelectorAll('.retry')][0] as HTMLButtonElement;
     expect(retryBtn.disabled).toBe(true);
-    expect(retryBtn.title).toBe('Daily budget used up');
+    expect(retryBtn.textContent).toBe('No calls left today');
   });
 
   it('retries an errored digest via a real POST, not just a re-select', async () => {
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.digest-picker summary') !== null);
-    await click(host.querySelector('.digest-picker summary'));
+    await waitFor(() => host.querySelector('.digest-picker-trigger') !== null);
+    await click(host.querySelector('.digest-picker-trigger'));
     const errored = fixtureDigestPage.items.find((d) => d.status === 'error')!;
     const row = [...host.querySelectorAll('.digest-row')].find((r) => r.textContent?.includes(`#${errored.seq}`) || r.querySelector('.retry'));
     const retryBtn = row?.querySelector('.retry') as HTMLButtonElement;
@@ -315,13 +429,102 @@ describe('MainV2: digest retry', () => {
   });
 });
 
+describe('MainV2: digest picker (DIG-49)', () => {
+  it('opens as an overlay with one readable row per digest; Escape closes it and focus returns to the trigger', async () => {
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.digest-picker-trigger') !== null);
+    const trigger = host.querySelector('.digest-picker-trigger') as HTMLButtonElement;
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(host.querySelector('.digest-picker-panel')).toBeNull();
+    await click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    const labels = [...host.querySelectorAll('.digest-row-label')].map((e) => e.textContent);
+    expect(labels).toHaveLength(fixtureDigestPage.items.length);
+    for (const [i, d] of fixtureDigestPage.items.entries()) {
+      expect(labels[i]).toBe(`${humanDateTime(d.toAt)} · ${plural(d.stats.files, 'file')} · ${d.l0?.text ?? 'Not explained yet'}`);
+    }
+    expect(host.querySelector('.digest-status.error')?.textContent).toBe('Explain failed');
+    // Focus starts on the current digest's row.
+    expect(document.activeElement?.getAttribute('aria-current')).toBe('true');
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+    expect(host.querySelector('.digest-picker-panel')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('closes on an outside click', async () => {
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.digest-picker-trigger') !== null);
+    await click(host.querySelector('.digest-picker-trigger'));
+    expect(host.querySelector('.digest-picker-panel')).toBeTruthy();
+    await act(async () => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); });
+    expect(host.querySelector('.digest-picker-panel')).toBeNull();
+  });
+});
+
+describe('MainV2: Explain (DIG-49)', () => {
+  /** The default mock, with the project Explain POST answered by `reply`. */
+  function explainReplies(reply: { status: number; body: unknown }) {
+    const base = fetch;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === `/api/projects/${fixtureProject.id}/explain` && init?.method === 'POST') {
+        calls.push({ url, method: 'POST' });
+        return { ok: reply.status < 400, status: reply.status, json: async () => reply.body } as Response;
+      }
+      return base(url, init);
+    }));
+  }
+  const pressExplain = async () => {
+    await waitFor(() => host.querySelector('.explain-btn.primary') !== null);
+    await click(host.querySelector('.explain-btn'));
+  };
+
+  it('lands on the new digest at L0', async () => {
+    const other = fixtureDigestPage.items.find((d) => d.id !== fixtureDigest.id)!;
+    explainReplies({ status: 200, body: { noChanges: false, digestId: other.id, status: 'ok', budget: fixtureStatus.budget } });
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=2`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.area-card') !== null);
+    await pressExplain();
+    await waitFor(() => params().get('digest') === String(other.id));
+    expect(params().get('level')).toBeNull();
+    await waitFor(() => host.querySelector('.l0-headline') !== null);
+    expect(selectedTab()).toBe('L0 Summary');
+  });
+
+  it('says what failed and what to do', async () => {
+    explainReplies({ status: 500, body: { error: 'no_provider' } });
+    await render(<MainV2 />);
+    await pressExplain();
+    await waitFor(() => host.querySelector('.notice.error') !== null);
+    expect(host.querySelector('.notice.error')?.textContent)
+      .toBe('Explain failed. No explanation provider is configured on this server. Try again, or check the server log if it keeps failing.');
+  });
+
+  it('says so when there was nothing to explain', async () => {
+    explainReplies({ status: 200, body: { noChanges: true, digestId: null, status: null, budget: fixtureStatus.budget } });
+    await render(<MainV2 />);
+    await pressExplain();
+    await waitFor(() => host.querySelector('.notice[role="status"]') !== null);
+    expect(host.querySelector('.notice[role="status"]')?.textContent).toContain('Nothing changed since the last check.');
+  });
+
+  it('lands on the digest and says the budget ran out when it could not be explained', async () => {
+    const other = fixtureDigestPage.items.find((d) => d.id !== fixtureDigest.id)!;
+    explainReplies({ status: 200, body: { noChanges: false, digestId: other.id, status: 'pending', budget: { ...fixtureStatus.budget, remaining: 0 } } });
+    await render(<MainV2 />);
+    await pressExplain();
+    await waitFor(() => params().get('digest') === String(other.id));
+    expect(host.querySelector('.reader-top .notice[role="status"]')?.textContent).toContain('The daily budget ran out');
+  });
+});
+
 describe('MainV2: default project (DIG-46)', () => {
   const older = { ...fixtureProject, id: 5, name: 'old-empty', lastCheckpointAt: '2026-09-01T00:00:00Z', digestCount: 0 };
 
   it('opens the project that has digests, not the oldest registered one, when the URL names none', async () => {
     projectsResponse = [older, fixtureProject];
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.digest-overview') !== null);
+    await waitFor(() => host.querySelector('.l0-headline') !== null);
     expect(new URLSearchParams(location.search).get('project')).toBe(String(fixtureProject.id));
     expect(calls.some((c) => c.url.startsWith(`/api/projects/${older.id}/`))).toBe(false);
     expect(localStorage.getItem('digestit.lastProject')).toBe(String(fixtureProject.id));

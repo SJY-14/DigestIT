@@ -1,25 +1,32 @@
-// Compact project header (DIG-49, docs/ux-v3.md §4): project switcher, the primary Explain
-// button, a calls-left badge, and an info popover (context status + language) behind an ⓘ
-// trigger. Replaces the taller `ProjectBar` from MainV2.tsx (DIG-40) so DIG-50 can own the
-// reading pane below it.
-import { useCallback, useEffect, useRef, useState } from 'react';
+// Compact project header (DIG-49, docs/ux-v3.md §4): one row with the project switcher, the digest
+// picker (passed in as `picker`), a calls-left badge, an info popover (context status + language)
+// behind an ⓘ trigger, and the primary Explain button. Every pixel it takes comes out of the
+// reading pane below, so it stays a single line.
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ExplainLanguage, ProjectDto, ProjectStatusDto } from '@digestit/core';
 import {
-  callsLeftLabel, contextSummary, EXPLAIN_LANGUAGE_LIST, explainButtonLabel, explainingLabel, humanDateTime, LANGUAGE_NAMES,
+  callsLeftLabel, contextSummary, EXPLAIN_LANGUAGE_LIST, explainButtonLabel, explainingLabel, HEADER, humanDateTime, LANGUAGE_NAMES,
 } from './copy.js';
 import { relativeTime } from './format.js';
 
-/** Ticks once a second while `startedAt` is set, so the Explain button can show elapsed time
- * (and keeps working across a reload, since `startedAt` comes from the server). */
-function useElapsedSeconds(startedAt: string | null): number {
+/** Seconds since the running Explain started, ticking once a second. The server's `startedAt`
+ * wins (it survives a reload and covers a CLI run); until the first status poll brings it, the
+ * count runs from when this header first saw `explaining` (the click), so it never sits at 0s. */
+export function useElapsedSeconds(explaining: boolean, startedAt: string | null): number {
   const [now, setNow] = useState(() => Date.now());
+  const localStart = useRef<number | null>(null);
+  if (!explaining) localStart.current = null;
+  else if (localStart.current === null) localStart.current = Date.now();
   useEffect(() => {
-    if (startedAt === null) return undefined;
+    if (!explaining) return undefined;
+    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [startedAt]);
-  if (startedAt === null) return 0;
-  return Math.max(0, (now - new Date(startedAt).getTime()) / 1000);
+  }, [explaining]);
+  if (!explaining) return 0;
+  const server = startedAt === null ? Number.NaN : new Date(startedAt).getTime();
+  const start = Number.isNaN(server) ? localStart.current! : server;
+  return Math.max(0, (Math.max(now, Date.now()) - start) / 1000);
 }
 
 function ExplainButton({
@@ -35,13 +42,12 @@ function ExplainButton({
   const disabled = explaining || nothingPending || budgetSpent;
   const label = explaining
     ? explainingLabel(elapsedSeconds)
-    : nothingPending
-      ? 'No new changes'
-      : explainButtonLabel(status.pending.files);
-  const title = explaining ? undefined : nothingPending ? 'Nothing pending since last check' : budgetSpent ? 'Daily budget used up' : undefined;
-  // Idle (nothing pending) drops the "primary" look on purpose (docs/ux-v3.md §4): it must read as
-  // a calm no-op, not a disabled/broken version of the call-to-action button.
-  const className = `btn explain-btn${!explaining && !nothingPending ? ' primary' : ''}`;
+    : explainButtonLabel(status.pending.files);
+  const title = explaining ? undefined : nothingPending ? HEADER.nothingPendingHint : budgetSpent ? HEADER.noCallsHint : undefined;
+  // Nothing pending or no calls left drops the "primary" look on purpose (docs/ux-v3.md §4): it
+  // must read as a calm no-op, not a disabled/broken version of the call-to-action button.
+  const primary = explaining || (!nothingPending && !budgetSpent);
+  const className = `btn explain-btn${primary ? ' primary' : ''}${explaining ? ' running' : ''}`;
   return (
     <button type="button" className={className} disabled={disabled} onClick={onExplain} title={title} aria-live="polite">
       {explaining && <span className="spinner" aria-hidden="true" />}
@@ -90,18 +96,17 @@ function InfoPopover({
 
   return (
     <details className="info-popover" ref={detailsRef}>
-      <summary aria-label="Project context and language">ⓘ</summary>
-      <div className="info-popover-panel" role="dialog" aria-label="Project context and language">
+      <summary aria-label={HEADER.infoLabel} title={HEADER.infoLabel}>ⓘ</summary>
+      <div className="info-popover-panel" role="dialog" aria-label={HEADER.infoLabel}>
         <p className="context-status">
-          {statusError ? `Could not load status: ${statusError}` : (summary ?? 'Loading context…')}
+          {statusError ? HEADER.statusError(statusError) : (summary ?? HEADER.loadingStatus)}
         </p>
         <button type="button" className="btn" onClick={onRefreshContext} disabled={refreshingContext || !status}>
-          {refreshingContext ? 'Refreshing…' : 'Refresh context'}
+          {refreshingContext ? HEADER.refreshingContext : HEADER.refreshContext}
         </button>
         <label className="field language-field">
-          <span>Language</span>
+          <span>{HEADER.languageLabel}</span>
           <select
-            aria-label="Explanation language"
             value={project.language}
             disabled={settingLanguage}
             onChange={(e) => onSetLanguage(e.target.value as ExplainLanguage)}
@@ -111,7 +116,8 @@ function InfoPopover({
             ))}
           </select>
         </label>
-        {languageError && <p role="alert" className="error">Could not change language: {languageError}</p>}
+        <p className="muted language-hint">{HEADER.languageHint}</p>
+        {languageError && <p role="alert" className="error">{HEADER.languageError(languageError)}</p>}
       </div>
     </details>
   );
@@ -130,33 +136,35 @@ export interface ProjectHeaderProps {
   onSetLanguage: (language: ExplainLanguage) => void;
   settingLanguage: boolean;
   languageError: string | null;
+  /** The digest picker, shown between the project and the budget (absent before the first digest). */
+  picker?: ReactNode;
 }
 
 export function ProjectHeader({
   projects, currentProject, onSwitch, status, statusError, explaining, onExplain,
-  onRefreshContext, refreshingContext, onSetLanguage, settingLanguage, languageError,
+  onRefreshContext, refreshingContext, onSetLanguage, settingLanguage, languageError, picker,
 }: ProjectHeaderProps) {
-  const elapsedSeconds = useElapsedSeconds(explaining ? (status?.explainStartedAt ?? null) : null);
+  const elapsedSeconds = useElapsedSeconds(explaining, status?.explainStartedAt ?? null);
+  const budgetSpent = status !== null && status.budget.remaining === 0;
   return (
     <div className="project-header">
       {projects.length > 1 ? (
-        <select aria-label="Project" value={currentProject.id} onChange={(e) => onSwitch(Number(e.target.value))}>
+        <select className="project-switcher" aria-label={HEADER.projectLabel} value={currentProject.id} onChange={(e) => onSwitch(Number(e.target.value))}>
           {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       ) : (
         <span className="project-name" title={currentProject.rootPath}>{currentProject.name}</span>
       )}
-      {statusError && !status ? (
-        <span role="alert" className="error">Could not load status: {statusError}</span>
-      ) : status ? (
-        <>
-          <ExplainButton status={status} explaining={explaining} elapsedSeconds={elapsedSeconds} onExplain={onExplain} />
-          <span className="badge calls-left" title={`Resets ${humanDateTime(status.budget.resetsAt)}`}>
-            {callsLeftLabel(status.budget.remaining)}
-          </span>
-        </>
-      ) : (
-        <span className="muted">Loading…</span>
+      <div className="header-picker">{picker}</div>
+      {statusError && !status && <span role="alert" className="error">{HEADER.statusError(statusError)}</span>}
+      {status && (
+        <span
+          className={budgetSpent ? 'badge calls-left spent' : 'badge calls-left'}
+          role={budgetSpent ? 'status' : undefined}
+          title={budgetSpent ? HEADER.noCallsHint : HEADER.resets(humanDateTime(status.budget.resetsAt))}
+        >
+          {callsLeftLabel(status.budget.remaining, status.budget.resetsAt)}
+        </span>
       )}
       <InfoPopover
         project={currentProject}
@@ -168,6 +176,11 @@ export function ProjectHeader({
         settingLanguage={settingLanguage}
         languageError={languageError}
       />
+      {status ? (
+        <ExplainButton status={status} explaining={explaining} elapsedSeconds={elapsedSeconds} onExplain={onExplain} />
+      ) : (
+        !statusError && <span className="muted">{HEADER.loadingStatus}</span>
+      )}
     </div>
   );
 }

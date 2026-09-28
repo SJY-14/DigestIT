@@ -40,11 +40,11 @@ const fixture: ProjectGraphDto = {
 
 describe('summarize', () => {
   it('reads "N files changed in M folders" when folders and files both changed', () => {
-    expect(summarize(fixture)).toMatch(/^\d+ files? changed in \d+ folders?\. Use the list/);
+    expect(summarize(fixture)).toMatch(/^\d+ files? changed in \d+ folders?\.$/);
   });
   it('falls back to a plain files-changed line with no changed folders', () => {
     const flat = { digestId: 1, ...buildProjectGraph({ paths: ['a.ts'], files: [{ path: 'a.ts', status: 'M', additions: 1, deletions: 0 }] }) };
-    expect(summarize(flat)).toBe('1 file changed. Use the list to open each change.');
+    expect(summarize(flat)).toBe('1 file changed.');
   });
   it('says nothing changed when there are no changed files', () => {
     const none = { digestId: 1, ...buildProjectGraph({ paths: ['a.ts'], files: [] }) };
@@ -86,12 +86,57 @@ describe('ProjectGraph', () => {
     fire(svg, 'pointerup', 140);
   });
 
-  it('is aria-hidden and exposes real button controls, plus a visually hidden summary', async () => {
+  it('exposes real button controls, a legend, a summary, and only clickable nodes as buttons', async () => {
     await render(<ProjectGraph graph={fixture} onSelectNode={noop} onExpand={noop} />);
-    expect(host.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
-    const buttons = [...host.querySelectorAll('button')];
-    expect(buttons.map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['Fit to changes', 'Fit all', 'Zoom out', 'Zoom in']);
-    expect(host.querySelector('.visually-hidden')?.textContent).toBe(summarize(fixture));
+    const svg = host.querySelector('svg')!;
+    expect(svg.getAttribute('aria-hidden')).toBeNull();
+    expect(svg.getAttribute('role')).toBe('group');
+    expect(svg.getAttribute('aria-label')).toBe('Project graph');
+    const controls = [...host.querySelectorAll('.graph-controls button')];
+    expect(controls.map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['Fit to changes', 'Show everything', 'Zoom out', 'Zoom in']);
+    expect([...host.querySelectorAll('.graph-legend li')].map((l) => l.textContent?.trim())).toEqual([
+      'Blue: changed in this digest', 'Outlined: selected area',
+    ]);
+    expect(host.querySelector('#graph-summary')?.textContent).toContain(summarize(fixture));
+    const buttons = host.querySelectorAll('.graph-node[role="button"]');
+    expect(buttons).toHaveLength(fixture.nodes.filter((n) => n.changed || n.collapsed).length);
+    expect(host.querySelectorAll('.graph-node[aria-hidden="true"]')).toHaveLength(fixture.nodes.length - buttons.length);
+    // One tab stop for the whole graph (roving tabindex).
+    expect([...buttons].filter((b) => b.getAttribute('tabindex') === '0')).toHaveLength(1);
+  });
+
+  it('focus shows the node label and tip, arrow keys move focus, Enter opens the node', async () => {
+    const onSelectNode = vi.fn();
+    const onExpand = vi.fn();
+    await render(<ProjectGraph graph={fixture} onSelectNode={onSelectNode} onExpand={onExpand} />);
+    const buttons = [...host.querySelectorAll<SVGGElement>('.graph-node[role="button"]')];
+    await act(async () => buttons[0]!.focus());
+    expect(buttons[0]!.classList.contains('focused')).toBe(true);
+    expect(host.querySelector('.chart-tip')?.textContent).toContain(fixture.nodes.find((n) => n.changed)!.path || fixture.nodes[0]!.name);
+    await act(async () => buttons[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+    expect(document.activeElement).toBe(buttons[1]);
+    await act(async () => buttons[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(onSelectNode.mock.calls.length + onExpand.mock.calls.length).toBe(1);
+    const changedButton = buttons.find((b) => b.classList.contains('changed'))!;
+    expect(changedButton.getAttribute('aria-label')).toMatch(/\+\d+ −\d+/);
+  });
+
+  it('re-fits when the digest changes, but keeps the view when only a folder was unfolded', async () => {
+    await render(<ProjectGraph graph={fixture} onSelectNode={noop} onExpand={noop} />);
+    const svg = host.querySelector('svg')!;
+    const transform = () => svg.querySelector('g')!.getAttribute('transform');
+    const fitted = transform();
+    act(() => { svg.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })); });
+    const zoomed = transform();
+    expect(zoomed).not.toBe(fitted);
+    // Same digest, new graph object (an unfold): the view stays.
+    await render(<ProjectGraph graph={{ ...fixture, nodes: [...fixture.nodes] }} onSelectNode={noop} onExpand={noop} />);
+    expect(transform()).toBe(zoomed);
+    // Another digest: fitted again.
+    await render(<ProjectGraph graph={{ ...fixture, digestId: 2 }} onSelectNode={noop} onExpand={noop} />);
+    const scaleOf = (t: string | null) => Number(/scale\(([^)]+)\)/.exec(t ?? '')![1]);
+    expect(transform()).not.toBe(zoomed);
+    expect(scaleOf(transform())).toBeCloseTo(scaleOf(fitted), 1);
   });
 
   it('draws one node per graph node and one edge per graph edge (contains is styled)', async () => {

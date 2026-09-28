@@ -1,0 +1,34 @@
+{
+ "overview": "이 영역에서 다루는 파일은 App.tsx 및 Settings.tsx입니다. 스텁 제공자는 코드를 읽지 않고 파일별 hunk만 나열합니다.",
+ "steps": [
+  {
+   "title": "App.tsx 수정",
+   "body": "apps/web/src/App.tsx: hunk 2개, 2줄 추가. 스텁 제공자는 이유를 설명하지 않습니다.",
+   "hunks": [
+    {
+     "path": "apps/web/src/App.tsx",
+     "hunk": 1
+    },
+    {
+     "path": "apps/web/src/App.tsx",
+     "hunk": 2
+    }
+   ],
+   "mechanical": false
+  },
+  {
+   "title": "Settings.tsx 추가",
+   "body": "apps/web/src/Settings.tsx: hunk 1개, 2줄 추가. 스텁 제공자는 이유를 설명하지 않습니다.",
+   "hunks": [
+    {
+     "path": "apps/web/src/Settings.tsx",
+     "hunk": 1
+    }
+   ],
+   "mechanical": false
+  }
+ ],
+ "check": [
+  "가장 큰 변경부터 확인하세요: apps/web/src/App.tsx."
+ ]
+}

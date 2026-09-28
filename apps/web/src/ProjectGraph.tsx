@@ -1,18 +1,22 @@
-// Project graph pane (DIG-42, docs/direction-v2.md §5): folders/files as nodes, containment as
-// edges. Changed nodes are accent blue and sized by sqrt(lines changed); everything else is
-// muted gray. The drawing is aria-hidden and must never hold information the change list (the
-// keyboard/screen-reader path, DIG-40) doesn't also have; the controls are real <button>s.
-import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+// Project graph pane (DIG-42, DIG-50; docs/direction-v2.md §5, docs/ux-v3.md §4): folders/files as
+// nodes, containment as edges. Changed nodes are accent blue and sized by sqrt(lines changed);
+// everything else is muted gray. The canvas takes the pane's real size and fits the changed nodes
+// on load and whenever the digest changes. Clickable nodes (changed, or folded) are one roving tab
+// stop: arrow keys move between them, focus shows the same label and tip as hover, Enter opens.
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { GraphEdge, GraphNode, ProjectGraphDto } from '@digestit/core';
-import { bounds, fitView, layoutGraph, nodeRadius, type Point, type View } from './graphLayout.js';
+import { bounds, fitView, layoutGraph, nodeRadius, rotatePositions, shouldRotate, type Point, type View } from './graphLayout.js';
+import { useRovingIndex } from './charts/roving.js';
+import { GRAPH as T, lineDelta } from './copy.js';
 
-const VIEWPORT = 640;
+/** Canvas size before the first measurement (and in environments without layout, e.g. tests). */
+const DEFAULT_SIZE = { w: 640, h: 640 };
 const ZOOM_STEP = 1.3;
 /** Pixels the pointer must move before a press on the canvas becomes a pan. */
 const PAN_THRESHOLD = 4;
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 6;
-/** Below this scale, only the "always shown" labels (changed/root/top-level/hover) are drawn. */
+/** Below this scale, only the "always shown" labels (changed/root/top-level/hover/focus) are drawn. */
 const LABEL_ALL_SCALE = 1.5;
 
 /** Draw style for one edge kind; edge kinds with no entry are not drawn, so a future `imports` or
@@ -20,8 +24,6 @@ const LABEL_ALL_SCALE = 1.5;
 const EDGE_STYLE: Partial<Record<GraphEdge['kind'], { className: string }>> = {
   contains: { className: 'graph-edge-contains' },
 };
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function isFolder(n: GraphNode): boolean {
   return n.kind === 'root' || n.kind === 'dir';
@@ -33,37 +35,55 @@ function isBoxShaped(n: GraphNode): boolean {
   return n.kind === 'group' || (isFolder(n) && n.collapsed);
 }
 
-function alwaysLabeled(n: GraphNode, rootId: string | undefined): boolean {
-  return n.changed || n.id === rootId || n.parentId === rootId;
+function isClickable(n: GraphNode): boolean {
+  return n.collapsed || n.changed;
 }
 
-/** "14 files changed in 5 folders." — the visually hidden summary; the change list carries the
- * keyboard/screen-reader detail, so this stays a one-line orientation cue. */
-export function summarize(graph: ProjectGraphDto): string {
-  const changedFiles = graph.nodes.filter((n) => n.kind === 'file' && n.changed).length;
-  const changedFolders = graph.nodes.filter((n) => isFolder(n) && n.changed && n.id !== rootIdOf(graph)).length;
-  if (changedFiles === 0) return 'No files changed.';
-  return changedFolders > 0
-    ? `${plural(changedFiles, 'file')} changed in ${plural(changedFolders, 'folder')}. Use the list to open each change.`
-    : `${plural(changedFiles, 'file')} changed. Use the list to open each change.`;
+function alwaysLabeled(n: GraphNode, rootId: string | undefined): boolean {
+  return n.changed || n.id === rootId || n.parentId === rootId;
 }
 
 function rootIdOf(graph: ProjectGraphDto): string | undefined {
   return graph.nodes.find((n) => n.parentId === null)?.id;
 }
 
-function tooltipText(n: GraphNode): string {
-  const stats = n.changed ? `, +${n.additions} -${n.deletions}` : '';
-  const count = n.kind === 'file' ? '' : `, ${plural(n.fileCount, 'file')}`;
-  return `${n.path || n.name}${count}${stats}`;
+/** "14 files changed in 5 folders." — the one-line orientation cue read before the nodes. */
+export function summarize(graph: ProjectGraphDto): string {
+  const changedFiles = graph.nodes.filter((n) => n.kind === 'file' && n.changed).length;
+  const changedFolders = graph.nodes.filter((n) => isFolder(n) && n.changed && n.id !== rootIdOf(graph)).length;
+  return changedFiles === 0 ? T.summaryNone : T.summary(changedFiles, changedFolders);
+}
+
+export function tooltipText(n: GraphNode): string {
+  const parts = [n.path || n.name];
+  if (n.kind !== 'file') parts.push(T.nodeFiles(n.fileCount));
+  if (n.changed) parts.push(lineDelta(n.additions, n.deletions));
+  return parts.join(' · ');
+}
+
+function nodeLabel(n: GraphNode): string {
+  return `${tooltipText(n)}. ${n.collapsed ? T.expandHint : T.openHint(n.areaIds.length)}`;
+}
+
+function changedBounds(graph: ProjectGraphDto, positions: ReadonlyMap<string, Point>) {
+  const changedIds = graph.nodes.filter((n) => n.changed).map((n) => n.id);
+  return bounds(graph.nodes, positions, changedIds.length > 0 ? changedIds : undefined);
+}
+
+/** The fitted view for a graph: its changed nodes (or every node if none changed), plus whether
+ * the layout is turned a quarter to fill the pane's shape. */
+export function fitToChanged(graph: ProjectGraphDto, positions: ReadonlyMap<string, Point>, width: number, height: number): { view: View; rotated: boolean } {
+  const rotated = shouldRotate(changedBounds(graph, positions), width, height);
+  const shown = rotated ? rotatePositions(positions) : positions;
+  return { view: fitView(changedBounds(graph, shown), width, height), rotated };
 }
 
 export interface ProjectGraphProps {
   graph: ProjectGraphDto;
-  /** Nodes matching the hovered/focused change-list row: rung with a 2px ring, rest dimmed. */
+  /** Nodes of the selected (or hovered) area: outlined with a ring, the rest dimmed. */
   highlightNodeIds?: ReadonlySet<string>;
   selectedNodeId?: string | null;
-  /** A changed node was clicked: filter the change list to its areaIds. */
+  /** A changed node was clicked (or activated with the keyboard). */
   onSelectNode: (node: GraphNode) => void;
   /** A folded folder or group was clicked: re-fetch the graph with this path expanded. */
   onExpand: (path: string) => void;
@@ -71,44 +91,88 @@ export interface ProjectGraphProps {
 
 export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelectNode, onExpand }: ProjectGraphProps) {
   const priorPositions = useRef<Map<string, Point> | undefined>(undefined);
-  const positions = useMemo(() => {
+  const layout = useMemo(() => {
     const next = layoutGraph(graph.nodes, graph.edges, priorPositions.current);
     priorPositions.current = next;
     return next;
   }, [graph]);
   const rootId = useMemo(() => rootIdOf(graph), [graph]);
-  const changedIds = useMemo(() => graph.nodes.filter((n) => n.changed).map((n) => n.id), [graph]);
-  const fittedToChanges = useMemo(
-    () => fitView(bounds(graph.nodes, positions, changedIds.length > 0 ? changedIds : undefined), VIEWPORT),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph, positions],
-  );
-  const [view, setView] = useState<View>(fittedToChanges);
-  const [hoverId, setHoverId] = useState<string | null>(null);
-  const priorGraph = useRef(graph);
-  if (priorGraph.current !== graph) {
-    priorGraph.current = graph;
-    setView(fittedToChanges);
-    setHoverId(null);
-  }
 
+  // The canvas's real size in CSS pixels; the viewBox matches it, so one layout unit at scale 1 is
+  // one pixel and "fit" really fills the pane.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState(DEFAULT_SIZE);
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const w = Math.round(el.clientWidth);
+      const h = Math.round(el.clientHeight);
+      if (w > 0 && h > 0) setSize((s) => (s.w === w && s.h === h ? s : { w, h }));
+    };
+    measure();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const [initialFit] = useState(() => fitToChanged(graph, layout, size.w, size.h));
+  const [view, setView] = useState<View>(initialFit.view);
+  const [rotated, setRotated] = useState(initialFit.rotated);
+  const positions = useMemo(() => (rotated ? rotatePositions(layout) : layout), [layout, rotated]);
+  const refit = () => {
+    const f = fitToChanged(graph, layout, size.w, size.h);
+    setRotated(f.rotated);
+    setView(f.view);
+  };
+  // Re-fit when the digest changes, and on resize until the user pans or zooms. Unfolding a folder
+  // (same digest, new graph) keeps the current view so the user doesn't lose their place.
+  const fitted = useRef({ digestId: graph.digestId, w: size.w, h: size.h, userMoved: false });
+  useLayoutEffect(() => {
+    const f = fitted.current;
+    const digestChanged = f.digestId !== graph.digestId;
+    const resized = f.w !== size.w || f.h !== size.h;
+    if (digestChanged || (resized && !f.userMoved)) {
+      fitted.current = { digestId: graph.digestId, w: size.w, h: size.h, userMoved: digestChanged ? false : f.userMoved };
+      refit();
+    } else {
+      fitted.current = { ...f, w: size.w, h: size.h };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, layout, size]);
+
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
   const drag = useRef<{ startX: number; startY: number; viewX: number; viewY: number; panning: boolean } | null>(null);
 
-  const fitToChanges = () => setView(fittedToChanges);
-  const fitAll = () => setView(fitView(bounds(graph.nodes, positions), VIEWPORT));
-  const zoomBy = (factor: number) =>
-    setView((v) => ({ ...v, scale: Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor)) }));
+  const moveView = (next: View | ((v: View) => View)) => {
+    fitted.current.userMoved = true;
+    setView(next);
+  };
+  const fitToChanges = () => {
+    fitted.current.userMoved = false;
+    refit();
+  };
+  const fitAll = () => moveView(fitView(bounds(graph.nodes, positions), size.w, size.h));
+  const zoomBy = (factor: number) => moveView((v) => {
+    // Zoom around the canvas center, not the layout origin.
+    const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
+    const k = scale / v.scale;
+    return { scale, x: size.w / 2 - (size.w / 2 - v.x) * k, y: size.h / 2 - (size.h / 2 - v.y) * k };
+  });
 
   // React attaches wheel listeners as passive, so preventDefault() there can't stop the page from
   // scrolling; zoom through a native non-passive listener instead.
   const svgRef = useRef<SVGSVGElement>(null);
+  const zoomRef = useRef(zoomBy);
+  zoomRef.current = zoomBy;
   useEffect(() => {
     const el = svgRef.current;
     if (!el) return undefined;
     const onWheel = (e: globalThis.WheelEvent) => {
       e.preventDefault();
-      const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
-      setView((v) => ({ ...v, scale: Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor)) }));
+      zoomRef.current(e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
@@ -127,101 +191,137 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
       d.panning = true;
       e.currentTarget.setPointerCapture?.(e.pointerId);
     }
-    setView((v) => ({ ...v, x: d.viewX + (e.clientX - d.startX), y: d.viewY + (e.clientY - d.startY) }));
+    moveView((v) => ({ ...v, x: d.viewX + (e.clientX - d.startX), y: d.viewY + (e.clientY - d.startY) }));
   };
   const onPointerUp = () => {
     drag.current = null;
   };
 
-  const hovered = hoverId ? graph.nodes.find((n) => n.id === hoverId) ?? null : null;
+  const interactive = useMemo(() => graph.nodes.filter(isClickable), [graph]);
+  const activate = (n: GraphNode) => {
+    if (n.collapsed) onExpand(n.path);
+    else if (n.changed) onSelectNode(n);
+  };
+  const roving = useRovingIndex(interactive.length, (i) => {
+    const n = interactive[i];
+    if (n) activate(n);
+  });
+  const rovingIndex = useMemo(() => new Map(interactive.map((n, i) => [n.id, i])), [interactive]);
+
+  const tipNode = (hoverId ?? focusId) ? graph.nodes.find((n) => n.id === (hoverId ?? focusId)) ?? null : null;
   const showAllLabels = view.scale >= LABEL_ALL_SCALE;
+  const anyHighlight = (highlightNodeIds?.size ?? 0) > 0;
 
   return (
     <div className="project-graph">
-      <p className="visually-hidden">{summarize(graph)}</p>
-      <div className="graph-controls">
-        <button type="button" className="btn" onClick={fitToChanges}>Fit to changes</button>
-        <button type="button" className="btn" onClick={fitAll}>Fit all</button>
-        <button type="button" className="btn graph-zoom" aria-label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>−</button>
-        <button type="button" className="btn graph-zoom" aria-label="Zoom in" onClick={() => zoomBy(ZOOM_STEP)}>+</button>
+      <div className="graph-toolbar">
+        <ul className="graph-legend">
+          <li><span className="legend-dot changed" aria-hidden="true" /> {T.legendChanged}</li>
+          <li><span className="legend-dot selected" aria-hidden="true" /> {T.legendSelected}</li>
+        </ul>
+        <div className="graph-controls">
+          <button type="button" className="btn" onClick={fitToChanges}>{T.fitChanges}</button>
+          <button type="button" className="btn" onClick={fitAll}>{T.fitAll}</button>
+          <button type="button" className="btn graph-zoom" aria-label={T.zoomOut} onClick={() => zoomBy(1 / ZOOM_STEP)}>−</button>
+          <button type="button" className="btn graph-zoom" aria-label={T.zoomIn} onClick={() => zoomBy(ZOOM_STEP)}>+</button>
+        </div>
       </div>
-      <svg
-        className="graph-canvas"
-        viewBox={`0 0 ${VIEWPORT} ${VIEWPORT}`}
-        ref={svgRef}
-        aria-hidden="true"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
-      >
-        <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
-          {graph.edges.map((e, i) => {
-            const style = EDGE_STYLE[e.kind];
-            if (!style) return null; // unknown/future edge kinds are ignored until styled
-            const a = positions.get(e.source);
-            const b = positions.get(e.target);
-            if (!a || !b) return null;
-            return <line key={i} className={`graph-edge ${style.className}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
-          })}
-          {graph.nodes.map((n) => {
-            const p = positions.get(n.id);
-            if (!p) return null;
-            const r = nodeRadius(n);
-            const box = isBoxShaped(n);
-            const lit = highlightNodeIds?.has(n.id) ?? false;
-            const selected = selectedNodeId === n.id;
-            const dimmed = (highlightNodeIds?.size ?? 0) > 0 && !lit && !selected;
-            const clickable = n.collapsed || n.changed;
-            const label = alwaysLabeled(n, rootId) || showAllLabels || hoverId === n.id ? n.name : null;
-            const cls = [
-              'graph-node',
-              box ? 'shape-box' : 'shape-circle',
-              isFolder(n) && !box && 'folder',
-              n.changed && 'changed',
-              n.status === 'D' && 'deleted',
-              dimmed && 'dimmed',
-              (lit || selected) && 'ringed',
-              clickable && 'clickable',
-            ].filter(Boolean).join(' ');
-            return (
-              <g
-                key={n.id}
-                className={cls}
-                transform={`translate(${p.x} ${p.y})`}
-                onClick={() => {
-                  if (n.collapsed) onExpand(n.path);
-                  else if (n.changed) onSelectNode(n);
-                }}
-                onPointerEnter={() => setHoverId(n.id)}
-                onPointerLeave={() => setHoverId((h) => (h === n.id ? null : h))}
-              >
-                {box ? (
-                  <>
-                    <rect className="graph-shape" vectorEffect="non-scaling-stroke" x={-r} y={-r} width={r * 2} height={r * 2} rx={4} />
+      <p className="visually-hidden" id="graph-summary">{summarize(graph)} {T.keysHint}</p>
+      <div className="graph-canvas-wrap" ref={wrapRef}>
+        <svg
+          className="graph-canvas"
+          viewBox={`0 0 ${size.w} ${size.h}`}
+          ref={svgRef}
+          role="group"
+          aria-label={T.label}
+          aria-describedby="graph-summary"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+        >
+          <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
+            <g aria-hidden="true">
+              {graph.edges.map((e, i) => {
+                const style = EDGE_STYLE[e.kind];
+                if (!style) return null; // unknown/future edge kinds are ignored until styled
+                const a = positions.get(e.source);
+                const b = positions.get(e.target);
+                if (!a || !b) return null;
+                return <line key={i} className={`graph-edge ${style.className}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
+              })}
+            </g>
+            {graph.nodes.map((n) => {
+              const p = positions.get(n.id);
+              if (!p) return null;
+              const r = nodeRadius(n);
+              const box = isBoxShaped(n);
+              const lit = highlightNodeIds?.has(n.id) ?? false;
+              const selected = selectedNodeId === n.id;
+              const focused = focusId === n.id;
+              const dimmed = anyHighlight && !lit && !selected;
+              const ri = rovingIndex.get(n.id);
+              const label = alwaysLabeled(n, rootId) || showAllLabels || hoverId === n.id || focused ? n.name : null;
+              const cls = [
+                'graph-node',
+                box ? 'shape-box' : 'shape-circle',
+                isFolder(n) && !box && 'folder',
+                n.changed && 'changed',
+                n.status === 'D' && 'deleted',
+                dimmed && 'dimmed',
+                (lit || selected) && 'ringed',
+                ri !== undefined && 'clickable',
+                focused && 'focused',
+              ].filter(Boolean).join(' ');
+              const a11y = ri === undefined
+                ? { 'aria-hidden': true as const }
+                : {
+                  role: 'button',
+                  'aria-label': nodeLabel(n),
+                  tabIndex: roving.tabIndex(ri),
+                  ref: roving.ref(ri),
+                  onKeyDown: (e: KeyboardEvent) => roving.onKeyDown(e, ri),
+                  onFocus: () => { setFocusId(n.id); roving.setFocused(ri); },
+                  onBlur: () => setFocusId((f) => (f === n.id ? null : f)),
+                };
+              return (
+                <g
+                  key={n.id}
+                  className={cls}
+                  transform={`translate(${p.x} ${p.y})`}
+                  onClick={() => activate(n)}
+                  onPointerEnter={() => setHoverId(n.id)}
+                  onPointerLeave={() => setHoverId((h) => (h === n.id ? null : h))}
+                  {...a11y}
+                >
+                  {box ? (
+                    <>
+                      <rect className="graph-shape" vectorEffect="non-scaling-stroke" x={-r} y={-r} width={r * 2} height={r * 2} rx={4} />
+                      <g transform={`scale(${1 / view.scale})`}>
+                        <text className="graph-count" y={4} textAnchor="middle">{n.fileCount}</text>
+                      </g>
+                    </>
+                  ) : (
+                    <>
+                      <circle className="graph-shape" vectorEffect="non-scaling-stroke" r={r} />
+                      {isFolder(n) && <circle className="graph-ring" vectorEffect="non-scaling-stroke" r={r + 3} />}
+                    </>
+                  )}
+                  {(lit || selected) && <circle className="graph-hilite-ring" vectorEffect="non-scaling-stroke" r={r + (box ? 5 : 4)} />}
+                  {focused && <circle className="graph-focus-ring" vectorEffect="non-scaling-stroke" r={r + (box ? 8 : 7)} />}
+                  {label && (
                     <g transform={`scale(${1 / view.scale})`}>
-                      <text className="graph-count" y={4} textAnchor="middle">{n.fileCount}</text>
+                      <text className="graph-label" y={r * view.scale + 12} textAnchor="middle">{label}</text>
                     </g>
-                  </>
-                ) : (
-                  <>
-                    <circle className="graph-shape" vectorEffect="non-scaling-stroke" r={r} />
-                    {isFolder(n) && <circle className="graph-ring" vectorEffect="non-scaling-stroke" r={r + 3} />}
-                  </>
-                )}
-                {(lit || selected) && <circle className="graph-hilite-ring" vectorEffect="non-scaling-stroke" r={r + (box ? 5 : 4)} />}
-                {label && (
-                  <g transform={`scale(${1 / view.scale})`}>
-                    <text className="graph-label" y={r * view.scale + 12} textAnchor="middle">{label}</text>
-                  </g>
-                )}
-              </g>
-            );
-          })}
-        </g>
-      </svg>
-      <p className="chart-tip" aria-hidden="true">{hovered ? tooltipText(hovered) : ' '}</p>
-      {graph.truncated && <p className="muted graph-note">Some unchanged folders are folded to keep the graph readable.</p>}
+                  )}
+                </g>
+              );
+            })}
+          </g>
+        </svg>
+      </div>
+      <p className="chart-tip" aria-hidden="true">{tipNode ? tooltipText(tipNode) : ' '}</p>
+      {graph.truncated && <p className="muted graph-note">{T.folded}</p>}
     </div>
   );
 }
