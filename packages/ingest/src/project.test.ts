@@ -34,6 +34,23 @@ function listFiles(dir: string, base = dir): string[] {
   return out;
 }
 
+/** Strips every write bit under `dir`, standing in for a real read-only bind mount (which the
+ * sandbox this suite runs in can't create): the OS enforces EACCES on any write the same way. */
+function makeReadOnly(dir: string): void {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) { makeReadOnly(full); chmodSync(full, 0o555); } else chmodSync(full, 0o444);
+  }
+  chmodSync(dir, 0o555);
+}
+function makeWritable(dir: string): void {
+  chmodSync(dir, 0o755);
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) makeWritable(full); else chmodSync(full, 0o644);
+  }
+}
+
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'digest-project-'));
   proj = join(root, 'project');
@@ -145,6 +162,22 @@ describe('digest explain: init -> edit -> explain -> digest', () => {
     write('a.txt', 'one\ntwo\nthree\n'); // re-check after a second explain too
     await explainProject(db, home, project, provider(project.name), { budget: 40 });
     expect(listFiles(proj)).toEqual([...before].sort());
+  });
+
+  it('init and explain both succeed against a read-only project directory (DIG-56: never needs write access)', async () => {
+    write('a.txt', 'one\n');
+    write('sub/b.txt', 'two\n');
+    makeReadOnly(proj);
+    try {
+      const init = await initProject(db, home, proj);
+      expect(init.created).toBe(true);
+      expect(init.tracked).toBe(2);
+      const project = findProject(db, String(init.repoId)) as ProjectRow;
+      const r = await explainProject(db, home, project, provider(project.name), { budget: 40 });
+      expect(r.noChanges).toBe(true); // nothing changed on disk; the point is init/explain never threw
+    } finally {
+      makeWritable(proj);
+    }
   });
 
   it('unchanged tree: no checkpoint, no change unit, no call', async () => {

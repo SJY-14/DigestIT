@@ -6,10 +6,11 @@ const runWatchCli = vi.fn(async (_argv: string[]) => 0);
 const runManualExplainCli = vi.fn(async (_argv: string[]) => 0);
 vi.mock('./watch.js', () => ({ runWatchCli, runManualExplainCli }));
 const runInitCli = vi.fn(async (_argv: string[]) => 0);
+const runIgnoreCli = vi.fn(async (_argv: string[]) => 0);
 const runProjectsCli = vi.fn(async (_argv: string[]) => 0);
 const runStatusCli = vi.fn(async (_argv: string[]) => 0);
 const runProjectExplainCli = vi.fn(async (_argv: string[]) => 0);
-vi.mock('./project-cli.js', () => ({ runInitCli, runProjectsCli, runStatusCli, runProjectExplainCli }));
+vi.mock('./project-cli.js', () => ({ runInitCli, runIgnoreCli, runProjectsCli, runStatusCli, runProjectExplainCli }));
 const { routeDigest } = await import('./route.js');
 
 describe('routeDigest', () => {
@@ -53,9 +54,11 @@ describe('routeDigest', () => {
     expect(await routeDigest(['watch', '/repo', '--interval', '2'])).toBe(0);
     expect(runWatchCli).toHaveBeenCalledWith(['watch', '/repo', '--interval', '2']);
   });
-  it('delegates `init`, `projects` and `status` to the project CLI', async () => {
+  it('delegates `init`, `ignore`, `projects` and `status` to the project CLI', async () => {
     expect(await routeDigest(['init', '/repo', '--name', 'x'])).toBe(0);
     expect(runInitCli).toHaveBeenCalledWith(['init', '/repo', '--name', 'x']);
+    expect(await routeDigest(['ignore', 'my-project', 'add', 'out/'])).toBe(0);
+    expect(runIgnoreCli).toHaveBeenCalledWith(['ignore', 'my-project', 'add', 'out/']);
     expect(await routeDigest(['projects'])).toBe(0);
     expect(runProjectsCli).toHaveBeenCalledWith(['projects']);
     expect(await routeDigest(['status', 'my-project'])).toBe(0);
@@ -66,6 +69,7 @@ describe('routeDigest', () => {
     expect(await routeDigest(['bogus'])).toBe(2);
     expect(await routeDigest(['ingest'])).toBe(2);
     expect(await routeDigest(['init'])).toBe(2);
+    expect(await routeDigest(['ignore'])).toBe(2);
     err.mockRestore();
   });
 });
