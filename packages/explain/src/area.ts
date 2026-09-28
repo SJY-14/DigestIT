@@ -13,8 +13,8 @@ import { redact } from './redact.js';
 import { DEFAULT_LANGUAGE, VOICE, checkProse, languageInstruction, sentenceCount } from './style.js';
 import { LIMITS } from './validate.js';
 
-/** Bump whenever the instructions or the rendering below change. `a1` was the why/design/risks/notes shape. */
-export const AREA_PROMPT_VERSION = 'a2';
+/** Bump whenever the instructions or the rendering below change. `a1` was the why/design/risks/notes shape; `a2` allowed a 120-word body paragraph. */
+export const AREA_PROMPT_VERSION = 'a3';
 
 /**
  * Larger than `DEFAULT_PREPARE_OPTIONS.tokenBudget`: a digest call splits that
@@ -29,9 +29,9 @@ const AREA_INSTRUCTIONS = `You write the code-level walkthrough of one area of a
 - "overview": ${LIMITS.walkOverviewSentencesMin} or ${LIMITS.walkOverviewSentencesMax} sentences, never more (at most ${LIMITS.walkOverviewWords} words in total): what this area's change does as a whole and why. Leave the details to the steps.
 - "steps": the walkthrough, in the order a reviewer should read it (usually the core change first, then its callers, then tests). Each step explains one idea, which may span several hunks or files. At most ${LIMITS.walkStepsMax} steps.
   - "title": a short label of at most ${LIMITS.walkTitleWords} words naming the idea ("Cache the parsed config per request"), not the file.
-  - "body": at most ${LIMITS.walkBodyWords} words of prose: what this code does now, what it did before, and why it was changed this way (the intent, the design choice, and the trade-off it accepts). Refer to functions, flags and values by name.
+  - "body": ${LIMITS.walkBodySentencesMin}-${LIMITS.walkBodySentencesMax} short sentences, never more (at most ${LIMITS.walkBodyWords} words in total): what this code does now, what it did before, and why it was changed this way. Refer to functions, flags and values by name. Give a caveat its own sentence only when it matters to understanding the step; otherwise leave it for "check".
   - "hunks": the hunks this step explains, in reading order, as {"path": <file path exactly as shown>, "hunk": <number from its "hunk n" label>}. At least one.
-  - "mechanical": true for at most one step that groups purely mechanical edits (renames, formatting, moved code, import reshuffles); its body says in a sentence or two what was mechanical. Every other step is false.
+  - "mechanical": true for at most one step that groups purely mechanical edits (renames, formatting, moved code, import reshuffles); its body still follows the sentence and word limits above, saying briefly what was mechanical. Every other step is false.
   Every hunk in the hunk list at the end of the change must appear in at least one step. If the change shows no hunks, return "steps": [].
 - "check": ${LIMITS.walkCheckMin}-${LIMITS.walkCheckMax} short items (at most ${LIMITS.walkCheckWords} words each) on what the reviewer should verify: risks, edge cases, missing tests, callers that may need updating.
 Ground every claim in the diff below, the overall summary, or the project description; write nothing else. Plain text only: no HTML, no links, no markdown headings.
@@ -161,6 +161,12 @@ export function checkAreaWalkthrough(
     const body = checkProse(s.body, `${label} body`, LIMITS.walkBodyWords, language, v);
     if (title === '') v.push(`${label}: title is empty`);
     if (body === '') v.push(`${label}: body is empty`);
+    else {
+      const bodySentences = sentenceCount(body);
+      if (bodySentences < LIMITS.walkBodySentencesMin || bodySentences > LIMITS.walkBodySentencesMax) {
+        v.push(`${label} body: ${bodySentences} sentences, need ${LIMITS.walkBodySentencesMin}-${LIMITS.walkBodySentencesMax}`);
+      }
+    }
 
     const refs: HunkRef[] = [];
     const seen = new Set<string>();
