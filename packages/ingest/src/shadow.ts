@@ -315,6 +315,22 @@ interface ChangeSet {
   skipped: SkippedFile[];
 }
 
+type SizeCheck = { ok: true } | { ok: false; reason: 'unreadable' | 'too_large' };
+
+/** Whether `path` is small and readable enough to ever land in a checkpoint (used by both {@link computeChanges} and {@link pending}, so the two never disagree on what counts as a real change). */
+async function checkSize(shadow: Shadow, path: string): Promise<SizeCheck> {
+  const abs = join(shadow.projectRoot, path);
+  let stat;
+  try {
+    stat = await lstat(abs);
+    if (stat.isFile()) await access(abs, fsConstants.R_OK);
+  } catch {
+    return { ok: false, reason: 'unreadable' };
+  }
+  if (stat.isFile() && stat.size > shadow.maxFileBytes) return { ok: false, reason: 'too_large' };
+  return { ok: true };
+}
+
 /**
  * Applies the denylist and size cap to the candidates found by {@link listCategorized}.
  *
@@ -370,18 +386,10 @@ async function computeChanges(shadow: Shadow): Promise<ChangeSet> {
       if (tracked) { skipped.push({ path, reason: 'denylist' }); toDelete.push(path); }
       return;
     }
-    const abs = join(shadow.projectRoot, path);
-    let stat;
-    try {
-      stat = await lstat(abs);
-      if (stat.isFile()) await access(abs, fsConstants.R_OK);
-    } catch {
-      skipped.push({ path, reason: 'unreadable' });
+    const result = await checkSize(shadow, path);
+    if (!result.ok) {
+      skipped.push({ path, reason: result.reason });
       return; // leave a tracked file's previous index entry alone; there's nothing to add for a new one
-    }
-    if (stat.isFile() && stat.size > shadow.maxFileBytes) {
-      skipped.push({ path, reason: 'too_large' });
-      return; // ditto
     }
     toAdd.push(path);
   };
@@ -462,12 +470,24 @@ export async function listTree(shadow: Shadow, treeSha: string): Promise<string[
   return nul(await runGit(shadow, ['ls-tree', '-r', '-z', '--name-only', treeSha]));
 }
 
-const parseNumstatCounts = (text: string): { add: number; del: number }[] =>
-  nul(text).map((line) => {
-    const m = /^(-|\d+)\t(-|\d+)\t/.exec(line);
-    if (!m) return { add: 0, del: 0 };
-    return m[1] === '-' ? { add: 0, del: 0 } : { add: Number(m[1]), del: Number(m[2]) };
-  });
+/**
+ * Parses `--numstat -z` output into one entry per path, the same rename-aware way as
+ * {@link combineDiffTree}: with `-z`, a rename record is "add\tdel\t\0old-path\0new-path\0"
+ * (empty text before the first NUL) rather than "add\tdel\told => new".
+ */
+function parseNumstatEntries(text: string): { path: string; add: number; del: number }[] {
+  const parts = nul(text);
+  const entries: { path: string; add: number; del: number }[] = [];
+  for (let i = 0; i < parts.length; ) {
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(parts[i]!);
+    if (!m) { i++; continue; }
+    const binary = m[1] === '-';
+    const counts = { add: binary ? 0 : Number(m[1]), del: binary ? 0 : Number(m[2]) };
+    if (m[3] === '') { entries.push({ path: parts[i + 2]!, ...counts }); i += 3; }
+    else { entries.push({ path: m[3]!, ...counts }); i++; }
+  }
+  return entries;
+}
 
 async function countAddedLines(absPath: string, maxBytes: number): Promise<number> {
   let buf;
@@ -498,20 +518,36 @@ export async function pending(shadow: Shadow, lastSha: string): Promise<PendingR
   const keptDeleted = keep(deleted);
   // `ls-files --modified` also lists deleted files; count each of those once, as a deletion.
   const deletedSet = new Set(keptDeleted);
-  const keptModified = keep(modified).filter((p) => !deletedSet.has(p));
+  const modifiedCandidates = keep(modified).filter((p) => !deletedSet.has(p));
+
+  // A path that a checkpoint would skip (too_large / unreadable) is not a real pending change:
+  // it never made it into the shadow before and never will until it shrinks or becomes readable.
+  const sizeOk = async (paths: string[]) => {
+    const results = await Promise.all(paths.map((p) => checkSize(shadow, p)));
+    return paths.filter((_, i) => results[i]!.ok);
+  };
+  const [keptUntrackedSized, keptModified] = await Promise.all([
+    sizeOk(keptUntracked),
+    sizeOk(modifiedCandidates),
+  ]);
 
   let additions = 0, deletions = 0;
   if (keptModified.length > 0 || keptDeleted.length > 0) {
+    // No pathspec on argv (a mass change across thousands of files would otherwise risk E2BIG):
+    // diff the whole tree and keep only the entries for paths we've already decided to count.
+    const countedPaths = new Set([...keptModified, ...keptDeleted]);
     const numstatText = await runGit(shadow, [
       'diff', '--no-ext-diff', '--no-textconv', '--numstat', '-z', lastSha,
     ]);
-    for (const { add, del } of parseNumstatCounts(numstatText)) { additions += add; deletions += del; }
+    for (const { path, add, del } of parseNumstatEntries(numstatText)) {
+      if (countedPaths.has(path)) { additions += add; deletions += del; }
+    }
   }
-  for (const p of keptUntracked) {
+  for (const p of keptUntrackedSized) {
     additions += await countAddedLines(join(shadow.projectRoot, p), shadow.maxFileBytes);
   }
 
-  return { files: keptUntracked.length + keptModified.length + keptDeleted.length, additions, deletions };
+  return { files: keptUntrackedSized.length + keptModified.length + keptDeleted.length, additions, deletions };
 }
 
 const execTrim = async (args: readonly string[], cwd: string): Promise<string | null> => {

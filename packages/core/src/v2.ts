@@ -225,12 +225,17 @@ export interface GraphEdge {
   kind: GraphEdgeKind;
 }
 
-/** GET /api/digests/:id/graph?expand=<dir>&expand=<dir> (deterministic, no LLM call) */
+/**
+ * GET /api/digests/:id/graph?expand=<dir>&expand=<dir>, or GET /api/projects/:id/graph for a
+ * project with no digest yet (`digestId: null`; every node then has `changed: false`,
+ * `changedFiles`/`additions`/`deletions: 0`, `status: null` and `areaIds: []`). Deterministic, no
+ * LLM call either way.
+ */
 export interface ProjectGraphDto {
-  digestId: number;
+  digestId: number | null;
   nodes: GraphNode[];
   edges: GraphEdge[];
-  /** Files in the digest's `to` checkpoint plus the deleted ones. */
+  /** Files in the digest's `to` checkpoint plus the deleted ones (or, with no digest yet, the latest checkpoint's files). */
   totalFiles: number;
   /** True when changed folders had to be folded to stay under the node cap. */
   truncated: boolean;

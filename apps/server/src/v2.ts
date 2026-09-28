@@ -281,6 +281,20 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     };
   });
 
+  app.get<{ Params: { id: string } }>('/api/projects/:id/graph', async (req, reply) => {
+    const id = parseId(req.params.id);
+    const row = id === null ? undefined : findProjectRow(id);
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+
+    const latest = latestCheckpoint(db, row.id);
+    if (!latest) return { digestId: null, nodes: [], edges: [], totalFiles: 0, truncated: false } satisfies ProjectGraphDto;
+
+    const shadow = await openShadow(projectDataDir(home, row.id), row.path);
+    const paths = await listTree(shadow, latest.treeSha);
+    const result = buildProjectGraph({ paths, files: [] });
+    return { digestId: null, ...result } satisfies ProjectGraphDto;
+  });
+
   app.get<{ Params: { id: string }; Querystring: { cursor?: string; limit?: string } }>(
     '/api/projects/:id/digests',
     async (req, reply) => {

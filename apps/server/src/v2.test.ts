@@ -118,6 +118,33 @@ describe('GET /api/projects/:id/status', () => {
   });
 });
 
+describe('GET /api/projects/:id/graph', () => {
+  it('404s an unknown or non-project repo id', async () => {
+    const { db } = await setup();
+    const app = makeApp(db);
+    expect((await get(app, '/api/projects/999/graph')).statusCode).toBe(404);
+  });
+
+  it('builds a gray tree from the latest checkpoint with no digest yet', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const res = await get(app, `/api/projects/${repoId}/graph`);
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.digestId).toBeNull();
+    expect(body.totalFiles).toBe(2); // README.md + src/a.ts
+    for (const n of body.nodes) {
+      expect(n).toMatchObject({ changed: false, changedFiles: 0, additions: 0, deletions: 0, status: null, areaIds: [] });
+    }
+    // Nothing changed (no digest yet), so unchanged folders collapse the same way the digest
+    // graph builder always folds a quiet subtree — this is the same builder, just fed no changes.
+    const srcDir = body.nodes.find((n: { id: string }) => n.id === 'd:src');
+    expect(srcDir).toMatchObject({ collapsed: true, fileCount: 1 });
+    const readme = body.nodes.find((n: { id: string }) => n.id === 'f:README.md');
+    expect(readme).toBeDefined();
+  });
+});
+
 describe('POST /api/projects (register)', () => {
   it('403s when DIGESTIT_PROJECT_ROOTS is unset', async () => {
     const { db } = await setup();

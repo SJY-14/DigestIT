@@ -475,6 +475,33 @@ describe('pending', () => {
     expect(p.files).toBe(1); // only .gitignore itself is a real pending change
   });
 
+  it('excludes too-large and unreadable files from the pending count', async () => {
+    write('small.txt', 'ok\n');
+    const shadow = await openShadow(data, proj, { maxFileBytes: 10 });
+    const r1 = await snapshot(shadow);
+    expect(r1.skipped).toEqual([]);
+
+    write('big.txt', 'x'.repeat(100)); // untracked, over the cap
+    write('real-change.txt', 'new file\n'); // untracked, counted
+    write('small.txt', 'ok\nmore\n'); // tracked, counted
+    const p = await pending(shadow, r1.treeSha);
+    expect(p.files).toBe(2); // real-change.txt + small.txt, not big.txt
+    expect(p.additions).toBe(2); // 1 new line in real-change.txt + 1 in small.txt
+  });
+
+  it('excludes a tracked file that grew past the cap from the pending count', async () => {
+    write('big.txt', 'small\n');
+    write('other.txt', 'x\n');
+    const shadow = await openShadow(data, proj, { maxFileBytes: 10 });
+    const r1 = await snapshot(shadow);
+
+    write('big.txt', 'x'.repeat(100)); // now over the cap
+    write('other.txt', 'x\ny\n'); // real, counted change
+    const p = await pending(shadow, r1.treeSha);
+    expect(p.files).toBe(1); // only other.txt
+    expect(p.additions).toBe(1);
+  });
+
   it('counts a mass tracked-file change without hitting argv limits', async () => {
     for (let i = 0; i < 500; i++) write(`gen/f${i}.txt`, `line ${i}\n`);
     const shadow = await openShadow(data, proj);
