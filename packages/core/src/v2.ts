@@ -131,6 +131,7 @@ export interface ProjectDto {
   id: number;
   name: string;
   rootPath: string;
+  language: ExplainLanguage;
   context: ContextStatusDto;
   lastCheckpointAt: string | null;
   digestCount: number;
@@ -143,6 +144,8 @@ export interface ProjectStatusDto {
   budget: BudgetDto;
   /** True while an Explain for this project is running. */
   explaining: boolean;
+  /** When the running Explain started, so a reload can still show elapsed time. Null when not explaining. */
+  explainStartedAt: string | null;
 }
 
 /** GET /api/projects/:id/digests?cursor=&limit= (newest first) */
@@ -154,6 +157,8 @@ export interface DigestSummaryDto {
   stats: CommitStats;
   status: ExplanationStatus;
   l0: L0Content | null;
+  /** The language this digest's explanations were generated in. */
+  language: ExplainLanguage;
 }
 export interface DigestPageDto {
   items: DigestSummaryDto[];

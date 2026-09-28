@@ -7,14 +7,15 @@ import { join, resolve as resolvePath, sep } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance } from 'fastify';
 import {
+  EXPLAIN_LANGUAGES,
   buildProjectGraph,
-  type ChangeStatus, type DigestL2Content, type DigestFileDto, type ExplanationStatus,
+  type ChangeStatus, type DigestL2Content, type DigestFileDto, type ExplainLanguage, type ExplanationStatus,
   type ProjectDto, type ProjectGraphDto, type SkipReason,
 } from '@digestit/core';
 import {
   DEFAULT_DAILY_BUDGET, ProjectLockedError, budgetStatus, buildContext, ensureContext, explainProject, initProject,
   latestCheckpoint, latestContextText as sharedLatestContextText, listProjects, listTree, openShadow, projectDataDir,
-  projectStatus, retryDigest, type ProjectRow,
+  projectStatus, retryDigest, updateProjectLanguage, type ProjectRow,
 } from '@digestit/ingest';
 import {
   createProvider, explainArea,
@@ -141,9 +142,9 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
      ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`,
   );
   const findProjectRow = (id: number): ProjectRow | undefined => {
-    const r = db.prepare("SELECT id, name, path, context_path, created_at FROM repo WHERE id = ? AND mode = 'project'")
-      .get(id) as { id: number; name: string; path: string; context_path: string | null; created_at: string | null } | undefined;
-    return r ? { id: r.id, name: r.name, path: r.path, contextPath: r.context_path, createdAt: r.created_at } : undefined;
+    const r = db.prepare("SELECT id, name, path, language, context_path, created_at FROM repo WHERE id = ? AND mode = 'project'")
+      .get(id) as { id: number; name: string; path: string; language: ExplainLanguage; context_path: string | null; created_at: string | null } | undefined;
+    return r ? { id: r.id, name: r.name, path: r.path, language: r.language, contextPath: r.context_path, createdAt: r.created_at } : undefined;
   };
 
   function contextStatusOf(repoId: number, hasUserContext: boolean) {
@@ -162,6 +163,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       id: row.id,
       name: row.name,
       rootPath: row.path,
+      language: row.language,
       context: contextStatusOf(row.id, row.contextPath !== null),
       lastCheckpointAt: latest?.takenAt ?? null,
       digestCount,
@@ -214,13 +216,15 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
 
   function loadDigestDetail(digestId: number): Row | null {
     const d = db.prepare(
-      `SELECT d.repo_id AS repoId, d.created_at AS createdAt, d.stats AS stats,
+      `SELECT d.repo_id AS repoId, d.created_at AS createdAt, d.stats AS stats, d.language AS language,
               fromCp.seq AS seq, fromCp.taken_at AS fromAt, toCp.taken_at AS toAt, toCp.skipped AS skipped
        FROM digest d
        JOIN checkpoint fromCp ON fromCp.id = d.from_checkpoint_id
        JOIN checkpoint toCp ON toCp.id = d.to_checkpoint_id
        WHERE d.change_unit_id = ?`,
-    ).get(digestId) as { repoId: number; createdAt: string; stats: string; seq: number; fromAt: string; toAt: string; skipped: string } | undefined;
+    ).get(digestId) as {
+      repoId: number; createdAt: string; stats: string; language: ExplainLanguage; seq: number; fromAt: string; toAt: string; skipped: string;
+    } | undefined;
     if (!d) return null;
     const l0 = latestExplanation.get(digestId, 0) as { content: string; status: ExplanationStatus } | undefined;
     const l1 = latestExplanation.get(digestId, 1) as { content: string } | undefined;
@@ -238,6 +242,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       l2: l2 ? parseJson(l2.content, null) : null,
       files: loadFiles(digestId).map(fileDto),
       skipped: parseJson<{ path: string; reason: SkipReason }[]>(d.skipped, []),
+      language: d.language,
     };
   }
 
@@ -269,7 +274,10 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     const row = id === null ? undefined : findProjectRow(id);
     if (!row) return reply.code(404).send({ error: 'not_found' });
     const s = await projectStatus(db, home, row, now(), budgetLimit);
-    return { project: projectRowToDto(row), pending: s.pending, budget: s.budget, explaining: s.explaining };
+    return {
+      project: projectRowToDto(row), pending: s.pending, budget: s.budget,
+      explaining: s.explaining, explainStartedAt: s.explainStartedAt,
+    };
   });
 
   app.get<{ Params: { id: string }; Querystring: { cursor?: string; limit?: string } }>(
@@ -294,7 +302,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       params.push(limit + 1);
       const rows = db.prepare(
         `SELECT d.change_unit_id AS id, d.created_at AS createdAt, unixepoch(d.created_at) AS epoch, d.stats AS stats,
-                fromCp.seq AS seq, fromCp.taken_at AS fromAt, toCp.taken_at AS toAt
+                d.language AS language, fromCp.seq AS seq, fromCp.taken_at AS fromAt, toCp.taken_at AS toAt
          FROM digest d
          JOIN checkpoint fromCp ON fromCp.id = d.from_checkpoint_id
          JOIN checkpoint toCp ON toCp.id = d.to_checkpoint_id
@@ -308,6 +316,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
           stats: parseJson(r.stats, { files: 0, additions: 0, deletions: 0 }),
           status: l0?.status ?? 'pending',
           l0: l0 ? parseJson(l0.content, null) : null,
+          language: r.language,
         };
       });
       const last = page[page.length - 1];
@@ -423,6 +432,24 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     },
   );
 
+  app.patch<{ Params: { id: string }; Body: { language?: unknown } }>(
+    '/api/projects/:id',
+    { bodyLimit: V2_BODY_LIMIT },
+    async (req, reply) => {
+      const id = parseId(req.params.id);
+      const row = id === null ? undefined : findProjectRow(id);
+      if (!row) return reply.code(404).send({ error: 'not_found' });
+      const body = req.body;
+      if (typeof body !== 'object' || body === null) return reply.code(400).send({ error: 'bad_body' });
+      const { language } = body as { language?: unknown };
+      if (typeof language !== 'string' || !(EXPLAIN_LANGUAGES as readonly string[]).includes(language)) {
+        return reply.code(400).send({ error: 'bad_language' });
+      }
+      updateProjectLanguage(db, id!, language as ExplainLanguage);
+      return projectRowToDto(findProjectRow(id!)!);
+    },
+  );
+
   app.post<{ Params: { id: string } }>('/api/projects/:id/explain', { bodyLimit: V2_BODY_LIMIT }, async (req, reply) => {
     const id = parseId(req.params.id);
     const row = id === null ? undefined : findProjectRow(id);
@@ -515,6 +542,11 @@ export const V2_WRITE_PATTERNS: readonly RegExp[] = [
   /^\/api\/digests\/\d+\/areas\/[^/]+\/explain$/,
 ];
 
+/** PATCH write routes: kept separate from `V2_WRITE_PATTERNS` (all POST) since the method also gates them. */
+export const V2_PATCH_WRITE_PATTERNS: readonly RegExp[] = [/^\/api\/projects\/\d+$/];
+
 export function isV2WritePath(method: string, urlPath: string): boolean {
-  return method === 'POST' && V2_WRITE_PATTERNS.some((p) => p.test(urlPath));
+  if (method === 'POST') return V2_WRITE_PATTERNS.some((p) => p.test(urlPath));
+  if (method === 'PATCH') return V2_PATCH_WRITE_PATTERNS.some((p) => p.test(urlPath));
+  return false;
 }

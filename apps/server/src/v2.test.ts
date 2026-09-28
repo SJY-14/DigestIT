@@ -60,6 +60,8 @@ type App = ReturnType<typeof makeApp>;
 const get = (app: App, url: string) => app.inject({ method: 'GET', url });
 const post = (app: App, url: string, body: unknown = {}, headers: Record<string, string> = auth) =>
   app.inject({ method: 'POST', url, headers, payload: JSON.stringify(body) });
+const patch = (app: App, url: string, body: unknown = {}, headers: Record<string, string> = auth) =>
+  app.inject({ method: 'PATCH', url, headers, payload: JSON.stringify(body) });
 
 describe('GET /api/projects', () => {
   it('lists a registered project with a "none" context and zero digests', async () => {
@@ -69,7 +71,7 @@ describe('GET /api/projects', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body).toEqual([{
-      id: repoId, name: 'project', rootPath: proj,
+      id: repoId, name: 'project', rootPath: proj, language: 'en',
       context: { status: 'none', builtAt: null, fromFiles: null, hasUserContext: false },
       lastCheckpointAt: NOW().toISOString(),
       digestCount: 0,
@@ -94,7 +96,25 @@ describe('GET /api/projects/:id/status', () => {
     expect(body.pending.files).toBe(1);
     expect(body.budget).toMatchObject({ limit: 40, used: 0, remaining: 40 });
     expect(body.explaining).toBe(false);
+    expect(body.explainStartedAt).toBe(null);
     expect(body.project.id).toBe(repoId);
+  });
+
+  it('reports explainStartedAt from a live lock so a reload can still show elapsed time', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const dataDir = projectDataDir(home, repoId);
+    ensureDir0700(dataDir);
+    const startedAt = '2026-09-26T11:58:00.000Z';
+    writeFileSync(join(dataDir, 'explain.lock'), JSON.stringify({ pid: process.pid, startedAt }));
+    try {
+      const res = await get(app, `/api/projects/${repoId}/status`);
+      const body = res.json();
+      expect(body.explaining).toBe(true);
+      expect(body.explainStartedAt).toBe(startedAt);
+    } finally {
+      unlinkSync(join(dataDir, 'explain.lock'));
+    }
   });
 });
 
@@ -213,6 +233,58 @@ describe('POST /api/projects (register)', () => {
   });
 });
 
+describe('PATCH /api/projects/:id', () => {
+  it('sets the project language and returns the updated project', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const res = await patch(app, `/api/projects/${repoId}`, { language: 'ko' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: repoId, language: 'ko' });
+    const again = await get(app, '/api/projects');
+    expect(again.json()[0].language).toBe('ko');
+  });
+
+  it('400s an unknown language', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const res = await patch(app, `/api/projects/${repoId}`, { language: 'fr' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('bad_language');
+  });
+
+  it('400s a missing language', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const res = await patch(app, `/api/projects/${repoId}`, {});
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('bad_language');
+  });
+
+  it('404s an unknown project', async () => {
+    const { db } = await setup();
+    const app = makeApp(db);
+    const res = await patch(app, '/api/projects/999', { language: 'ko' });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('401s without the write token, like the other v2 writes', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const res = await patch(app, `/api/projects/${repoId}`, { language: 'ko' }, good);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('a digest created after the language changes records the new language', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    await patch(app, `/api/projects/${repoId}`, { language: 'ko' });
+    write('src/b.ts', 'export const b = 2;\n');
+    const explainBody = (await post(app, `/api/projects/${repoId}/explain`)).json();
+    const detail = (await get(app, `/api/digests/${explainBody.digestId}`)).json();
+    expect(detail.language).toBe('ko');
+  });
+});
+
 describe('v2 write-route auth/CSRF', () => {
   it('401s a missing/wrong token', async () => {
     const { db, repoId } = await setup();
@@ -328,6 +400,10 @@ describe('POST /api/projects/:id/explain and the digest/area GETs', () => {
     expect(detail.projectId).toBe(repoId);
     expect(detail.status).toBe('ok');
     expect(detail.l0).toBeTruthy();
+    expect(detail.language).toBe('en');
+
+    const list = (await get(app, `/api/projects/${repoId}/digests`)).json();
+    expect(list.items[0].language).toBe('en');
     expect(detail.l2.items.map((i: { id: string }) => i.id)).toEqual(['src']);
     expect(detail.files).toEqual([
       expect.objectContaining({ path: 'src/b.ts', status: 'A' }),
