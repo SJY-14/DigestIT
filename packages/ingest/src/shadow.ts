@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { access, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -166,6 +166,47 @@ async function resolveGitExcludeFiles(projectRoot: string): Promise<string[]> {
   return files;
 }
 
+/** In-flight set-ups per shadow repo, so concurrent opens in one process share one. */
+const settingUp = new Map<string, Promise<void>>();
+
+/**
+ * Creates the bare repo if needed and brings its config and `info/exclude` up to date. Every
+ * request that touches a project opens its shadow, so this must be safe to run concurrently (API
+ * status polls, the graph and an Explain overlap, and the CLI may run beside the server): it only
+ * writes what differs, and it replaces `info/exclude` atomically so a concurrent `git ls-files`
+ * never reads a half-written file. Unconditional `git config` writes used to race on
+ * `config.lock` and fail the request.
+ */
+function setUpShadowRepo(gitDir: string, hooksDir: string): Promise<void> {
+  let p = settingUp.get(gitDir);
+  if (!p) {
+    p = (async () => {
+      if (!(await exists(join(gitDir, 'HEAD')))) {
+        await runGitBare(gitDir, ['init', '--bare', '-q']);
+      }
+      await setConfigIfDifferent(gitDir, 'core.hooksPath', hooksDir);
+      await setConfigIfDifferent(gitDir, 'core.fsmonitor', 'false');
+      await replaceFileIfDifferent(join(gitDir, 'info', 'exclude'), DEFAULT_DENYLIST.join('\n') + '\n');
+    })().finally(() => settingUp.delete(gitDir));
+    settingUp.set(gitDir, p);
+  }
+  return p;
+}
+
+async function setConfigIfDifferent(gitDir: string, key: string, value: string): Promise<void> {
+  // `git config --get` exits 1 when the key is unset.
+  const current = await runGitBare(gitDir, ['config', '--get', key]).then((v) => v.trim(), () => null);
+  if (current !== value) await runGitBare(gitDir, ['config', key, value]);
+}
+
+async function replaceFileIfDifferent(path: string, content: string): Promise<void> {
+  if ((await readFile(path, 'utf8').catch(() => null)) === content) return;
+  await mkdir(join(path, '..'), { recursive: true });
+  const tmp = `${path}.${randomUUID()}.tmp`;
+  await writeFile(tmp, content);
+  await rename(tmp, path);
+}
+
 /** Creates or opens `<dataDir>/shadow.git`, its index and its denylist `info/exclude`. */
 export async function openShadow(dataDir: string, projectRoot: string, opts: ShadowOptions = {}): Promise<Shadow> {
   const gitDir = join(dataDir, 'shadow.git');
@@ -174,12 +215,7 @@ export async function openShadow(dataDir: string, projectRoot: string, opts: Sha
   await mkdir(dataDir, { recursive: true });
   await mkdir(hooksDir, { recursive: true });
 
-  if (!(await exists(join(gitDir, 'HEAD')))) {
-    await runGitBare(gitDir, ['init', '--bare', '-q']);
-  }
-  await runGitBare(gitDir, ['config', 'core.hooksPath', hooksDir]);
-  await runGitBare(gitDir, ['config', 'core.fsmonitor', 'false']);
-  await writeFile(join(gitDir, 'info', 'exclude'), DEFAULT_DENYLIST.join('\n') + '\n');
+  await setUpShadowRepo(gitDir, hooksDir);
 
   const gitExcludeFiles = await resolveGitExcludeFiles(projectRoot);
   return {

@@ -49,6 +49,33 @@ describe('openShadow', () => {
     const r2 = await snapshot(s2, { parent: r1.treeSha });
     expect(r2.unchanged).toBe(true);
   });
+
+  it('is safe to open concurrently, and reopening writes nothing (API requests overlap)', async () => {
+    const first = await Promise.all(Array.from({ length: 8 }, () => openShadow(data, proj)));
+    const gitDir = first[0]!.gitDir;
+    const stamp = (f: string) => statSync(join(gitDir, f)).mtimeMs;
+    const before = { config: stamp('config'), exclude: stamp(join('info', 'exclude')) };
+    await new Promise((r) => setTimeout(r, 20));
+    write('a.txt', 'one\n');
+    const r = await snapshot(first[0]!);
+    // Reopen while reading pending changes, as a status poll does during an Explain.
+    await Promise.all([
+      ...Array.from({ length: 8 }, () => openShadow(data, proj)),
+      ...first.map((s) => pending(s, r.treeSha)),
+    ]);
+    expect({ config: stamp('config'), exclude: stamp(join('info', 'exclude')) }).toEqual(before);
+    expect(readdirSync(join(gitDir, 'info')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('repairs a changed hooksPath and a stale info/exclude on reopen', async () => {
+    const s1 = await openShadow(data, proj);
+    execFileSync('git', ['--git-dir', s1.gitDir, 'config', 'core.hooksPath', '/elsewhere']);
+    writeFileSync(join(s1.gitDir, 'info', 'exclude'), 'stale\n');
+    await openShadow(data, proj);
+    expect(execFileSync('git', ['--git-dir', s1.gitDir, 'config', '--get', 'core.hooksPath'], { encoding: 'utf8' }).trim())
+      .toBe(join(data, 'shadow-hooks'));
+    expect(readFileText(join(s1.gitDir, 'info', 'exclude'))).toBe(DEFAULT_DENYLIST.join('\n') + '\n');
+  });
 });
 
 function readFileText(path: string): string {
