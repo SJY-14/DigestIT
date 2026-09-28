@@ -1,6 +1,6 @@
 # Roadmap
 
-## UX v3 — reading experience redesign (current priority)
+## UX v3 — reading experience redesign (done)
 
 Board feedback DIG-47 (2026-09-28) after first real use: explicit L0–L3 level switcher, L3 as a
 step-by-step walkthrough of the diff, natural wording with Korean as a first-class explanation
@@ -12,6 +12,12 @@ language, and a simpler header/picker/progress flow. Contract: [ux-v3.md](ux-v3.
 | 1 | DIG-48 | L3 walkthrough prompt + schema + validator; natural prompts; `en`/`ko` | Summarization engineer | — |
 | 2 | DIG-49 | Language setting + wiring, compact header, digest picker, Explain progress, empty states | Diff engineer | DIG-48 (wiring step only) |
 | 3 | DIG-50 | Reading flow: level switcher, L0–L3 views, breadcrumb, walkthrough UI, graph fit | Frontend engineer | — (fixtures until DIG-48) |
+| 4 | DIG-52 | Polish: Korean UI chrome, graph fills small panes, full L0 in picker, dark-theme strip | Frontend engineer | — |
+| 5 | DIG-53 | Shorter walkthrough steps (2–4 sentences, en/ko) | Summarization engineer | — |
+
+Accepted on 2026-09-28 on real `claude-code` output (demo project, English and Korean, light and
+dark). The acceptance flow runs as a scripted headless-browser pass. DIG-52 and DIG-53 are follow-ups
+from that review.
 
 ## Direction v2 — standalone project digester (done)
 
