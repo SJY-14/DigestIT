@@ -356,31 +356,67 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .field input { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
 .field input:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
 
-.project-bar { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-inset); }
-.project-bar-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.project-name { font-weight: 600; }
-.project-path { color: var(--muted); }
-.context-status { flex: 1 1 auto; }
-.budget-meter { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; }
-.explain-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding: 8px 14px; }
-/* A chip behind the pending count, not just a lighter text color: the accent blue is too light in
-   dark mode for any text color on it to clear 4.5:1, so darken the chip itself instead. */
-.explain-pending { display: inline-flex; font-weight: 400; font-size: 12px; padding: 1px 6px; border-radius: 2em; background: rgba(0, 0, 0, 0.3); color: #fff; }
-.explain-btn:disabled { opacity: 1; background: var(--bg-inset); border-color: var(--border); color: var(--muted); }
-.explain-btn:disabled .explain-pending { background: none; padding: 1px 0; color: var(--muted); }
+/* Compact header (DIG-49): one row — project, digest picker, calls left, info popover, Explain.
+   Every pixel here comes out of the reading pane, so nothing in it wraps at desktop widths. */
+.project-header { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-inset); min-width: 0; }
+.project-name { font-weight: 600; white-space: nowrap; }
+.project-switcher { font: inherit; font-weight: 600; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); max-width: 220px; }
+.header-picker { flex: 1 1 auto; min-width: 0; }
+.explain-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Nothing pending / no calls: a calm no-op, not a greyed-out version of the primary action. */
+.explain-btn:disabled { opacity: 1; cursor: default; }
+.explain-btn:disabled:not(.primary) { background: var(--bg); color: var(--muted); }
+.explain-btn.running:disabled { cursor: progress; }
+.spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+.calls-left { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.calls-left.spent { color: var(--del); border-color: var(--del); }
 
-.digest-picker { border: 1px solid var(--border); border-radius: 6px; }
-.digest-picker > summary { list-style: none; cursor: pointer; padding: 8px 12px; background: var(--bg-inset); border-radius: 6px; }
-.digest-picker > summary::-webkit-details-marker { display: none; }
-.digest-picker[open] > summary { border-bottom: 1px solid var(--border); border-radius: 6px 6px 0 0; }
-.digest-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.info-popover { position: relative; }
+.info-popover > summary { list-style: none; cursor: pointer; font-size: 16px; line-height: 1; padding: 4px 8px; border-radius: 6px; color: var(--muted); }
+.info-popover > summary::-webkit-details-marker { display: none; }
+.info-popover > summary:hover, .info-popover[open] > summary { background: var(--hover); color: var(--fg); }
+.info-popover > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.info-popover-panel {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 20; display: flex; flex-direction: column; gap: 8px;
+  width: 280px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.info-popover-panel p { margin: 0; }
+.info-popover-panel .context-status { color: var(--muted); }
+.language-field { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.language-field select { font: inherit; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.language-hint { font-size: 12px; }
+
+.empty-steps { margin: 0; padding: 12px 16px 0 2.25rem; color: var(--muted); }
+.empty-steps li { margin-bottom: 4px; }
+.empty-state p { margin: 0; padding: 12px 16px; }
+
+/* Digest picker (DIG-49): a one-line trigger in the header; the list floats over the reading pane. */
+.digest-picker { position: relative; min-width: 0; }
+.digest-picker-trigger { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; font: inherit; text-align: left; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer; }
+.digest-picker-trigger:hover { background: var(--hover); }
+.digest-picker-trigger:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.digest-picker-current { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.digest-picker-trigger .caret { color: var(--muted); flex: none; }
+.digest-picker-panel {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; width: min(720px, 90vw); max-height: min(60vh, 480px); overflow-y: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+.digest-list { list-style: none; margin: 0; padding: 0; }
 .digest-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--border-muted); }
 .digest-row:last-child { border-bottom: 0; }
-.digest-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; background: none; border: 0; padding: 8px 12px; cursor: pointer; }
-.digest-row-main:hover { background: var(--hover); }
+.digest-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit; color: var(--fg); background: none; border: 0; padding: 8px 12px; cursor: pointer; }
+.digest-row-main:hover, .digest-row-main:focus-visible { background: var(--hover); outline: none; }
 .digest-row-main[aria-current='true'] { background: var(--selected); }
-.digest-l0 { font-weight: 600; }
-.digest-error { color: var(--del); border-color: var(--del); }
+.digest-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.digest-row-main[aria-current='true'] .digest-row-label { font-weight: 600; }
+.digest-row .meta { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+.digest-status { white-space: nowrap; }
+.digest-status.error { color: var(--del); border-color: var(--del); }
+.digest-status.truncated, .digest-status.pending { color: var(--muted); }
+.digest-picker-panel .sentinel { padding: 6px 12px; font-size: 12px; }
 .retry { margin: 8px 12px; align-self: center; }
 
 

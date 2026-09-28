@@ -261,6 +261,12 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE project_context ADD COLUMN from_files INTEGER;
   `,
+  // DIG-49 (UX v3 language setting): explanation language, per project and recorded per digest so
+  // one digest never mixes languages even after the project setting changes.
+  `
+  ALTER TABLE repo ADD COLUMN language TEXT NOT NULL DEFAULT 'en' CHECK (language IN ('en','ko'));
+  ALTER TABLE digest ADD COLUMN language TEXT NOT NULL DEFAULT 'en' CHECK (language IN ('en','ko'));
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {

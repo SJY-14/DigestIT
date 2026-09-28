@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, linkSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import type { BudgetDto, CheckpointReason, CommitStats, SkipReason } from '@digestit/core';
+import type { BudgetDto, CheckpointReason, CommitStats, ExplainLanguage, SkipReason } from '@digestit/core';
 import { type DigestOutcome, type ExplanationProvider, explainDigest, filterReason } from '@digestit/explain';
 import { DEFAULT_DAILY_BUDGET, startOfLocalDay } from './scheduler.js';
 import { ensureDir0700, projectDataDir } from './datahome.js';
@@ -15,15 +15,27 @@ export class ProjectLockedError extends Error {
   }
 }
 
-/** True if the lock file exists and names a live process (a crashed or killed explain leaves a stale one). */
-function lockHeld(path: string): boolean {
-  let pid: number;
+interface LockInfo {
+  pid: number;
+  /** When the explain holding this lock started (ISO); null for a legacy plain-pid lock. */
+  startedAt: string | null;
+}
+
+/** Accepts the current JSON lock content, and a bare pid (older lock files, or tests). */
+function parseLock(raw: string): LockInfo | null {
   try {
-    pid = Number(readFileSync(path, 'utf8'));
+    const parsed = JSON.parse(raw) as { pid?: unknown; startedAt?: unknown };
+    if (Number.isInteger(parsed.pid) && typeof parsed.startedAt === 'string') {
+      return { pid: parsed.pid as number, startedAt: parsed.startedAt };
+    }
   } catch {
-    return false;
+    /* not JSON: fall through to the bare-pid format */
   }
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const pid = Number(raw);
+  return Number.isInteger(pid) && pid > 0 ? { pid, startedAt: null } : null;
+}
+
+function isLive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -32,10 +44,26 @@ function lockHeld(path: string): boolean {
   }
 }
 
-/** Creates the lock atomically with the pid already in it (write a temp file, then hard-link it into place). */
-function tryLock(path: string): boolean {
+/** The lock's info if it exists and names a live process (a crashed or killed explain leaves a stale one). */
+function readLiveLock(path: string): LockInfo | null {
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+  const info = parseLock(raw);
+  return info && isLive(info.pid) ? info : null;
+}
+
+function lockHeld(path: string): boolean {
+  return readLiveLock(path) !== null;
+}
+
+/** Creates the lock atomically with the pid+start time already in it (write a temp file, then hard-link it into place). */
+function tryLock(path: string, startedAt: string): boolean {
   const tmp = `${path}.${randomUUID()}`;
-  writeFileSync(tmp, String(process.pid), { mode: 0o600 });
+  writeFileSync(tmp, JSON.stringify({ pid: process.pid, startedAt }), { mode: 0o600 });
   try {
     linkSync(tmp, path);
     return true;
@@ -48,13 +76,13 @@ function tryLock(path: string): boolean {
 }
 
 /** Exclusive, per-project lock file: only one `explain` (fresh or `--retry`) runs at a time. */
-function withProjectLock<T>(dataDir: string, fn: () => Promise<T>): Promise<T> {
+function withProjectLock<T>(dataDir: string, startedAt: string, fn: () => Promise<T>): Promise<T> {
   ensureDir0700(dataDir);
   const path = `${dataDir}/explain.lock`;
-  if (!tryLock(path)) {
+  if (!tryLock(path, startedAt)) {
     if (lockHeld(path)) throw new ProjectLockedError();
     try { unlinkSync(path); } catch { /* removed concurrently */ }
-    if (!tryLock(path)) throw new ProjectLockedError();
+    if (!tryLock(path, startedAt)) throw new ProjectLockedError();
   }
   return fn().finally(() => {
     try { unlinkSync(path); } catch { /* already gone */ }
@@ -65,20 +93,36 @@ export function isExplaining(home: string, repoId: number): boolean {
   return lockHeld(`${projectDataDir(home, repoId)}/explain.lock`);
 }
 
+/** When the running Explain for this project started (ISO), so the UI can show elapsed time
+ * across a reload. Null when nothing is running, or the lock predates this field. */
+export function explainingSince(home: string, repoId: number): string | null {
+  return readLiveLock(`${projectDataDir(home, repoId)}/explain.lock`)?.startedAt ?? null;
+}
+
 export interface ProjectRow {
   id: number;
   name: string;
   path: string;
+  language: ExplainLanguage;
   contextPath: string | null;
   createdAt: string | null;
 }
 
-interface RepoRow { id: number; name: string; path: string; context_path: string | null; created_at: string | null }
-const toProjectRow = (r: RepoRow): ProjectRow => ({ id: r.id, name: r.name, path: r.path, contextPath: r.context_path, createdAt: r.created_at });
+interface RepoRow {
+  id: number; name: string; path: string; language: ExplainLanguage; context_path: string | null; created_at: string | null;
+}
+const toProjectRow = (r: RepoRow): ProjectRow => ({
+  id: r.id, name: r.name, path: r.path, language: r.language, contextPath: r.context_path, createdAt: r.created_at,
+});
 
 export function listProjects(db: DatabaseSync): ProjectRow[] {
-  return (db.prepare("SELECT id, name, path, context_path, created_at FROM repo WHERE mode = 'project' ORDER BY id")
+  return (db.prepare("SELECT id, name, path, language, context_path, created_at FROM repo WHERE mode = 'project' ORDER BY id")
     .all() as unknown as RepoRow[]).map(toProjectRow);
+}
+
+/** `PATCH /api/projects/:id {language}` and `digest config <project> --language <l>`. */
+export function updateProjectLanguage(db: DatabaseSync, repoId: number, language: ExplainLanguage): void {
+  db.prepare('UPDATE repo SET language = ? WHERE id = ?').run(language, repoId);
 }
 
 /** Resolves a `[project]` CLI argument (numeric id or exact name); falls back to the sole registered project. */
@@ -142,6 +186,8 @@ export interface InitOptions {
   name?: string;
   /** Absolute or cwd-relative path to a user-authored context `.md`; validated to exist. */
   contextPath?: string;
+  /** Explanation language for this project (default `'en'`). */
+  language?: ExplainLanguage;
 }
 
 export interface InitResult {
@@ -179,9 +225,10 @@ export async function initProject(
   }
   const name = opts.name ?? uniqueRepoName(db, basename(path));
   const at = now().toISOString();
+  const language = opts.language ?? 'en';
   const repoId = Number(db.prepare(
-    "INSERT INTO repo (name, path, mode, context_path, created_at) VALUES (?, ?, 'project', ?, ?)",
-  ).run(name, path, contextPath, at).lastInsertRowid);
+    "INSERT INTO repo (name, path, mode, context_path, created_at, language) VALUES (?, ?, 'project', ?, ?, ?)",
+  ).run(name, path, contextPath, at, language).lastInsertRowid);
 
   const dataDir = projectDataDir(home, repoId);
   return { ...(await takeInitCheckpoint(db, dataDir, repoId, path, at)), repoId, name, path, dataDir, created: true };
@@ -213,6 +260,7 @@ export interface ProjectStatus {
   pending: CommitStats;
   budget: BudgetDto;
   explaining: boolean;
+  explainStartedAt: string | null;
 }
 
 /** `digest status`: pending changes + remaining budget, no snapshot write and no LLM call. */
@@ -223,7 +271,10 @@ export async function projectStatus(
   const dataDir = projectDataDir(home, project.id);
   const shadow = await openShadow(dataDir, project.path);
   const pendingStats: PendingResult = latest ? await pending(shadow, latest.shadowSha) : { files: 0, additions: 0, deletions: 0 };
-  return { project, pending: pendingStats, budget: budgetStatus(db, now, limit), explaining: isExplaining(home, project.id) };
+  return {
+    project, pending: pendingStats, budget: budgetStatus(db, now, limit),
+    explaining: isExplaining(home, project.id), explainStartedAt: explainingSince(home, project.id),
+  };
 }
 
 export interface ExplainProjectResult {
@@ -236,7 +287,7 @@ export interface ExplainProjectResult {
 
 function insertDigestChangeUnit(
   db: DatabaseSync, repoId: number, fromCheckpoint: CheckpointRow, toCheckpointId: number, toTreeSha: string,
-  files: Awaited<ReturnType<typeof diff>>, at: string,
+  files: Awaited<ReturnType<typeof diff>>, at: string, language: ExplainLanguage,
 ): number {
   const title = `checkpoint ${fromCheckpoint.seq} → ${fromCheckpoint.seq + 1}`;
   const changeUnitId = Number(db.prepare(
@@ -254,8 +305,9 @@ function insertDigestChangeUnit(
   }
   const stats: CommitStats = { files: files.length, additions, deletions };
   db.prepare(
-    'INSERT INTO digest (change_unit_id, repo_id, from_checkpoint_id, to_checkpoint_id, created_at, stats) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(changeUnitId, repoId, fromCheckpoint.id, toCheckpointId, at, JSON.stringify(stats));
+    `INSERT INTO digest (change_unit_id, repo_id, from_checkpoint_id, to_checkpoint_id, created_at, stats, language)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(changeUnitId, repoId, fromCheckpoint.id, toCheckpointId, at, JSON.stringify(stats), language);
   return changeUnitId;
 }
 
@@ -282,7 +334,7 @@ export async function explainProject(
   const now = opts.now ?? (() => new Date());
   const budget = opts.budget ?? DEFAULT_DAILY_BUDGET;
   const dataDir = projectDataDir(home, project.id);
-  return withProjectLock(dataDir, async () => {
+  return withProjectLock(dataDir, now().toISOString(), async () => {
     const shadow = await openShadow(dataDir, project.path);
     // Read inside the lock: the value passed as `parent` below must never be stale.
     const from = latestCheckpoint(db, project.id);
@@ -297,29 +349,32 @@ export async function explainProject(
     db.exec('BEGIN');
     try {
       const toId = insertCheckpoint(db, project.id, from.seq + 1, result.treeSha, 'explain', info?.head ?? null, info?.branch ?? null, result.skipped, at);
-      changeUnitId = insertDigestChangeUnit(db, project.id, from, toId, result.treeSha, files, at);
+      changeUnitId = insertDigestChangeUnit(db, project.id, from, toId, result.treeSha, files, at, project.language);
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');
       throw e;
     }
     const context = typeof opts.context === 'function' ? await opts.context() : opts.context;
-    const r = await explainDigest(db, changeUnitId, provider, { context, budget, now });
+    const r = await explainDigest(db, changeUnitId, provider, { context, budget, now, language: project.language });
     return { noChanges: false, digestId: changeUnitId, outcome: r.outcome, calls: r.calls, detail: r.detail };
   });
 }
 
-/** `digest explain --retry <digestId>`: re-runs the provider call for an existing digest; no new snapshot. */
+/** `digest explain --retry <digestId>`: re-runs the provider call for an existing digest; no new snapshot.
+ * The retry keeps the language the digest was first written in, even if the project's changed since. */
 export async function retryDigest(
   db: DatabaseSync, home: string, digestId: number, provider: ExplanationProvider, opts: ExplainOptions = {},
 ): Promise<ExplainProjectResult> {
-  const row = db.prepare('SELECT repo_id FROM digest WHERE change_unit_id = ?').get(digestId) as { repo_id: number } | undefined;
+  const row = db.prepare('SELECT repo_id, language FROM digest WHERE change_unit_id = ?').get(digestId) as
+    { repo_id: number; language: ExplainLanguage } | undefined;
   if (!row) throw new Error(`no digest ${digestId}`);
   const budget = opts.budget ?? DEFAULT_DAILY_BUDGET;
   const dataDir = projectDataDir(home, row.repo_id);
-  return withProjectLock(dataDir, async () => {
+  const startedAt = (opts.now ?? (() => new Date()))().toISOString();
+  return withProjectLock(dataDir, startedAt, async () => {
     const context = typeof opts.context === 'function' ? await opts.context() : opts.context;
-    const r = await explainDigest(db, digestId, provider, { context, budget, now: opts.now });
+    const r = await explainDigest(db, digestId, provider, { context, budget, now: opts.now, language: row.language });
     return { noChanges: false, digestId, outcome: r.outcome, calls: r.calls, detail: r.detail };
   });
 }

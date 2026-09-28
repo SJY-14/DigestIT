@@ -92,4 +92,23 @@ describe('migrate', () => {
     expect(() => db.exec("INSERT INTO explain_call(at,reason,outcome) VALUES('now','bogus','ok')")).toThrow();
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   });
+
+  it('DIG-49: adds repo.language and digest.language, defaulting to "en" and rejecting unknown values', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec('PRAGMA foreign_keys = ON');
+    for (const m of MIGRATIONS.slice(0, 7)) db.exec(m);
+    db.exec('PRAGMA user_version = 7');
+    db.exec(`INSERT INTO repo(name,path,mode) VALUES('p','/p','project');
+      INSERT INTO checkpoint(repo_id,seq,shadow_sha,tree_sha,taken_at,reason) VALUES(1,1,'s1','t1','now','init');
+      INSERT INTO checkpoint(repo_id,seq,shadow_sha,tree_sha,taken_at,reason) VALUES(1,2,'s2','t2','now','explain');
+      INSERT INTO change_unit(id,repo_id,kind,head_sha,base_sha,title) VALUES(10,1,'digest','s2','s1','Digest 1');
+      INSERT INTO digest(change_unit_id,repo_id,from_checkpoint_id,to_checkpoint_id,created_at) VALUES(10,1,1,2,'now');`);
+    expect(migrate(db)).toBe(MIGRATIONS.length);
+    expect(db.prepare('SELECT language FROM repo WHERE name = ?').get('p')).toEqual({ language: 'en' });
+    expect(db.prepare('SELECT language FROM digest WHERE change_unit_id = 10').get()).toEqual({ language: 'en' });
+    expect(() => db.exec("UPDATE repo SET language = 'fr' WHERE name = 'p'")).toThrow();
+    expect(() => db.exec("UPDATE digest SET language = 'fr' WHERE change_unit_id = 10")).toThrow();
+    db.exec("UPDATE repo SET language = 'ko' WHERE name = 'p'");
+    expect(db.prepare('SELECT language FROM repo WHERE name = ?').get('p')).toEqual({ language: 'ko' });
+  });
 });

@@ -3,6 +3,7 @@ import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeFilter, defaultProject, MainV2, nodeTarget } from './MainV2.js';
+import { humanDateTime, plural } from './copy.js';
 import {
   fixtureArea, fixtureDigest, fixtureDigestPage, fixtureGraph, fixtureProject, fixtureStatus,
 } from './v2Fixtures.js';
@@ -113,8 +114,8 @@ describe('MainV2: project bar', () => {
   it('shows the budget meter and the Explain button with the pending count', async () => {
     await render(<MainV2 />);
     await waitFor(() => host.querySelector('.explain-btn') !== null);
-    expect(host.textContent).toContain('23 of 40 LLM calls left today');
-    expect(host.querySelector('.explain-btn')?.textContent).toContain('12 files, +340 −25 since last check');
+    expect(host.textContent).toContain('23 calls left today');
+    expect(host.querySelector('.explain-btn')?.textContent).toContain('Explain 12 changes');
   });
 
   it('disables Explain with a reason when nothing is pending', async () => {
@@ -134,7 +135,8 @@ describe('MainV2: project bar', () => {
     await waitFor(() => host.querySelector('.explain-btn') !== null);
     const btn = host.querySelector('.explain-btn') as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
-    expect(btn.title).toBe('Nothing pending since last check');
+    expect(btn.textContent).toBe('No new changes');
+    expect(btn.title).toBe('Nothing has changed since the last check.');
   });
 });
 
@@ -306,7 +308,7 @@ describe('MainV2: reading flow', () => {
     await render(<MainV2 />);
     await waitFor(() => host.querySelector('.walkthrough') !== null);
     const other = fixtureDigestPage.items.find((d) => d.id !== fixtureDigest.id)!;
-    await click(host.querySelector('.digest-picker summary'));
+    await click(host.querySelector('.digest-picker-trigger'));
     await click([...host.querySelectorAll('.digest-row-main')].find((b) => b.textContent?.includes(other.l0?.text ?? `#${other.seq}`)));
     await waitFor(() => params().get('digest') === String(other.id));
     expect(params().get('level')).toBe('3');
@@ -364,8 +366,9 @@ describe('MainV2: empty and error states', () => {
       throw new Error(`unhandled: ${method} ${url}`);
     }));
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.empty') !== null);
-    expect(host.querySelector('.empty')?.textContent).toContain('Explain changes since last check');
+    await waitFor(() => host.querySelector('.empty-state') !== null);
+    expect(host.querySelector('.empty-state')?.textContent).toContain('press Explain');
+    expect(host.querySelector('.digest-picker')).toBeNull();
     expect(host.textContent).not.toContain('Loading digest…');
   });
 
@@ -380,8 +383,7 @@ describe('MainV2: empty and error states', () => {
       throw new Error(`unhandled: ${method} ${url}`);
     }));
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.context-status.error') !== null);
-    expect(host.querySelector('.context-status.error')?.textContent).toContain('db is down');
+    await waitFor(() => host.querySelector('.error')?.textContent?.includes('db is down') ?? false);
     expect(host.textContent).not.toContain('Loading context…');
   });
 
@@ -407,23 +409,112 @@ describe('MainV2: digest retry', () => {
       throw new Error(`unhandled: ${method} ${url}`);
     }));
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.digest-picker summary') !== null);
-    await click(host.querySelector('.digest-picker summary'));
+    await waitFor(() => host.querySelector('.digest-picker-trigger') !== null);
+    await click(host.querySelector('.digest-picker-trigger'));
     const retryBtn = [...host.querySelectorAll('.retry')][0] as HTMLButtonElement;
     expect(retryBtn.disabled).toBe(true);
-    expect(retryBtn.title).toBe('Daily budget used up');
+    expect(retryBtn.textContent).toBe('No calls left today');
   });
 
   it('retries an errored digest via a real POST, not just a re-select', async () => {
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.digest-picker summary') !== null);
-    await click(host.querySelector('.digest-picker summary'));
+    await waitFor(() => host.querySelector('.digest-picker-trigger') !== null);
+    await click(host.querySelector('.digest-picker-trigger'));
     const errored = fixtureDigestPage.items.find((d) => d.status === 'error')!;
     const row = [...host.querySelectorAll('.digest-row')].find((r) => r.textContent?.includes(`#${errored.seq}`) || r.querySelector('.retry'));
     const retryBtn = row?.querySelector('.retry') as HTMLButtonElement;
     expect(retryBtn).toBeTruthy();
     await click(retryBtn);
     await waitFor(() => calls.some((c) => c.url === `/api/digests/${errored.id}/explain` && c.method === 'POST'));
+  });
+});
+
+describe('MainV2: digest picker (DIG-49)', () => {
+  it('opens as an overlay with one readable row per digest; Escape closes it and focus returns to the trigger', async () => {
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.digest-picker-trigger') !== null);
+    const trigger = host.querySelector('.digest-picker-trigger') as HTMLButtonElement;
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(host.querySelector('.digest-picker-panel')).toBeNull();
+    await click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    const labels = [...host.querySelectorAll('.digest-row-label')].map((e) => e.textContent);
+    expect(labels).toHaveLength(fixtureDigestPage.items.length);
+    for (const [i, d] of fixtureDigestPage.items.entries()) {
+      expect(labels[i]).toBe(`${humanDateTime(d.toAt)} · ${plural(d.stats.files, 'file')} · ${d.l0?.text ?? 'Not explained yet'}`);
+    }
+    expect(host.querySelector('.digest-status.error')?.textContent).toBe('Explain failed');
+    // Focus starts on the current digest's row.
+    expect(document.activeElement?.getAttribute('aria-current')).toBe('true');
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+    expect(host.querySelector('.digest-picker-panel')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('closes on an outside click', async () => {
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.digest-picker-trigger') !== null);
+    await click(host.querySelector('.digest-picker-trigger'));
+    expect(host.querySelector('.digest-picker-panel')).toBeTruthy();
+    await act(async () => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); });
+    expect(host.querySelector('.digest-picker-panel')).toBeNull();
+  });
+});
+
+describe('MainV2: Explain (DIG-49)', () => {
+  /** The default mock, with the project Explain POST answered by `reply`. */
+  function explainReplies(reply: { status: number; body: unknown }) {
+    const base = fetch;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === `/api/projects/${fixtureProject.id}/explain` && init?.method === 'POST') {
+        calls.push({ url, method: 'POST' });
+        return { ok: reply.status < 400, status: reply.status, json: async () => reply.body } as Response;
+      }
+      return base(url, init);
+    }));
+  }
+  const pressExplain = async () => {
+    await waitFor(() => host.querySelector('.explain-btn.primary') !== null);
+    await click(host.querySelector('.explain-btn'));
+  };
+
+  it('lands on the new digest at L0', async () => {
+    const other = fixtureDigestPage.items.find((d) => d.id !== fixtureDigest.id)!;
+    explainReplies({ status: 200, body: { noChanges: false, digestId: other.id, status: 'ok', budget: fixtureStatus.budget } });
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=2`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.area-card') !== null);
+    await pressExplain();
+    await waitFor(() => params().get('digest') === String(other.id));
+    expect(params().get('level')).toBeNull();
+    await waitFor(() => host.querySelector('.l0-headline') !== null);
+    expect(selectedTab()).toBe('L0 Summary');
+  });
+
+  it('says what failed and what to do', async () => {
+    explainReplies({ status: 500, body: { error: 'no_provider' } });
+    await render(<MainV2 />);
+    await pressExplain();
+    await waitFor(() => host.querySelector('.notice.error') !== null);
+    expect(host.querySelector('.notice.error')?.textContent)
+      .toBe('Explain failed. No explanation provider is configured on this server. Try again, or check the server log if it keeps failing.');
+  });
+
+  it('says so when there was nothing to explain', async () => {
+    explainReplies({ status: 200, body: { noChanges: true, digestId: null, status: null, budget: fixtureStatus.budget } });
+    await render(<MainV2 />);
+    await pressExplain();
+    await waitFor(() => host.querySelector('.notice[role="status"]') !== null);
+    expect(host.querySelector('.notice[role="status"]')?.textContent).toContain('Nothing changed since the last check.');
+  });
+
+  it('lands on the digest and says the budget ran out when it could not be explained', async () => {
+    const other = fixtureDigestPage.items.find((d) => d.id !== fixtureDigest.id)!;
+    explainReplies({ status: 200, body: { noChanges: false, digestId: other.id, status: 'pending', budget: { ...fixtureStatus.budget, remaining: 0 } } });
+    await render(<MainV2 />);
+    await pressExplain();
+    await waitFor(() => params().get('digest') === String(other.id));
+    expect(host.querySelector('.reader-top .notice[role="status"]')?.textContent).toContain('The daily budget ran out');
   });
 });
 

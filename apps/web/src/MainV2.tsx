@@ -1,22 +1,25 @@
-// Main screen v2 (DIG-40, docs/direction-v2.md §5): setup form, project bar (switcher, context
-// status, budget, Explain button), and the two-pane digest view (change list + project graph).
+// Main screen v2 (DIG-40, docs/direction-v2.md §5): setup form, the compact project header with
+// the digest picker (DIG-49, ProjectHeader.tsx / DigestPicker.tsx), and the reading pane + graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import type {
-  AreaDetailDto, DigestDetailDto, DigestSummaryDto, GraphNode, ProjectDto, ProjectGraphDto, ProjectStatusDto,
+  AreaDetailDto, DigestDetailDto, ExplainLanguage, GraphNode, ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 import {
   ApiError, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph, fetchProjectStatus, fetchProjects, refreshContext,
-  retryDigest,
+  retryDigest, setProjectLanguage,
 } from './v2Api.js';
 import { useDigests } from './useDigests.js';
 import { startLive } from './liveClient.js';
-import { formatDate, relativeTime } from './format.js';
 import { ProjectGraph } from './ProjectGraph.js';
+import { ProjectHeader } from './ProjectHeader.js';
+import { DigestPicker } from './DigestPicker.js';
 import { WalkthroughView, walkthroughOf } from './Walkthrough.js';
 import {
   AreaPicker, Breadcrumb, ImpactView, LEVEL_TAB_ID, LevelSwitcher, READING_PANE_ID, readerKey, StructureView, SummaryView,
 } from './Reader.js';
-import { GRAPH, LEVELS, READER, WALKTHROUGH } from './copy.js';
+import {
+  apiErrorMessage, EMPTY, explainOutcomeMessage, GRAPH, LEVELS, READER, resetsLabel, WALKTHROUGH,
+} from './copy.js';
 import { useV2Url, type ReadingLevel, type V2Url } from './v2Url.js';
 
 // --- setup form (no project registered yet) -----------------------------------------------------
@@ -35,7 +38,7 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
       const project = await createProject(rootPath.trim(), contextPath.trim() || null);
       onCreated(project);
     } catch (e2) {
-      setError(e2 instanceof ApiError ? e2.message : e2 instanceof Error ? e2.message : String(e2));
+      setError(errorText(e2));
     } finally {
       setSubmitting(false);
     }
@@ -43,7 +46,10 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
 
   return (
     <div className="box setup">
-      <h2 className="box-head">Start a project</h2>
+      <h2 className="box-head">{EMPTY.noProjects.heading}</h2>
+      <ol className="empty-steps">
+        {EMPTY.noProjects.steps.map((s, i) => <li key={i}>{s}</li>)}
+      </ol>
       <form className="setup-form" onSubmit={(e) => void submit(e)}>
         <label className="field">
           <span>Project folder</span>
@@ -74,188 +80,9 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
   );
 }
 
-// --- project bar: switcher, context status, budget, Explain ------------------------------------
-
-function BudgetMeter({ status }: { status: ProjectStatusDto }) {
-  const { limit, remaining } = status.budget;
-  return (
-    <span className="budget-meter" title={`Resets ${formatDate(status.budget.resetsAt)}`}>
-      {remaining} of {limit} LLM calls left today
-    </span>
-  );
-}
-
-function pendingLabel(status: ProjectStatusDto): string {
-  const { files, additions, deletions } = status.pending;
-  if (files === 0) return 'Nothing pending since last check';
-  return `${files} ${files === 1 ? 'file' : 'files'}, +${additions} −${deletions} since last check`;
-}
-
-function explainDisabledReason(status: ProjectStatusDto, explaining: boolean): string | null {
-  if (explaining) return 'Explaining…';
-  if (status.pending.files === 0) return 'Nothing pending since last check';
-  if (status.budget.remaining === 0) return 'Daily budget used up';
-  return null;
-}
-
-function ExplainButton({ status, explaining, onExplain }: { status: ProjectStatusDto; explaining: boolean; onExplain: () => void }) {
-  const reason = explainDisabledReason(status, explaining);
-  return (
-    <button type="button" className="btn primary explain-btn" disabled={reason !== null} onClick={onExplain} title={reason ?? undefined}>
-      {explaining ? 'Explaining…' : 'Explain changes since last check'}
-      <span className="explain-pending">{pendingLabel(status)}</span>
-    </button>
-  );
-}
-
-function contextLabel(status: ProjectStatusDto): string {
-  const c = status.project.context;
-  if (c.status === 'none') return 'No context built yet';
-  const built = c.builtAt ? `Built ${relativeTime(c.builtAt)}` : 'Building…';
-  const from = c.fromFiles !== null ? `, from ${c.fromFiles} ${c.fromFiles === 1 ? 'file' : 'files'}` : '';
-  const user = `, user context ${c.hasUserContext ? 'yes' : 'no'}`;
-  return `${built}${from}${user}`;
-}
-
-function ProjectBar({
-  projects, currentProject, onSwitch, status, statusError, onRefreshContext, refreshing, explaining, onExplain,
-}: {
-  projects: ProjectDto[];
-  currentProject: ProjectDto;
-  onSwitch: (id: number) => void;
-  status: ProjectStatusDto | null;
-  statusError: string | null;
-  onRefreshContext: () => void;
-  refreshing: boolean;
-  explaining: boolean;
-  onExplain: () => void;
-}) {
-  return (
-    <div className="project-bar">
-      <div className="project-bar-row">
-        {projects.length > 1 ? (
-          <select aria-label="Project" value={currentProject.id} onChange={(e) => onSwitch(Number(e.target.value))}>
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        ) : (
-          <span className="project-name">{currentProject.name}</span>
-        )}
-        <code className="project-path">{currentProject.rootPath}</code>
-      </div>
-      <div className="project-bar-row">
-        {statusError ? (
-          <span role="alert" className="context-status error">Could not load status: {statusError}</span>
-        ) : (
-          <span className="context-status muted">
-            {status ? contextLabel(status) : 'Loading context…'}
-          </span>
-        )}
-        <button type="button" className="btn" onClick={onRefreshContext} disabled={refreshing}>
-          {refreshing ? 'Refreshing…' : 'Refresh'}
-        </button>
-        {status && <BudgetMeter status={status} />}
-      </div>
-      {status && (
-        <div className="project-bar-row">
-          <ExplainButton status={status} explaining={explaining} onExplain={onExplain} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// --- digest picker: past digests, newest first, infinite scroll --------------------------------
-
-function statusChip(status: DigestSummaryDto['status']) {
-  if (status === 'ok') return null;
-  return <span className="badge digest-error">{status === 'error' ? 'error' : status === 'pending' ? 'pending' : 'truncated'}</span>;
-}
-
-function DigestRow({ d, current, onSelect, onRetry, retrying, retryDisabled }: {
-  d: DigestSummaryDto;
-  current: boolean;
-  onSelect: () => void;
-  onRetry: () => void;
-  retrying: boolean;
-  retryDisabled: boolean;
-}) {
-  const retryable = d.status === 'error' || d.status === 'truncated';
-  return (
-    <li className="digest-row">
-      <button type="button" className="digest-row-main" aria-current={current ? 'true' : undefined} onClick={onSelect}>
-        <span className="digest-l0">{d.l0?.text ?? '(not explained yet)'}</span>
-        <span className="meta">
-          <span>{formatDate(d.fromAt)} → {formatDate(d.toAt)}</span>
-          <span className="stats">
-            {d.stats.files} {d.stats.files === 1 ? 'file' : 'files'}{' '}
-            <span className="add">+{d.stats.additions}</span> <span className="del">−{d.stats.deletions}</span>
-          </span>
-          {statusChip(d.status)}
-        </span>
-      </button>
-      {retryable && (
-        <button
-          type="button"
-          className="btn retry"
-          onClick={onRetry}
-          disabled={retrying || retryDisabled}
-          title={retryDisabled ? 'Daily budget used up' : undefined}
-        >
-          {retrying ? 'Retrying…' : 'Retry'}
-        </button>
-      )}
-    </li>
-  );
-}
-
-function DigestPicker({
-  digests, current, onSelect, onRetry, retryingId, retryDisabled,
-}: {
-  digests: ReturnType<typeof useDigests>;
-  current: DigestSummaryDto | undefined;
-  onSelect: (id: number) => void;
-  onRetry: (id: number) => void;
-  retryingId: number | null;
-  retryDisabled: boolean;
-}) {
-  const sentinel = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = sentinel.current;
-    if (!el || digests.done) return;
-    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && void digests.loadMore(), { rootMargin: '400px' });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [digests.done, digests.loadMore]);
-
-  return (
-    <details className="digest-picker">
-      <summary>
-        {current ? (
-          <span>Digest: {current.l0?.text ?? `#${current.seq}`} ({formatDate(current.fromAt)} → {formatDate(current.toAt)})</span>
-        ) : (
-          <span>Select a digest</span>
-        )}
-      </summary>
-      <ol className="digest-list">
-        {digests.items.map((d) => (
-          <DigestRow
-            key={d.id}
-            d={d}
-            current={d.id === current?.id}
-            onSelect={() => onSelect(d.id)}
-            onRetry={() => onRetry(d.id)}
-            retrying={retryingId === d.id}
-            retryDisabled={retryDisabled}
-          />
-        ))}
-      </ol>
-      {digests.error && <p role="alert" className="error">Could not load digests: {digests.error}</p>}
-      <div ref={sentinel} className="sentinel">
-        {digests.loading && <span className="muted">Loading…</span>}
-        {digests.done && digests.items.length > 0 && <span className="muted">Start of history</span>}
-      </div>
-    </details>
-  );
+/** An API failure as a sentence: server error codes go through `apiErrorMessage`. */
+function errorText(e: unknown): string {
+  return e instanceof ApiError ? apiErrorMessage(e.message) : e instanceof Error ? e.message : String(e);
 }
 
 // --- L2 filter from a graph node ----------------------------------------------------------------
@@ -411,7 +238,10 @@ export function MainV2() {
   const [url, push, replace] = useV2Url('/');
   const [explainingLocal, setExplainingLocal] = useState(false);
   const [explainError, setExplainError] = useState<string | null>(null);
+  const [explainNotice, setExplainNotice] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [settingLanguage, setSettingLanguage] = useState(false);
+  const [languageError, setLanguageError] = useState<string | null>(null);
   const [digest, setDigest] = useState<DigestDetailDto | null>(null);
   const [digestError, setDigestError] = useState<string | null>(null);
   const [expand, setExpand] = useState<string[]>([]);
@@ -554,15 +384,23 @@ export function MainV2() {
     if (currentProjectId === null) return;
     setExplainingLocal(true);
     setExplainError(null);
+    setExplainNotice(null);
     explainProject(currentProjectId)
       .then((r) => {
+        if (r.noChanges) {
+          setExplainNotice(explainOutcomeMessage('no_changes', undefined, ''));
+          return;
+        }
+        // The digest exists but the budget ran out before it was explained: it lands anyway, and
+        // the header says when calls come back.
+        if (r.status === 'pending') setExplainNotice(explainOutcomeMessage('budget', undefined, resetsLabel(r.budget.resetsAt)));
         if (r.digestId !== null) {
           digests.reload();
           // A new digest after Explain lands at L0 (docs/ux-v3.md §1).
           replace({ digest: r.digestId, level: null, node: null, area: null, step: null });
         }
       })
-      .catch((e: unknown) => setExplainError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setExplainError(explainOutcomeMessage('error', errorText(e), '')))
       .finally(() => {
         setExplainingLocal(false);
         refreshStatus();
@@ -573,6 +411,16 @@ export function MainV2() {
     if (currentProjectId === null) return;
     setRefreshing(true);
     refreshContext(currentProjectId).finally(() => { setRefreshing(false); refreshStatus(); });
+  }, [currentProjectId, refreshStatus]);
+
+  const onSetLanguage = useCallback((language: ExplainLanguage) => {
+    if (currentProjectId === null) return;
+    setSettingLanguage(true);
+    setLanguageError(null);
+    setProjectLanguage(currentProjectId, language)
+      .then((updated) => { setProjects((prev) => prev?.map((p) => (p.id === updated.id ? updated : p)) ?? prev); refreshStatus(); })
+      .catch((e: unknown) => setLanguageError(errorText(e)))
+      .finally(() => setSettingLanguage(false));
   }, [currentProjectId, refreshStatus]);
 
   const onSwitchProject = useCallback((id: number) => push({ project: id, digest: null, node: null, area: null, step: null }), [push]);
@@ -699,34 +547,43 @@ export function MainV2() {
     <div className={narrow ? 'main-v2 narrow' : 'main-v2'}>
       <div aria-live="polite" className="visually-hidden">{announce}</div>
       <div className="reader-top">
-        <ProjectBar
+        <ProjectHeader
           projects={projects}
           currentProject={currentProject}
           onSwitch={onSwitchProject}
           status={status}
           statusError={statusError}
-          onRefreshContext={onRefreshContext}
-          refreshing={refreshing}
           explaining={explaining}
           onExplain={onExplain}
-        />
-        {explainError && <p role="alert" className="error">Could not explain: {explainError}</p>}
-        {digestError && <p role="alert" className="error">{READER.digestLoadError(digestError)}</p>}
-        {!digestError && currentDigestId === null && digests.done && (
-          <p className="empty">No digests yet. Use <strong>Explain changes since last check</strong> above to create the first one.</p>
-        )}
-        {!digestError && currentDigestId === null && !digests.done && <p className="muted">Loading…</p>}
-        {!digestError && currentDigestId !== null && !digest && <p className="muted">{READER.loadingDigest}</p>}
-        {digest && (
-          <>
+          onRefreshContext={onRefreshContext}
+          refreshingContext={refreshing}
+          onSetLanguage={onSetLanguage}
+          settingLanguage={settingLanguage}
+          languageError={languageError}
+          picker={digests.items.length > 0 && (
             <DigestPicker
               digests={digests}
-              current={digests.items.find((d) => d.id === currentDigestId)}
+              currentId={currentDigestId}
               onSelect={onSelectDigest}
               onRetry={onRetryDigest}
               retryingId={retryingId}
               retryDisabled={noBudget}
             />
+          )}
+        />
+        {explainError && <p role="alert" className="notice error">{explainError}</p>}
+        {explainNotice && <p role="status" className="notice muted">{explainNotice}</p>}
+        {digestError && <p role="alert" className="error">{READER.digestLoadError(digestError)}</p>}
+        {!digestError && currentDigestId === null && digests.done && !digests.error && (
+          <div className="box empty-state">
+            <h2 className="box-head">{EMPTY.noDigests.heading}</h2>
+            <p>{EMPTY.noDigests.body}</p>
+          </div>
+        )}
+        {!digestError && currentDigestId === null && !digests.done && <p className="muted">Loading…</p>}
+        {!digestError && currentDigestId !== null && !digest && <p className="muted">{READER.loadingDigest}</p>}
+        {digest && (
+          <>
             <div className="reader-nav">
               <Breadcrumb
                 digest={digest}
@@ -753,6 +610,7 @@ export function MainV2() {
             style={narrow ? undefined : { flexBasis: `${leftPct}%` }}
           >
             {digestNotice}
+            {digest.stats.files === 0 && <p className="notice muted" role="status">{EMPTY.digestNoChanges}</p>}
             {levelView}
           </div>
           {!narrow && <Divider pct={leftPct} onChange={setLeftPct} />}

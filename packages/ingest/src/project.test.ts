@@ -1,12 +1,12 @@
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
 import { createProvider, type ExplanationProvider } from '@digestit/explain';
 import {
-  ProjectLockedError, budgetStatus, explainProject, findProject, initProject, isExplaining, latestCheckpoint,
-  listProjects, projectStatus, retryDigest, type ProjectRow,
+  ProjectLockedError, budgetStatus, explainProject, explainingSince, findProject, initProject, isExplaining,
+  latestCheckpoint, listProjects, projectStatus, retryDigest, updateProjectLanguage, type ProjectRow,
 } from './project.js';
 import type { DatabaseSync } from 'node:sqlite';
 
@@ -83,6 +83,27 @@ describe('initProject', () => {
   it('rejects a missing --context file', async () => {
     write('a.txt', 'hello\n');
     await expect(initProject(db, home, proj, { contextPath: join(root, 'nope.md') })).rejects.toThrow(/context file not found/);
+  });
+
+  it('defaults language to "en", and accepts an explicit one', async () => {
+    write('a.txt', 'hello\n');
+    const r = await initProject(db, home, proj);
+    expect((findProject(db, String(r.repoId)) as ProjectRow).language).toBe('en');
+
+    const other = join(root, 'other');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'a.txt'), 'hi\n');
+    const r2 = await initProject(db, home, other, { language: 'ko' });
+    expect((findProject(db, String(r2.repoId)) as ProjectRow).language).toBe('ko');
+  });
+});
+
+describe('updateProjectLanguage', () => {
+  it('changes the stored language of an existing project', async () => {
+    write('a.txt', 'hello\n');
+    const r = await initProject(db, home, proj);
+    updateProjectLanguage(db, r.repoId, 'ko');
+    expect((findProject(db, String(r.repoId)) as ProjectRow).language).toBe('ko');
   });
 });
 
@@ -174,6 +195,16 @@ describe('digest explain: init -> edit -> explain -> digest', () => {
     expect(latestCheckpoint(db, project.id)!.seq).toBe(2);
     expect(db.prepare("SELECT count(*) AS n FROM change_unit WHERE kind = 'digest'").get()).toEqual({ n: 1 });
   });
+
+  it('records the project\'s language on the digest row', async () => {
+    write('a.txt', 'one\n');
+    const init = await initProject(db, home, proj, { language: 'ko' });
+    write('a.txt', 'one\ntwo\n');
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+    const r = await explainProject(db, home, project, provider(project.name), { budget: 40 });
+    const digest = db.prepare('SELECT language FROM digest WHERE change_unit_id = ?').get(r.digestId!) as { language: string };
+    expect(digest.language).toBe('ko');
+  });
 });
 
 describe('explain lock and file filtering', () => {
@@ -193,6 +224,24 @@ describe('explain lock and file filtering', () => {
     const r = await explainProject(db, home, project, provider(project.name), { budget: 40 });
     expect(r.outcome).toBe('ok');
     expect(isExplaining(home, project.id)).toBe(false);
+  });
+
+  it('records a startedAt in the lock while an explain is running, readable across the run', async () => {
+    write('a.txt', 'one\n');
+    const init = await initProject(db, home, proj);
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+    const lock = join(init.dataDir, 'explain.lock');
+    const startedAt = '2026-09-27T10:00:00.000Z';
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, startedAt }));
+    expect(isExplaining(home, project.id)).toBe(true);
+    expect(explainingSince(home, project.id)).toBe(startedAt);
+
+    writeFileSync(lock, String(process.pid)); // legacy plain-pid lock: still live, no known start time
+    expect(isExplaining(home, project.id)).toBe(true);
+    expect(explainingSince(home, project.id)).toBe(null);
+
+    unlinkSync(lock);
+    expect(explainingSince(home, project.id)).toBe(null);
   });
 
   it('records filterReason on the digest file rows', async () => {

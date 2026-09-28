@@ -2,7 +2,9 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runInitCli, runProjectExplainCli, runProjectsCli, runStatusCli } from './project-cli.js';
+import { openProjectDb } from './datahome.js';
+import { listProjects } from './project.js';
+import { runConfigCli, runInitCli, runProjectExplainCli, runProjectsCli, runStatusCli } from './project-cli.js';
 
 function listFiles(dir: string, base = dir): string[] {
   const out: string[] = [];
@@ -64,6 +66,63 @@ describe('runInitCli', () => {
 
   it('fails without a path', async () => {
     expect(await runInitCli(['init'])).toBe(2);
+  });
+
+  it('registers a project with a non-default language', async () => {
+    write('a.txt', 'hi\n');
+    const code = await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo', '--language', 'ko']);
+    expect(code).toBe(0);
+    const { db } = openProjectDb(dbPath);
+    try {
+      expect(listProjects(db)[0]!.language).toBe('ko');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('rejects an unknown language', async () => {
+    write('a.txt', 'hi\n');
+    const code = await runInitCli(['init', proj, '--db', dbPath, '--language', 'fr']);
+    expect(code).toBe(2);
+    expect(errs.join('\n')).toContain('unknown language "fr"');
+  });
+});
+
+describe('runConfigCli', () => {
+  it('sets the language of an existing project', async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    logs = [];
+    const code = await runConfigCli(['config', 'demo', '--language', 'ko', '--db', dbPath]);
+    expect(code).toBe(0);
+    expect(logs.join('\n')).toContain('language set to ko');
+    const { db } = openProjectDb(dbPath);
+    try {
+      expect(listProjects(db)[0]!.language).toBe('ko');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('rejects an unknown language', async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    const code = await runConfigCli(['config', 'demo', '--language', 'fr', '--db', dbPath]);
+    expect(code).toBe(2);
+    expect(errs.join('\n')).toContain('unknown language "fr"');
+  });
+
+  it('fails for an unknown project', async () => {
+    const code = await runConfigCli(['config', 'nope', '--language', 'ko', '--db', dbPath]);
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toContain('no project "nope"');
+  });
+
+  it('requires --language', async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    const code = await runConfigCli(['config', 'demo', '--db', dbPath]);
+    expect(code).toBe(2);
   });
 });
 

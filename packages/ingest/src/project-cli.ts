@@ -1,15 +1,25 @@
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { EXPLAIN_LANGUAGES, type ExplainLanguage } from '@digestit/core';
 import { openProjectDb } from './datahome.js';
 import { DEFAULT_DAILY_BUDGET } from './scheduler.js';
 import { intOpt, providerFromArgs } from './watch.js';
 import {
   ProjectLockedError, explainProject, findProject, initProject, latestCheckpoint, listProjects,
-  projectStatus, retryDigest, type ExplainProjectResult,
+  projectStatus, retryDigest, updateProjectLanguage, type ExplainProjectResult,
 } from './project.js';
 import { buildContext, ensureContext, latestContextText } from './project-context.js';
 
-export const INIT_USAGE = 'usage: digest init <path> [--name <name>] [--context <file.md>] [--db <file>]';
+export const INIT_USAGE = 'usage: digest init <path> [--name <name>] [--context <file.md>] [--language <en|ko>] [--db <file>]';
+
+type LanguageResult = { value: ExplainLanguage; error?: undefined } | { value?: undefined; error: string };
+
+function parseLanguage(raw: string | undefined): LanguageResult | undefined {
+  if (raw === undefined) return undefined;
+  return (EXPLAIN_LANGUAGES as readonly string[]).includes(raw)
+    ? { value: raw as ExplainLanguage }
+    : { error: `unknown language "${raw}"; expected one of: ${EXPLAIN_LANGUAGES.join(', ')}` };
+}
 
 function summarizeSkipped(skipped: readonly { path: string; reason: string }[]): string {
   const counts = new Map<string, number>();
@@ -23,7 +33,7 @@ export async function runInitCli(argv: string[]): Promise<number> {
     ({ values, positionals } = parseArgs({
       args: argv.slice(1),
       allowPositionals: true,
-      options: { name: { type: 'string' }, context: { type: 'string' }, db: { type: 'string' } },
+      options: { name: { type: 'string' }, context: { type: 'string' }, language: { type: 'string' }, db: { type: 'string' } },
     }));
   } catch (e) {
     console.error(`${e instanceof Error ? e.message : String(e)}\n${INIT_USAGE}`);
@@ -34,9 +44,14 @@ export async function runInitCli(argv: string[]): Promise<number> {
     console.error(INIT_USAGE);
     return 2;
   }
+  const language = parseLanguage(values.language);
+  if (language?.error) {
+    console.error(language.error);
+    return 2;
+  }
   const { db, home } = openProjectDb(values.db ?? process.env.DIGESTIT_DB);
   try {
-    const r = await initProject(db, home, path, { name: values.name, contextPath: values.context });
+    const r = await initProject(db, home, path, { name: values.name, contextPath: values.context, language: language?.value });
     if (!r.created) {
       console.log(`project "${r.name}" (id ${r.repoId}) is already registered at ${r.path}`);
       console.log(`data dir: ${r.dataDir}`);
@@ -77,6 +92,46 @@ export async function runProjectsCli(argv: string[]): Promise<number> {
       const latest = latestCheckpoint(db, p.id);
       console.log(`${p.id}\t${p.name}\t${p.path}\t${latest ? `checkpoint #${latest.seq} at ${latest.takenAt}` : 'no checkpoints'}`);
     }
+    return 0;
+  } finally {
+    db.close();
+  }
+}
+
+export const CONFIG_USAGE = 'usage: digest config <project> --language <en|ko> [--db <file>]';
+
+/** `digest config <project> --language <l>`: updates a project setting. Only `--language` today. */
+export async function runConfigCli(argv: string[]): Promise<number> {
+  let values, positionals;
+  try {
+    ({ values, positionals } = parseArgs({
+      args: argv.slice(1),
+      allowPositionals: true,
+      options: { language: { type: 'string' }, db: { type: 'string' } },
+    }));
+  } catch (e) {
+    console.error(`${e instanceof Error ? e.message : String(e)}\n${CONFIG_USAGE}`);
+    return 2;
+  }
+  if (values.language === undefined) {
+    console.error(CONFIG_USAGE);
+    return 2;
+  }
+  const parsed = parseLanguage(values.language);
+  if (parsed?.error) {
+    console.error(parsed.error);
+    return 2;
+  }
+  const language = parsed!.value!;
+  const { db } = openProjectDb(values.db ?? process.env.DIGESTIT_DB);
+  try {
+    const found = findProject(db, positionals[0]);
+    if ('error' in found) {
+      console.error(found.error);
+      return 1;
+    }
+    updateProjectLanguage(db, found.id, language);
+    console.log(`${found.name}: language set to ${language}`);
     return 0;
   } finally {
     db.close();

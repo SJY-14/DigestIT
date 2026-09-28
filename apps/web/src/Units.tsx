@@ -4,6 +4,7 @@ import {
   type Level, type OpenedVia, type UnitState, type WorkUnitDetail, type WorkUnitMember, type WorkUnitSummary,
 } from './api.js';
 import { formatDate, relativeTime, shortSha } from './format.js';
+import { plural } from './copy.js';
 import { unitText, type ReviewState } from './feed.js';
 import { Panel } from './Panel.js';
 
@@ -27,7 +28,7 @@ export function DirtyChip({ unit }: { unit: WorkUnitSummary }) {
   const del = d.reduce((n, x) => n + x.deletions, 0);
   return (
     <span className="stats" title="Uncommitted changes in a worktree on this branch">
-      in progress: {files} {files === 1 ? 'file' : 'files'} <span className="add">+{add}</span> <span className="del">−{del}</span>
+      in progress: {plural(files, 'file')} <span className="add">+{add}</span> <span className="del">−{del}</span>
     </span>
   );
 }
@@ -101,7 +102,7 @@ export function UnitRow({ unit, review, selected, compact, onSelect, onOpenCommi
           <span className="meta">
             <StateBadge state={unit.state} />
             <span className="key">{unit.key}</span>
-            <span>{unit.commitCount} {unit.commitCount === 1 ? 'commit' : 'commits'}</span>
+            <span>{plural(unit.commitCount, 'commit')}</span>
             <time dateTime={unit.lastCommitAt} title={formatDate(unit.lastCommitAt)}>{relativeTime(unit.lastCommitAt)}</time>
             {review?.decidedBy === 'reviewed' && <span>reviewed</span>}
             {unit.pendingBudget && <span className="pending-chip">pending (budget)</span>}
@@ -232,7 +233,7 @@ export function UnitPanel({ unit, review, level, onLevel, onClose, onEvent, via 
         <div className="unit-facts">
           <StateBadge state={unit.state} />
           <span className="key">{unit.key}</span>
-          <span className="muted">{unit.commitCount} {unit.commitCount === 1 ? 'commit' : 'commits'}</span>
+          <span className="muted">{plural(unit.commitCount, 'commit')}</span>
           {unit.pendingBudget && <span className="pending-chip">pending (budget)</span>}
           <DirtyChip unit={unit} />
         </div>
