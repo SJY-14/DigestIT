@@ -49,21 +49,6 @@ export interface DigestL2Content {
   notAnalysed: string[];
 }
 
-export interface AreaNote {
-  path: string;
-  side: 'new' | 'old';
-  startLine: number;
-  endLine: number;
-  note: string;
-}
-/** Lazy L3 for one L2 area. */
-export interface AreaL3Content {
-  why: string;
-  design: string;
-  risks: string[];
-  notes: AreaNote[];
-}
-
 // ---- UX v3 (DIG-47, docs/ux-v3.md): L3 walkthrough and explanation language ----
 
 /** Language the explanations (L0–L3, context, step titles) are written in. Code identifiers stay as written. */
@@ -92,7 +77,7 @@ export interface WalkthroughStep {
   mechanical: boolean;
 }
 
-/** Lazy L3 for one L2 area (replaces `AreaL3Content` in DIG-48). */
+/** Lazy L3 for one L2 area: a step-by-step walkthrough of its hunks (DIG-48). */
 export interface AreaWalkthrough {
   /** 2–3 sentences on the area's change as a whole. */
   overview: string;
@@ -184,7 +169,8 @@ export interface AreaDetailDto {
   digestId: number;
   areaId: string;
   status: ExplanationStatus | 'none';
-  l3: AreaL3Content | null;
+  /** `null` until generated; rows from an older area prompt version read as `status: 'none'`. */
+  l3: AreaWalkthrough | null;
   files: (DigestFileDto & { patch: string | null })[];
 }
 

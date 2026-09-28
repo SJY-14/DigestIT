@@ -1,0 +1,34 @@
+{
+ "overview": "This area covers App.tsx and Settings.tsx. The stub provider lists each file's hunks without reading them.",
+ "steps": [
+  {
+   "title": "Edit App.tsx",
+   "body": "Edits apps/web/src/App.tsx in 2 hunks, adding 2 lines. The stub provider does not explain why.",
+   "hunks": [
+    {
+     "path": "apps/web/src/App.tsx",
+     "hunk": 1
+    },
+    {
+     "path": "apps/web/src/App.tsx",
+     "hunk": 2
+    }
+   ],
+   "mechanical": false
+  },
+  {
+   "title": "Add Settings.tsx",
+   "body": "Adds apps/web/src/Settings.tsx in 1 hunk, adding 2 lines. The stub provider does not explain why.",
+   "hunks": [
+    {
+     "path": "apps/web/src/Settings.tsx",
+     "hunk": 1
+    }
+   ],
+   "mechanical": false
+  }
+ ],
+ "check": [
+  "Read apps/web/src/App.tsx first; it is the largest edit in this area."
+ ]
+}

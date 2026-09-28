@@ -1,75 +1,26 @@
+import { splitHunks, walkPatch, type PatchHunk, type PatchLine } from '@digestit/core/hunks';
+import type { ProviderFile } from './provider.js';
+
 /** Line numbers that exist on each side of a per-file unified patch. */
 export interface FileLines {
   newLines: Set<number>;
   oldLines: Set<number>;
 }
 
-const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
-
-interface NumberedLine {
-  kind: 'header' | 'hunk' | ' ' | '+' | '-';
-  text: string;
-  oldNo?: number;
-  newNo?: number;
-}
-
-/**
- * Walks a patch using hunk counts, so content lines that look like headers
- * ("--- x") are not misread. A hunk ends early at an unknown prefix (e.g. the
- * truncation marker), so only lines the model actually saw are indexed.
- */
-function walk(patch: string): NumberedLine[] {
-  const out: NumberedLine[] = [];
-  let oldNo = 0;
-  let newNo = 0;
-  let oldLeft = 0;
-  let newLeft = 0;
-  for (const line of patch.split('\n')) {
-    if (oldLeft > 0 || newLeft > 0) {
-      const c = line[0];
-      if (c === ' ' && oldLeft > 0 && newLeft > 0) {
-        out.push({ kind: ' ', text: line.slice(1), oldNo, newNo });
-        oldNo++; newNo++; oldLeft--; newLeft--;
-        continue;
-      }
-      if (c === '-' && oldLeft > 0) {
-        out.push({ kind: '-', text: line.slice(1), oldNo });
-        oldNo++; oldLeft--;
-        continue;
-      }
-      if (c === '+' && newLeft > 0) {
-        out.push({ kind: '+', text: line.slice(1), newNo });
-        newNo++; newLeft--;
-        continue;
-      }
-      if (c === '\\') {
-        out.push({ kind: 'header', text: line });
-        continue;
-      }
-      oldLeft = 0;
-      newLeft = 0;
-    }
-    const m = HUNK.exec(line);
-    if (m) {
-      oldNo = Number(m[1]);
-      newNo = Number(m[3]);
-      oldLeft = m[2] === undefined ? 1 : Number(m[2]);
-      newLeft = m[4] === undefined ? 1 : Number(m[4]);
-      out.push({ kind: 'hunk', text: line });
-    } else {
-      out.push({ kind: 'header', text: line });
-    }
-  }
-  return out;
-}
-
 export function indexPatch(patch: string): FileLines {
   const r: FileLines = { newLines: new Set(), oldLines: new Set() };
-  for (const l of walk(patch)) {
+  for (const l of walkPatch(patch)) {
     if (l.newNo !== undefined) r.newLines.add(l.newNo);
     if (l.oldNo !== undefined) r.oldLines.add(l.oldNo);
   }
   return r;
+}
+
+function numberLine(l: PatchLine): string | null {
+  if (l.kind === '+' || l.kind === ' ') return `${l.newNo}${l.kind} ${l.text}`;
+  if (l.kind === '-') return `${l.oldNo}- ${l.text}`;
+  if (l.kind === '\\') return l.text;
+  return null;
 }
 
 /**
@@ -79,11 +30,48 @@ export function indexPatch(patch: string): FileLines {
  */
 export function numberPatch(patch: string): string {
   const out: string[] = [];
-  for (const l of walk(patch)) {
+  for (const l of walkPatch(patch)) {
     if (l.kind === 'hunk') out.push(l.text);
-    else if (l.kind === '+' || l.kind === ' ') out.push(`${l.newNo}${l.kind} ${l.text}`);
-    else if (l.kind === '-') out.push(`${l.oldNo}- ${l.text}`);
-    else if (l.text.startsWith('\\') || l.text.startsWith('[...')) out.push(l.text);
+    else if (l.kind === 'header') {
+      if (l.text.startsWith('[...')) out.push(l.text);
+    } else out.push(numberLine(l)!);
   }
   return out.join('\n');
+}
+
+/**
+ * The hunks of a prepared patch that the model actually sees: at least one
+ * content line survived the token budget. Numbering is `splitHunks`' own, so
+ * "hunk n" means the same hunk in the prompt, the validator and the UI.
+ */
+export function promptHunks(patch: string | null): PatchHunk[] {
+  return patch === null ? [] : splitHunks(patch).filter((h) => h.lines.length > 0);
+}
+
+/**
+ * Like `numberPatch`, but each hunk is labelled `hunk n` for the area
+ * walkthrough prompt, and hunks with no visible line are left out. A hunk cut
+ * by the token budget ends with the truncation marker.
+ */
+export function renderHunks(patch: string): string {
+  const out: string[] = [];
+  const hunks = promptHunks(patch);
+  for (const h of hunks) {
+    out.push(`hunk ${h.index}  ${h.header}`);
+    for (const l of h.lines) out.push(numberLine(l)!);
+  }
+  const all = splitHunks(patch);
+  const last = hunks[hunks.length - 1];
+  if (last && (!last.complete || all.length > hunks.length || /^\[\.\.\./m.test(patch))) {
+    out.push('[... the rest of this file was cut to fit the token budget ...]');
+  }
+  return out.join('\n');
+}
+
+/** The hunk numbers the area prompt shows, per analysed file, in file order; files with no visible hunk are left out. */
+export function areaHunks(files: readonly ProviderFile[]): { path: string; hunks: number[] }[] {
+  return files
+    .filter((f) => f.filteredReason === null && f.patch !== null)
+    .map((f) => ({ path: f.path, hunks: promptHunks(f.patch).map((h) => h.index) }))
+    .filter((f) => f.hunks.length > 0);
 }

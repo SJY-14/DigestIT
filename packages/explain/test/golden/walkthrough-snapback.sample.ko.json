@@ -1,0 +1,306 @@
+{
+ "language": "ko",
+ "provider": {
+  "id": "claude-subagent-replay",
+  "model": "claude-opus-5-5"
+ },
+ "digest": {
+  "outcome": "ok",
+  "calls": 1,
+  "l0": {
+   "text": "사진 백업이 일시적 네트워크 오류에 자동 재시도하고, 파일 하나가 실패해도 전체 실행이 멈추지 않습니다."
+  },
+  "l1": {
+   "userVisible": true,
+   "bullets": [
+    "새 --retries <n> 플래그(또는 SNAPBACK_RETRIES, 0~10, 기본 3)로 네트워크 오류나 5xx 응답 때 파일별로 200ms부터 두 배씩 늘려 재시도합니다.",
+    "한 파일이 실패해도 나머지 업로드는 계속되고, 끝에 실패한 파일과 시도 횟수를 출력합니다.",
+    "실패한 파일이 하나라도 있으면 종료 코드가 2가 되고, 요약은 \"uploaded N of M files\"로 바뀝니다."
+   ]
+  },
+  "l2": {
+   "items": [
+    {
+     "id": "retry-backoff",
+     "paths": [
+      "src/retry.ts",
+      "test/retry.test.ts"
+     ],
+     "title": "지수 백오프 재시도 도우미",
+     "effect": "일시적 네트워크 오류와 5xx 응답은 다시 시도하고, 4xx 응답은 바로 실패시킵니다.",
+     "how": "새 withRetry가 실패할 때마다 200ms부터 두 배씩, 최대 10초까지 기다리며 대기의 절반 이상에 지터를 줍니다. isRetryable은 ECONNRESET 등 네트워크 코드와 5xx만 재시도 대상으로 봅니다.",
+     "why": "4xx(잘못된 키, 권한 없음)는 다시 보내도 성공하지 않는다고 주석에 적혀 있습니다. sleep과 random을 주입받아 테스트가 대기 없이 지연값을 검증합니다."
+    },
+    {
+     "id": "upload-retry",
+     "paths": [
+      "src/upload.ts",
+      "test/upload.test.ts"
+     ],
+     "title": "업로드 재시도와 UploadError",
+     "effect": "재시도를 모두 소진한 업로드는 어떤 파일이 몇 번 시도했는지 담은 UploadError로 실패합니다.",
+     "how": "uploadFile이 retries 인자(기본 0)를 받아 client.put을 withRetry로 감싸고 시도 횟수를 세며, 최종 실패는 filePath, attempts, cause를 담은 UploadError로 던집니다.",
+     "why": "cli.ts가 실패 목록에 파일 경로와 시도 횟수를 찍으려면 오류에 그 정보가 필요합니다. uploadFile의 기본값은 0이라 config를 거치지 않는 호출부는 재시도하지 않습니다."
+    },
+    {
+     "id": "partial-failure",
+     "paths": [
+      "src/queue.ts",
+      "src/cli.ts"
+     ],
+     "title": "실패해도 계속되는 업로드 큐",
+     "effect": "한 파일이 실패해도 나머지는 계속 올라가고, 끝에 실패 목록을 출력하며 종료 코드 2로 끝납니다.",
+     "how": "runQueue가 작업마다 try/catch로 감싸 Outcome<R> 배열을 돌려줍니다. main은 --retries를 파싱하고, 실패를 모아 console.error로 찍은 뒤 2를 반환합니다.",
+     "why": "README에 따르면 예전에는 첫 실패 업로드가 실행 전체를 멈췄습니다. 이제 사진 한 장 때문에 나머지 백업이 버려지지 않고, 종료 코드로 부분 실패를 구분할 수 있습니다."
+    },
+    {
+     "id": "retries-option",
+     "paths": [
+      "src/config.ts",
+      "README.md"
+     ],
+     "title": "--retries 옵션과 SNAPBACK_RETRIES 설정",
+     "effect": "사용자가 --retries 플래그나 SNAPBACK_RETRIES로 파일당 재시도 횟수를 0~10 사이로 정하며, 기본값은 3입니다.",
+     "how": "loadConfig가 args.retries, SNAPBACK_RETRIES, 기본값 3 순으로 retries를 읽고, 0부터 MAX_RETRIES(10) 사이 정수가 아니면 예외를 던집니다. README에 옵션과 실패 동작을 적었습니다.",
+     "why": "잘못된 값을 시작 시점에 막아 재시도가 지나치게 늘어나지 않게 합니다. 상한을 10으로 정한 근거는 diff에 없어 티켓이나 작성자 확인이 필요합니다."
+    }
+   ],
+   "notAnalysed": []
+  }
+ },
+ "areas": [
+  {
+   "id": "retry-backoff",
+   "outcome": "ok",
+   "calls": 1,
+   "walkthrough": {
+    "overview": "새 src/retry.ts의 withRetry는 비동기 호출을 감싸 일시적 네트워크 오류와 5xx 응답에 지수 백오프로 다시 시도하고, 4xx는 즉시 실패시킵니다. 성공하면 결과와 함께 시도 횟수 attempts를 돌려줍니다. sleep과 random을 주입받을 수 있어 테스트가 실제로 기다리지 않고 지연값을 검증합니다.",
+    "steps": [
+     {
+      "title": "재시도할 오류만 골라내는 isRetryable",
+      "body": "isRetryable은 오류 객체의 code가 RETRYABLE_CODES(ECONNRESET, ETIMEDOUT, EAI_AGAIN, EPIPE)에 있거나 status가 500 이상인 숫자일 때만 true를 돌려줍니다. 4xx를 포함한 나머지는 모두 false입니다. 주석에 적힌 대로 잘못된 키나 권한 없음 같은 4xx는 다시 보내도 성공하지 않으니 바로 실패시킵니다. 대신 목록에 없는 네트워크 코드나 문자열로 된 status도 재시도하지 않는 보수적인 선택을 받아들입니다.",
+      "hunks": [
+       {
+        "path": "src/retry.ts",
+        "hunk": 1
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "지수 백오프와 위쪽 절반 지터",
+      "body": "withRetry는 fn이 성공하면 { value, attempts }를 돌려줍니다. 실패했을 때 attempt가 opts.retries보다 크거나 isRetryable이 false면 원래 오류를 그대로 던집니다. 그래서 retries가 3이면 최대 4번 호출합니다. delay는 base * 2 ** (attempt - 1)을 max로 자른 값이고, 실제 대기는 delay / 2 + random() * (delay / 2)라서 delay의 절반에서 delay 사이입니다. 기본값은 baseDelayMs 200, maxDelayMs 10_000입니다. 지터를 위쪽 절반으로 제한한 이유는 diff에 없으니 설계 메모나 티켓을 확인해야 합니다.",
+      "hunks": [
+       {
+        "path": "src/retry.ts",
+        "hunk": 1
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "테스트용 sleep과 random 주입",
+      "body": "RetryOptions에 선택 항목 sleep과 random이 있고, 없으면 setTimeout 기반 Promise와 Math.random을 씁니다. 운영 코드는 기본값을 그대로 쓰고, 테스트는 대기 없는 함수나 고정값을 넣어 지연 계산을 결정적으로 검증합니다. 전역 타이머를 가짜로 바꾸지 않아도 되는 대신 옵션 인터페이스에 테스트 전용 필드가 드러납니다.",
+      "hunks": [
+       {
+        "path": "src/retry.ts",
+        "hunk": 1
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "재시도, 4xx, 지연 상한 테스트",
+      "body": "test/retry.test.ts는 noSleep을 넣어 기다리지 않고 검증합니다. ECONNRESET을 두 번 던진 뒤 성공하면 attempts가 3이고, 403은 한 번만 호출된 뒤 'denied'로 거부됩니다. random을 1로 고정하고 baseDelayMs 100, maxDelayMs 300으로 503을 계속 던지면 지연이 [100, 200, 300, 300]으로 두 배씩 늘다가 상한에서 멈춥니다. isRetryable은 502와 ETIMEDOUT을 받아들이고 404는 거부합니다. random이 1이면 대기가 delay 전체가 되므로 지터의 하한은 검증하지 않습니다.",
+      "hunks": [
+       {
+        "path": "test/retry.test.ts",
+        "hunk": 1
+       }
+      ],
+      "mechanical": false
+     }
+    ],
+    "check": [
+     "withRetry는 실패하면 attempts 없이 원래 오류만 던집니다. 실패한 파일의 시도 횟수를 출력하는 호출부가 이 값을 어디서 얻는지 확인하세요.",
+     "isRetryable은 err가 null이나 undefined면 e.code에 접근하다 TypeError를 냅니다. 업로드 코드가 이런 값을 던질 수 없는지 확인하세요.",
+     "업로드 클라이언트의 네트워크 오류가 최상위 code 속성에 ECONNRESET 같은 값을 담는지 확인하세요. cause 안에만 있으면 재시도하지 않습니다.",
+     "retries가 음수이거나 정수가 아니어도 withRetry는 검사하지 않습니다. 0~10 범위 검증이 플래그와 SNAPBACK_RETRIES 파싱 쪽에 있는지 확인하세요.",
+     "retries 0, 재시도를 다 쓴 뒤 마지막 오류 전파, random 0일 때 delay/2 하한을 검증하는 테스트가 없습니다."
+    ]
+   }
+  },
+  {
+   "id": "upload-retry",
+   "outcome": "ok",
+   "calls": 1,
+   "walkthrough": {
+    "overview": "업로드가 재시도를 모두 소진하면 이제 어떤 파일이 몇 번 시도했는지 담은 UploadError로 실패합니다. cli.ts가 끝에 실패 목록을 찍으려면 오류에 파일 경로와 시도 횟수가 있어야 하기 때문입니다. uploadFile의 retries 기본값은 0이라 config를 거치지 않는 호출부는 재시도하지 않습니다.",
+    "steps": [
+     {
+      "title": "시도 정보를 담는 UploadError 추가",
+      "body": "새 UploadError는 Error를 상속하고 생성자 인자 filePath, attempts, cause를 readonly 필드로 보관합니다. 메시지는 \"upload of <경로> failed after N attempts\" 형식이며 attempts가 1이면 단수형 attempt를 씁니다. 이전에는 client.put이 던진 원래 오류가 그대로 올라와서 어느 파일이 몇 번 실패했는지 알 수 없었습니다. 원래 오류는 cause에 남으므로 호출부에서 근본 원인도 확인할 수 있습니다.",
+      "hunks": [
+       {
+        "path": "src/upload.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "withRetry로 put을 감싸고 시도 횟수 집계",
+      "body": "uploadFile은 네 번째 인자 retries(기본 0)를 받고, retry.js에서 가져온 withRetry에 client.put 호출과 { retries }를 넘깁니다. 콜백이 불릴 때마다 attempts를 올리므로, withRetry가 결국 던지면 실제 시도 횟수를 담아 UploadError(filePath, attempts, err)로 바꿔 던집니다. 기본값을 0으로 둔 덕분에 config를 거치지 않는 기존 호출부는 이전처럼 한 번만 시도합니다. 성공하면 이전과 같이 key를 반환합니다.",
+      "hunks": [
+       {
+        "path": "src/upload.ts",
+        "hunk": 1
+       },
+       {
+        "path": "src/upload.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "매개변수 path를 filePath로 이름 변경",
+      "body": "objectKey와 uploadFile의 매개변수 이름을 path에서 filePath로 바꿨습니다. 동작은 달라지지 않습니다.",
+      "hunks": [
+       {
+        "path": "src/upload.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": true
+     },
+     {
+      "title": "모든 시도 실패 시 UploadError 검증",
+      "body": "test/upload.test.ts는 UploadError와 uploadFile을 추가로 import합니다. put이 항상 ECONNRESET 오류를 던지는 가짜 client를 만들고 uploadFile을 retries 0으로 호출합니다. 그 결과가 UploadError이고 attempts가 1인지 확인합니다. readFile이 성공해야 하므로 테스트 파일 자신(__filename)을 업로드 대상으로 씁니다. retries가 1 이상일 때의 시도 횟수는 이 테스트로 확인되지 않습니다.",
+      "hunks": [
+       {
+        "path": "test/upload.test.ts",
+        "hunk": 1
+       },
+       {
+        "path": "test/upload.test.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     }
+    ],
+    "check": [
+     "readFile 실패는 try 블록 밖에서 나므로 UploadError로 감싸지지 않습니다. cli.ts의 실패 목록이 이런 오류도 처리하는지 확인하세요.",
+     "retries가 1 이상일 때 attempts가 retries+1로 집계되는지 검증하는 테스트가 없습니다. withRetry 재시도 경로를 검증하는 케이스를 추가하세요.",
+     "uploadFile을 호출하는 곳이 config의 retries 값을 실제로 넘기는지 확인하세요. 빠뜨리면 기본값 0 때문에 재시도하지 않습니다.",
+     "UploadError가 readonly cause를 직접 선언해 Error.cause와 겹칩니다. 현재 tsconfig의 lib 설정에서 타입 충돌이 없는지 확인하세요."
+    ]
+   }
+  },
+  {
+   "id": "partial-failure",
+   "outcome": "ok",
+   "calls": 1,
+   "walkthrough": {
+    "overview": "runQueue가 이제 작업마다 예외를 잡아 Outcome<R> 배열로 돌려주므로, 파일 하나가 실패해도 나머지 업로드는 계속됩니다. main은 이 결과에서 실패만 모아 console.error로 출력하고, 실패가 하나라도 있으면 종료 코드 2를 반환합니다. 새 --retries 플래그도 파싱해 uploadFile로 재시도 횟수를 넘깁니다.",
+    "steps": [
+     {
+      "title": "작업별 실패를 Outcome으로 담는 runQueue",
+      "body": "runQueue는 이제 work 호출을 하나씩 try/catch로 감쌉니다. 성공하면 { ok: true, value }를, 실패하면 { ok: false, error }를 results[i]에 넣습니다. 반환형도 Promise<R[]>에서 Promise<Outcome<R>[]>로 바뀌었습니다. 예전에는 work가 던진 예외가 그대로 전파되었고, README에 따르면 첫 실패 업로드가 실행 전체를 멈췄습니다. 예외를 값으로 바꾸면 워커가 계속 next로 다음 항목을 가져가고, 결과 순서는 items 순서를 그대로 따릅니다. 대신 ok 확인과 unknown 타입인 error를 좁히는 일은 호출자가 맡아야 합니다.",
+      "hunks": [
+       {
+        "path": "src/queue.ts",
+        "hunk": 1
+       },
+       {
+        "path": "src/queue.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "실패를 모아 출력하고 종료 코드 2 반환",
+      "body": "main은 runQueue 결과에서 ok가 false인 항목의 error만 flatMap으로 모아 failed를 만듭니다. 요약 문구는 uploaded N files에서 uploaded N of M files로 바뀌어 성공 수와 전체 수를 함께 보여 줍니다. 실패는 하나씩 console.error로 출력합니다. UploadError면 filePath와 attempts를, 다른 예외면 String(err)만 찍습니다. 예전에는 늘 0을 반환했지만, 이제 실패가 하나라도 있으면 2를 반환해 스크립트가 부분 실패를 구분할 수 있습니다. uploadFile에는 네 번째 인자로 config.retries를 넘겨 재시도 횟수를 전달합니다.",
+      "hunks": [
+       {
+        "path": "src/cli.ts",
+        "hunk": 3
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "--retries 파싱과 UploadError 가져오기",
+      "body": "main의 args 타입에 retries가 추가되었습니다. 인자 루프는 --concurrency와 같은 방식으로 --retries 다음 값을 Number로 바꿔 args.retries에 넣습니다. upload.js에서 UploadError를 새로 가져온 것은 실패를 출력할 때 instanceof로 파일 경로와 시도 횟수를 꺼내기 위해서입니다. args.retries가 loadConfig를 거쳐 config.retries가 되는 과정과 0~10 범위 검사는 이 영역 diff에 없습니다. config.ts 변경을 보면 확인할 수 있습니다.",
+      "hunks": [
+       {
+        "path": "src/cli.ts",
+        "hunk": 1
+       },
+       {
+        "path": "src/cli.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     }
+    ],
+    "check": [
+     "--retries abc처럼 숫자가 아닌 값을 주면 Number가 NaN을 만듭니다. loadConfig가 NaN과 0~10 범위를 걸러 내는지 확인해야 합니다.",
+     "UploadError가 아닌 예외는 String(err)만 출력되어 어떤 파일이 실패했는지 알 수 없습니다. uploadFile이 모든 실패를 UploadError로 감싸는지 확인해야 합니다.",
+     "runQueue 반환형이 Outcome<R>[]로 바뀌었습니다. main 말고 다른 호출자가 있다면 함께 고쳐야 합니다.",
+     "일부 실패 시 종료 코드 2, uploaded N of M files 문구, 실패 목록 출력을 검증하는 테스트가 이 diff에 없습니다."
+    ]
+   }
+  },
+  {
+   "id": "retries-option",
+   "outcome": "ok",
+   "calls": 2,
+   "walkthrough": {
+    "overview": "loadConfig가 파일당 재시도 횟수 retries를 --retries 플래그, SNAPBACK_RETRIES 환경 변수, 기본값 3 순서로 읽고 0부터 MAX_RETRIES(10) 사이 정수만 받습니다. 잘못된 값은 실행 시작 시점에 예외로 막아 재시도가 지나치게 늘어나지 않게 합니다. README에는 새 옵션과 함께, 파일이 실패해도 나머지를 계속 올리는 동작을 적었습니다.",
+    "steps": [
+     {
+      "title": "retries 읽는 순서와 범위 검증",
+      "body": "Config 인터페이스에 retries: number 필드를 추가하고 상한을 MAX_RETRIES = 10 상수로 내보냅니다. loadConfig는 args.retries가 있으면 그 값을 쓰고, 없으면 env.SNAPBACK_RETRIES를 Number로 바꾼 값을, 둘 다 없으면 3을 씁니다. Number.isInteger가 아니거나 0보다 작거나 MAX_RETRIES보다 크면 'retries must be an integer from 0 to 10' 예외를 던져 시작 시점에 멈춥니다. 이전에는 { bucket, concurrency }만 반환했습니다. 바로 위 concurrency 검증과 같은 방식이라 설정 오류 처리가 일관됩니다. ?? 연산자는 undefined일 때만 기본값으로 넘어가므로 SNAPBACK_RETRIES가 빈 문자열이면 Number('')가 0이 되어 재시도 없이 통과합니다. 상한 10을 고른 근거는 diff에 없어 티켓이나 작성자 확인이 필요합니다.",
+      "hunks": [
+       {
+        "path": "src/config.ts",
+        "hunk": 1
+       },
+       {
+        "path": "src/config.ts",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     },
+     {
+      "title": "README에 옵션과 실패 동작 설명",
+      "body": "사용 예시 명령에 --retries 3을 넣고, Options 목록에 --retries 항목을 추가했습니다. 네트워크 오류나 5xx 응답 뒤 파일당 재시도하고, 범위는 0-10, 기본값은 3이며 SNAPBACK_RETRIES로도 정할 수 있다고 적었습니다. 대기 시간은 200 ms, 400 ms, 800 ms로 두 배씩 늘고 지터가 더해지며 최대 10 s입니다. 예전 문장 'The first failed upload stops the run'은 지우고, 끝까지 실패한 파일은 마지막에 나열하며 나머지 파일은 계속 올리고, 하나라도 실패하면 종료 코드가 2라고 바꿨습니다. 백오프와 종료 코드는 이 영역 diff에 구현이 없으므로 업로드 코드 쪽 영역과 문서가 맞는지 대조해야 합니다.",
+      "hunks": [
+       {
+        "path": "README.md",
+        "hunk": 1
+       },
+       {
+        "path": "README.md",
+        "hunk": 2
+       }
+      ],
+      "mechanical": false
+     }
+    ],
+    "check": [
+     "SNAPBACK_RETRIES가 빈 문자열이면 Number('')가 0이 되어 오류 없이 재시도 0회로 통과하는지 확인해야 합니다.",
+     "loadConfig의 retries 경계값 0, 10, 11과 음수, 소수, 숫자가 아닌 문자열에 대한 테스트가 diff에 보이지 않습니다.",
+     "Config에 retries가 필수 필드로 추가됐으므로 Config 객체를 직접 만드는 호출부나 테스트가 컴파일되는지 확인해야 합니다.",
+     "README의 200 ms 시작, 최대 10 s 대기, 종료 코드 2 설명이 실제 업로드 구현과 일치하는지 확인해야 합니다.",
+     "MAX_RETRIES를 10으로 정한 근거를 티켓이나 작성자에게 확인해야 합니다."
+    ]
+   }
+  }
+ ]
+}

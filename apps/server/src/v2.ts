@@ -17,7 +17,7 @@ import {
   projectStatus, retryDigest, type ProjectRow,
 } from '@digestit/ingest';
 import {
-  createProvider, explainArea,
+  AREA_PROMPT_VERSION, createProvider, explainArea,
   type DigestOutcome, type ExplanationProvider,
 } from '@digestit/explain';
 
@@ -244,10 +244,11 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
   function loadAreaDetail(digestId: number, areaId: string, l2: DigestL2Content): Row | { error: 'not_found' } {
     const item = l2.items.find((it) => it.id === areaId);
     if (!item) return { error: 'not_found' };
+    // Only the current walkthrough shape: rows from an older area prompt read as 'none' and are regenerated on request.
     const row = db.prepare(
-      `SELECT content, status FROM area_explanation WHERE change_unit_id = ? AND area_id = ?
+      `SELECT content, status FROM area_explanation WHERE change_unit_id = ? AND area_id = ? AND prompt_version = ?
        ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`,
-    ).get(digestId, areaId) as { content: string; status: ExplanationStatus } | undefined;
+    ).get(digestId, areaId, AREA_PROMPT_VERSION) as { content: string; status: ExplanationStatus } | undefined;
     const files = loadFiles(digestId, item.paths).map((f) => ({ ...fileDto(f), patch: (f.patch as string | null) ?? null }));
     return {
       digestId,

@@ -342,7 +342,16 @@ describe('POST /api/projects/:id/explain and the digest/area GETs', () => {
     expect(areaExplain.statusCode).toBe(200);
     const areaAfter = areaExplain.json();
     expect(areaAfter.status).toBe('ok');
-    expect(areaAfter.l3.why).toBeTruthy();
+    expect(areaAfter.l3.overview).toBeTruthy();
+    expect(areaAfter.l3.steps.length).toBeGreaterThan(0);
+
+    // A row from the old why/design/risks/notes prompt (a1) is not shown: it reads as 'none' until regenerated.
+    db.prepare('DELETE FROM area_explanation').run();
+    db.prepare(
+      `INSERT INTO area_explanation (change_unit_id, area_id, content, status, provider, model, prompt_version, input_hash, created_at)
+       VALUES (?, 'src', '{"why":"x","design":"y","risks":[],"notes":[]}', 'ok', 'stub', 'stub-1', 'a1', 'h', '2026-09-01T00:00:00Z')`,
+    ).run(digestId);
+    expect((await get(app, `/api/digests/${digestId}/areas/src`)).json()).toMatchObject({ status: 'none', l3: null });
 
     expect((await get(app, `/api/digests/${digestId}/areas/nope`)).statusCode).toBe(404);
     expect((await get(app, '/api/digests/999')).statusCode).toBe(404);

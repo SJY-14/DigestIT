@@ -184,8 +184,7 @@ export const fixtureArea: AreaDetailDto = {
   digestId: fixtureDigest.id,
   areaId: 'graph-pane',
   status: 'ok',
-  // Cast: AreaDetailDto.l3 switches to AreaWalkthrough with DIG-48.
-  l3: fixtureWalkthrough as unknown as AreaDetailDto['l3'],
+  l3: fixtureWalkthrough,
   files: [
     { ...files[0]!, additions: 32, deletions: 2, patch: graphPatch },
     { path: 'packages/core/src/graphLayout.ts', oldPath: null, status: 'M', additions: 4, deletions: 3, filteredReason: null, patch: layoutPatch },
