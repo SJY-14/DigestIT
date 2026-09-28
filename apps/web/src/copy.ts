@@ -93,13 +93,14 @@ export function contextSummary(
   return `${built}${from}${notes}`;
 }
 
-/** Explain outcomes that land back on the header instead of a new digest. */
+/** Explain outcomes that land back on the header instead of a new digest. `detail`, when given,
+ * is already a user-facing sentence (see `apiErrorMessage` below), not a raw server code. */
 export function explainOutcomeMessage(
   outcome: 'error' | 'budget' | 'no_changes', detail: string | undefined, resetsLabel: string,
 ): string {
   if (outcome === 'no_changes') return 'Nothing changed since the last check.';
   if (outcome === 'budget') return `Daily budget used up. It resets ${resetsLabel}.`;
-  return `Explain failed${detail ? `: ${detail}` : ''}. Try again.`;
+  return detail ?? 'Explain failed. Try again.';
 }
 
 // ---- Digest picker (DIG-49): one row per digest ----
@@ -132,3 +133,28 @@ export const NO_DIGESTS_EMPTY_STATE = {
 };
 
 export const DIGEST_NO_CHANGES_EMPTY_STATE = 'This digest has nothing to show: every change was filtered out.';
+
+// ---- Server error codes -> user-facing sentences (DIG-49 copy sweep) ----
+// The API returns a short machine code (`{error: 'bad_root_path'}`) so other code and tests can
+// branch on it; this is the one place that turns it into something a person reads.
+
+const API_ERROR_MESSAGE: Record<string, string> = {
+  bad_root_path: 'Enter a project folder to register.',
+  root_not_found: 'That folder does not exist.',
+  root_not_allowed: 'That folder is outside the folders this server can register.',
+  bad_context_path: 'Enter a valid context file path.',
+  context_not_found: 'That context file does not exist.',
+  context_not_allowed: 'The context file must be inside the project folder.',
+  project_roots_not_configured: 'This server has no allowed project folders configured.',
+  bad_language: 'Unknown language.',
+  bad_body: 'That request was missing required fields.',
+  not_found: 'That project or digest no longer exists.',
+  explain_running: 'An Explain is already running for this project.',
+  no_provider: 'No explanation provider is configured on this server.',
+  unauthorized: 'Your session expired. Reload the page and sign in again.',
+};
+
+/** A server error code (or an arbitrary message, for network/parse failures) as a sentence. */
+export function apiErrorMessage(code: string): string {
+  return API_ERROR_MESSAGE[code] ?? (/^[a-z][a-z0-9_]*$/.test(code) ? 'Something went wrong. Try again.' : code);
+}

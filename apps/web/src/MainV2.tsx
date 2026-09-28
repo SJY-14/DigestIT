@@ -12,8 +12,8 @@ import {
 import { useDigests } from './useDigests.js';
 import { startLive } from './liveClient.js';
 import {
-  digestRowLabel, DIGEST_NO_CHANGES_EMPTY_STATE, DIGEST_STATUS_LABEL, explainOutcomeMessage, humanDateTime,
-  NO_DIGESTS_EMPTY_STATE, NO_PROJECTS_EMPTY_STATE,
+  apiErrorMessage, digestRowLabel, DIGEST_NO_CHANGES_EMPTY_STATE, DIGEST_STATUS_LABEL, explainOutcomeMessage,
+  humanDateTime, NO_DIGESTS_EMPTY_STATE, NO_PROJECTS_EMPTY_STATE,
 } from './copy.js';
 import { ProjectGraph } from './ProjectGraph.js';
 import { AreaView } from './AreaView.js';
@@ -36,7 +36,7 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
       const project = await createProject(rootPath.trim(), contextPath.trim() || null);
       onCreated(project);
     } catch (e2) {
-      setError(e2 instanceof ApiError ? e2.message : e2 instanceof Error ? e2.message : String(e2));
+      setError(e2 instanceof ApiError ? apiErrorMessage(e2.message) : e2 instanceof Error ? e2.message : String(e2));
     } finally {
       setSubmitting(false);
     }
@@ -558,7 +558,7 @@ export function MainV2() {
         }
       })
       .catch((e: unknown) => {
-        const detail = e instanceof Error ? e.message : String(e);
+        const detail = e instanceof ApiError ? apiErrorMessage(e.message) : e instanceof Error ? e.message : String(e);
         setExplainError(explainOutcomeMessage('error', detail, ''));
       })
       .finally(() => {
@@ -579,7 +579,7 @@ export function MainV2() {
     setLanguageError(null);
     setProjectLanguage(currentProjectId, language)
       .then((updated) => setProjects((prev) => prev?.map((p) => (p.id === updated.id ? updated : p)) ?? prev))
-      .catch((e: unknown) => setLanguageError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setLanguageError(e instanceof ApiError ? apiErrorMessage(e.message) : e instanceof Error ? e.message : String(e)))
       .finally(() => setSettingLanguage(false));
   }, [currentProjectId]);
 

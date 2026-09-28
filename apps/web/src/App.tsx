@@ -3,6 +3,7 @@ import type { OpenedVia } from './api.js';
 import { levelForKey, loadLevel, saveLevel, stepForKey } from './level.js';
 import { Panel } from './Panel.js';
 import { commitLabel, formatDate, relativeTime, shortSha } from './format.js';
+import { plural } from './copy.js';
 import { Graph } from './Graph.js';
 import { useTimeline } from './useTimeline.js';
 import { useLive } from './useLive.js';
@@ -239,7 +240,7 @@ export function App() {
           <>
             <section className="box digest" aria-labelledby="digest-h">
               <h2 id="digest-h" className="box-head">Last hour
-                <span className="count">{live.digestUnits.length} {live.digestUnits.length === 1 ? 'unit' : 'units'} moved</span>
+                <span className="count">{plural(live.digestUnits.length, 'unit')} moved</span>
                 {live.metrics && live.metrics.global.unreadBacklog > 0 && <span className="badge unread">{live.metrics.global.unreadBacklog} unread</span>}
               </h2>
               {live.rollup && <Rollup content={live.rollup.content} />}
@@ -301,7 +302,7 @@ export function App() {
                         {c.isMerge && <span>merge</span>}
                         {!label.explained && <span>not explained</span>}
                         <span className="stats">
-                          {c.stats.files} {c.stats.files === 1 ? 'file' : 'files'}{' '}
+                          {plural(c.stats.files, 'file')}{' '}
                           <span className="add">+{c.stats.additions}</span> <span className="del">−{c.stats.deletions}</span>
                         </span>
                         <code className="sha">{shortSha(c.sha)}</code>

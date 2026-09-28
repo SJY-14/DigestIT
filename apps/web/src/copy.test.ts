@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  callsLeftLabel, contextSummary, digestRowLabel, elapsedLabel, explainButtonLabel, explainingLabel,
+  apiErrorMessage, callsLeftLabel, contextSummary, digestRowLabel, elapsedLabel, explainButtonLabel, explainingLabel,
   explainOutcomeMessage, humanDateTime, lineDelta, plural,
 } from './copy.js';
 
@@ -69,8 +69,21 @@ describe('explainOutcomeMessage', () => {
   it('says what happened and, for budget, when to try again', () => {
     expect(explainOutcomeMessage('no_changes', undefined, '')).toBe('Nothing changed since the last check.');
     expect(explainOutcomeMessage('budget', undefined, 'at midnight')).toBe('Daily budget used up. It resets at midnight.');
-    expect(explainOutcomeMessage('error', 'no_provider', '')).toBe('Explain failed: no_provider. Try again.');
+    // `detail` is already a user-facing sentence (apiErrorMessage), passed through as-is.
+    expect(explainOutcomeMessage('error', 'No explanation provider is configured on this server.', ''))
+      .toBe('No explanation provider is configured on this server.');
     expect(explainOutcomeMessage('error', undefined, '')).toBe('Explain failed. Try again.');
+  });
+});
+
+describe('apiErrorMessage', () => {
+  it('maps known server error codes to sentences', () => {
+    expect(apiErrorMessage('root_not_allowed')).toBe('That folder is outside the folders this server can register.');
+    expect(apiErrorMessage('bad_language')).toBe('Unknown language.');
+  });
+  it('falls back to a generic message for an unmapped code, and passes through a non-code message', () => {
+    expect(apiErrorMessage('some_new_error_code')).toBe('Something went wrong. Try again.');
+    expect(apiErrorMessage('network request failed')).toBe('network request failed');
   });
 });
 
