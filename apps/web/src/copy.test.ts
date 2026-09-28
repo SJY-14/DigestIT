@@ -38,6 +38,23 @@ describe('explainButtonLabel', () => {
   });
 });
 
+describe('emptyCopy().noDigests (DIG-57)', () => {
+  it('names the project and the pending count when something changed since registration', () => {
+    const nd = emptyCopy('en').noDigests('my-project', 31);
+    expect(nd.heading).toBe('No explanations yet for my-project');
+    expect(nd.body).toBe('31 files changed since you registered it. Press Explain above to see what happened.');
+  });
+  it('falls back to the generic hint at zero pending files', () => {
+    const nd = emptyCopy('en').noDigests('my-project', 0);
+    expect(nd.body).toBe('Work in this project with any tool, then press Explain above. Each Explain turns the changes since the last one into a digest.');
+  });
+  it('translates to Korean, including the project name', () => {
+    const nd = emptyCopy('ko').noDigests('my-project', 31);
+    expect(nd.heading).toBe('my-project에 대한 설명이 아직 없습니다');
+    expect(nd.body).toContain('31개');
+  });
+});
+
 describe('elapsedLabel / explainingLabel', () => {
   it('formats seconds, then minutes and seconds', () => {
     expect(elapsedLabel(0)).toBe('0s');

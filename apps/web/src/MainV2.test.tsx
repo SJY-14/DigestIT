@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeFilter, defaultProject, MainV2, nodeTarget } from './MainV2.js';
 import { humanDateTime, plural } from './copy.js';
 import {
-  fixtureArea, fixtureDigest, fixtureDigestPage, fixtureGraph, fixtureProject, fixtureStatus,
+  fixtureArea, fixtureDigest, fixtureDigestPage, fixtureGraph, fixtureProject, fixtureProject2, fixtureStatus, fixtureStatus2,
 } from './v2Fixtures.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -32,6 +32,9 @@ function mockFetch() {
       if (url === `/api/projects/${fixtureProject.id}/context/refresh`) return fixtureProject.context;
       if (url === `/api/projects/${fixtureProject.id}/explain`) return { noChanges: false, digestId: fixtureDigest.id, status: 'ok', budget: fixtureStatus.budget };
       if (url.startsWith(`/api/projects/${fixtureProject.id}/digests`)) return fixtureDigestPage;
+      // A second, just-registered project with no digests (DIG-57: project switching).
+      if (url === `/api/projects/${fixtureProject2.id}/status`) return fixtureStatus2;
+      if (url.startsWith(`/api/projects/${fixtureProject2.id}/digests`)) return { items: [], nextCursor: null };
       if (url.startsWith(`/api/digests/${fixtureDigest.id}/areas/`) && (method === 'GET' || method === 'POST')) return fixtureArea;
       if (/^\/api\/digests\/\d+\/graph/.test(url) && method === 'GET') return fixtureGraph;
       const explainMatch = /^\/api\/digests\/(\d+)\/explain$/.exec(url);
@@ -146,6 +149,56 @@ const pressKey = async (key: string, target: EventTarget = document.body) => {
 };
 const selectedTab = () => host.querySelector('[role="tab"][aria-selected="true"]')?.textContent;
 const ready = () => waitFor(() => host.querySelector('.l0-headline') !== null || host.querySelector('.level-view') !== null);
+
+const select = async (el: HTMLSelectElement, value: string) => {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')!.set!;
+  await act(async () => {
+    setter.call(el, value);
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+};
+
+describe('MainV2: switching projects (DIG-57)', () => {
+  beforeEach(() => { projectsResponse = [fixtureProject, fixtureProject2]; });
+
+  it('resets the digest, level, area and graph, and clears the URL, when the project switches', async () => {
+    await render(<MainV2 />);
+    await ready();
+    // Drill into project 1: L2, a graph node loaded.
+    await pressKey('2');
+    expect(selectedTab()).toBe('L2 Structure');
+    expect(params().get('level')).toBe('2');
+    await waitFor(() => host.querySelector('.graph-canvas') !== null);
+    expect(host.textContent).toContain(fixtureDigest.l0!.text);
+
+    await select(host.querySelector('.project-switcher') as HTMLSelectElement, String(fixtureProject2.id));
+    await waitFor(() => params().get('project') === String(fixtureProject2.id));
+
+    // URL: only `project` survives; digest/level/area/step/node are all gone.
+    expect(params().get('digest')).toBeNull();
+    expect(params().get('level')).toBeNull();
+    expect(params().get('area')).toBeNull();
+    expect(params().get('step')).toBeNull();
+    expect(params().get('node')).toBeNull();
+
+    // Nothing from project 1 stays on screen: no old digest content, no stale graph.
+    expect(host.textContent).not.toContain(fixtureDigest.l0!.text);
+    await waitFor(() => host.querySelector('.explain-btn')?.textContent === `Explain ${plural(fixtureStatus2.pending.files, 'change')}`);
+    expect(host.querySelector('.graph-canvas')).toBeNull();
+    expect(host.querySelector('.l0-headline')).toBeNull();
+  });
+
+  it('shows a project-specific first-run state for a project with no digests yet', async () => {
+    await render(<MainV2 />);
+    await ready();
+    await select(host.querySelector('.project-switcher') as HTMLSelectElement, String(fixtureProject2.id));
+    await waitFor(() => host.querySelector('.empty-state') !== null);
+    expect(host.querySelector('.empty-state .box-head')?.textContent).toBe(`No explanations yet for ${fixtureProject2.name}`);
+    expect(host.querySelector('.empty-state p')?.textContent).toBe(
+      `${plural(fixtureStatus2.pending.files, 'file')} changed since you registered it. Press Explain above to see what happened.`,
+    );
+  });
+});
 
 describe('MainV2: reading flow', () => {
   it('opens a digest at L0: the headline, a stats line, the breadcrumb, the switcher and the graph', async () => {
@@ -367,7 +420,7 @@ describe('MainV2: empty and error states', () => {
     }));
     await render(<MainV2 />);
     await waitFor(() => host.querySelector('.empty-state') !== null);
-    expect(host.querySelector('.empty-state')?.textContent).toContain('press Explain');
+    expect(host.querySelector('.empty-state')?.textContent).toContain('Press Explain');
     expect(host.querySelector('.digest-picker')).toBeNull();
     expect(host.textContent).not.toContain('Loading digest…');
   });

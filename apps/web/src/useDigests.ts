@@ -11,6 +11,22 @@ export function useDigests(projectId: number | null) {
   const paging = useRef<{ cursor: string | null; busy: boolean; gen: number }>({ cursor: null, busy: false, gen: 0 });
   const [reloadKey, setReloadKey] = useState(0);
 
+  // Reset synchronously during render (not in an effect) when `projectId`/`reloadKey` changes, so
+  // no consumer ever reads a stale item list left over from the previous project. An effect-based
+  // reset lands one render too late: a caller that derives state from `items` during that extra
+  // render (e.g. MainV2 picking a "current digest" from `items[0]`) can latch onto a leftover
+  // digest id from the old project before the reset is applied (DIG-57).
+  const owner = useRef({ projectId, reloadKey });
+  if (owner.current.projectId !== projectId || owner.current.reloadKey !== reloadKey) {
+    owner.current = { projectId, reloadKey };
+    paging.current.gen++;
+    paging.current.cursor = null;
+    paging.current.busy = false;
+    if (items.length > 0) setItems([]);
+    if (done) setDone(false);
+    if (error !== null) setError(null);
+  }
+
   const loadMore = useCallback(async () => {
     const p = paging.current;
     if (projectId === null || p.busy || done) return;
@@ -34,18 +50,6 @@ export function useDigests(projectId: number | null) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, done]);
-
-  useEffect(() => {
-    if (projectId === null) return;
-    const p = paging.current;
-    p.gen++;
-    p.cursor = null;
-    p.busy = false;
-    setItems([]);
-    setDone(false);
-    setError(null);
-    // loadMore is recreated with the new projectId; call the fresh closure directly next tick.
-  }, [projectId, reloadKey]);
 
   useEffect(() => {
     if (projectId !== null && items.length === 0 && !done && !error) void loadMore();

@@ -431,7 +431,10 @@ export function MainV2() {
       .finally(() => setSettingLanguage(false));
   }, [currentProjectId, refreshStatus, lang]);
 
-  const onSwitchProject = useCallback((id: number) => push({ project: id, digest: null, node: null, area: null, step: null }), [push]);
+  const onSwitchProject = useCallback(
+    (id: number) => push({ project: id, digest: null, level: null, node: null, area: null, step: null }),
+    [push],
+  );
   const onSelectDigest = useCallback((id: number) => push({ digest: id, node: null, area: null, step: null }), [push]);
   const onLevel = useCallback((l: ReadingLevel) => push({ level: l === 0 ? null : l, step: null }), [push]);
   const onOpenArea = useCallback((id: string) => push({ level: 3, area: id, step: null }), [push]);
@@ -594,12 +597,15 @@ export function MainV2() {
         {explainError && <p role="alert" className="notice error">{explainError}</p>}
         {explainNotice && <p role="status" className="notice muted">{explainNotice}</p>}
         {digestError && <p role="alert" className="error">{T.digestLoadError(digestError)}</p>}
-        {!digestError && currentDigestId === null && digests.done && !digests.error && (
-          <div className="box empty-state">
-            <h2 className="box-head">{TE.noDigests.heading}</h2>
-            <p>{TE.noDigests.body}</p>
-          </div>
-        )}
+        {!digestError && currentDigestId === null && digests.done && !digests.error && (() => {
+          const nd = TE.noDigests(currentProject.name, status?.pending.files ?? 0);
+          return (
+            <div className="box empty-state">
+              <h2 className="box-head">{nd.heading}</h2>
+              <p>{nd.body}</p>
+            </div>
+          );
+        })()}
         {!digestError && currentDigestId === null && !digests.done && <p className="muted">Loading…</p>}
         {!digestError && currentDigestId !== null && !digest && <p className="muted">{T.loadingDigest}</p>}
         {digest && (
