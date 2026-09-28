@@ -356,23 +356,25 @@ export async function explainProject(
       throw e;
     }
     const context = typeof opts.context === 'function' ? await opts.context() : opts.context;
-    const r = await explainDigest(db, changeUnitId, provider, { context, budget, now });
+    const r = await explainDigest(db, changeUnitId, provider, { context, budget, now, language: project.language });
     return { noChanges: false, digestId: changeUnitId, outcome: r.outcome, calls: r.calls, detail: r.detail };
   });
 }
 
-/** `digest explain --retry <digestId>`: re-runs the provider call for an existing digest; no new snapshot. */
+/** `digest explain --retry <digestId>`: re-runs the provider call for an existing digest; no new snapshot.
+ * The retry keeps the language the digest was first written in, even if the project's changed since. */
 export async function retryDigest(
   db: DatabaseSync, home: string, digestId: number, provider: ExplanationProvider, opts: ExplainOptions = {},
 ): Promise<ExplainProjectResult> {
-  const row = db.prepare('SELECT repo_id FROM digest WHERE change_unit_id = ?').get(digestId) as { repo_id: number } | undefined;
+  const row = db.prepare('SELECT repo_id, language FROM digest WHERE change_unit_id = ?').get(digestId) as
+    { repo_id: number; language: ExplainLanguage } | undefined;
   if (!row) throw new Error(`no digest ${digestId}`);
   const budget = opts.budget ?? DEFAULT_DAILY_BUDGET;
   const dataDir = projectDataDir(home, row.repo_id);
   const startedAt = (opts.now ?? (() => new Date()))().toISOString();
   return withProjectLock(dataDir, startedAt, async () => {
     const context = typeof opts.context === 'function' ? await opts.context() : opts.context;
-    const r = await explainDigest(db, digestId, provider, { context, budget, now: opts.now });
+    const r = await explainDigest(db, digestId, provider, { context, budget, now: opts.now, language: row.language });
     return { noChanges: false, digestId, outcome: r.outcome, calls: r.calls, detail: r.detail };
   });
 }

@@ -494,7 +494,8 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     { bodyLimit: V2_BODY_LIMIT },
     async (req, reply) => {
       const id = parseId(req.params.id);
-      const digestRow = id === null ? undefined : (db.prepare('SELECT repo_id AS repoId FROM digest WHERE change_unit_id = ?').get(id) as { repoId: number } | undefined);
+      const digestRow = id === null ? undefined : (db.prepare('SELECT repo_id AS repoId, language FROM digest WHERE change_unit_id = ?')
+        .get(id) as { repoId: number; language: ExplainLanguage } | undefined);
       const l2 = id !== null && digestRow ? loadDigestL2(id) : null;
       const project = digestRow ? findProjectRow(digestRow.repoId) : undefined;
       if (!digestRow || !project || !l2 || !l2.items.some((it) => it.id === req.params.areaId)) {
@@ -507,7 +508,8 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       areaInFlight.add(key);
       try {
         const context = latestContextText(project.id);
-        await explainArea(db, id!, req.params.areaId, provider, { context, budget: budgetLimit, now });
+        // The digest's own language, not the project's: one digest never mixes languages.
+        await explainArea(db, id!, req.params.areaId, provider, { context, budget: budgetLimit, now, language: digestRow.language });
       } catch (e) {
         return reply.code(500).send({ error: e instanceof Error ? e.message : 'explain_failed' });
       } finally {

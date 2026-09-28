@@ -3,10 +3,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import {
-  buildProjectContext, buildProjectMap, compactContext, hashUserMd, needsRefresh,
+  buildProjectContext, buildProjectMap, compactContext, contextSourceHash, hashUserMd, needsRefresh,
   type ExplanationProvider, type ProjectMap,
 } from '@digestit/explain';
-import type { ProjectContextContent } from '@digestit/core';
+import { EXPLAIN_LANGUAGES, type ProjectContextContent } from '@digestit/core';
 import { projectDataDir } from './datahome.js';
 import { latestCheckpoint, type ProjectRow } from './project.js';
 import { listTree, openShadow, readTreeFile, type Shadow } from './shadow.js';
@@ -59,22 +59,37 @@ export async function buildContext(
   if (!latest) throw new Error('project has no checkpoint yet');
   const shadow = await openShadow(projectDataDir(home, row.id), row.path);
   const map = await mapOfTree(shadow, latest.treeSha);
-  return buildProjectContext(db, row.id, latest.id, row.name, map, readUserMd(row), provider, { budget: opts.budget, now: opts.now });
+  return buildProjectContext(db, row.id, latest.id, row.name, map, readUserMd(row), provider, {
+    budget: opts.budget, now: opts.now, language: row.language,
+  });
+}
+
+/** Whether the last build was written in another language than the project's current one. Its
+ * `source_hash` is `contextSourceHash(map, language)`; rows from before languages existed hold the
+ * bare map hash and were written in English. */
+function builtInOtherLanguage(sourceHash: string | null, map: ProjectMap, language: ProjectRow['language']): boolean {
+  if (sourceHash === contextSourceHash(map, language)) return false;
+  if (sourceHash === map.sourceHash) return language !== 'en';
+  // Neither matches: the map hash itself moved (e.g. a new prompt version), which is not a
+  // language change; `needsRefresh` decides that case.
+  return EXPLAIN_LANGUAGES.some((l) => l !== language && sourceHash === contextSourceHash(map, l));
 }
 
 /**
  * Explain-time policy: build when the project has no context yet; otherwise rebuild only when the
  * README, a manifest, the user `.md` or the top-level folders changed since the last build, at
- * most once a day (`needsRefresh`). Returns whether a build ran.
+ * most once a day (`needsRefresh`). A change of the project's language always rebuilds, even
+ * inside that daily throttle, so new digests are never grounded in the old language's context.
+ * Returns whether a build ran.
  */
 export async function ensureContext(
   db: DatabaseSync, home: string, row: ProjectRow, provider: ExplanationProvider, opts: ContextBuildOptions,
 ): Promise<boolean> {
   const last = db.prepare(
-    `SELECT pc.created_at AS createdAt, pc.user_context_hash AS userHash, c.shadow_sha AS treeSha
+    `SELECT pc.created_at AS createdAt, pc.user_context_hash AS userHash, pc.source_hash AS sourceHash, c.shadow_sha AS treeSha
      FROM project_context pc LEFT JOIN checkpoint c ON c.id = pc.checkpoint_id
      WHERE pc.repo_id = ? ORDER BY pc.created_at DESC, pc.id DESC LIMIT 1`,
-  ).get(row.id) as { createdAt: string; userHash: string | null; treeSha: string | null } | undefined;
+  ).get(row.id) as { createdAt: string; userHash: string | null; sourceHash: string | null; treeSha: string | null } | undefined;
   const latest = latestCheckpoint(db, row.id);
   if (!latest) return false;
   if (last) {
@@ -82,7 +97,8 @@ export async function ensureContext(
     const shadow = await openShadow(projectDataDir(home, row.id), row.path);
     const [prev, next] = [await mapOfTree(shadow, last.treeSha), await mapOfTree(shadow, latest.treeSha)];
     const now = (opts.now ?? (() => new Date()))();
-    if (!needsRefresh(prev, next, last.userHash, hashUserMd(readUserMd(row)), last.createdAt, now)) return false;
+    const languageChanged = builtInOtherLanguage(last.sourceHash, prev, row.language);
+    if (!languageChanged && !needsRefresh(prev, next, last.userHash, hashUserMd(readUserMd(row)), last.createdAt, now)) return false;
   }
   await buildContext(db, home, row, provider, opts);
   return true;

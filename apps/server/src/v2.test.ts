@@ -497,6 +497,44 @@ function deferred<T = void>(): { promise: Promise<T>; resolve: (v: T) => void } 
   return { promise, resolve };
 }
 
+describe('explanation language wiring (DIG-49)', () => {
+  it('writes digests and context in the project language, area L3 in the digest\'s, and a change applies from the next Explain', async () => {
+    const { db, repoId } = await setup();
+    const seen: string[] = [];
+    const app = makeApp(db, {
+      providerFactory: (allow) => {
+        const inner = createProvider({ provider: 'stub', repoAllowlist: allow });
+        return {
+          ...inner,
+          digest: async (input) => (seen.push(`digest:${input.language}`), inner.digest!(input)),
+          explainContext: async (input) => (seen.push(`context:${input.language}`), inner.explainContext!(input)),
+          explainArea: async (input) => (seen.push(`area:${input.language}`), inner.explainArea!(input)),
+        };
+      },
+    });
+    expect((await patch(app, `/api/projects/${repoId}`, { language: 'ko' })).statusCode).toBe(200);
+    write('src/b.ts', 'b\n');
+    const first = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId as number;
+    expect(seen).toEqual(['context:ko', 'digest:ko']);
+    expect((await get(app, `/api/digests/${first}`)).json().language).toBe('ko');
+
+    // Back to English: the old digest stays Korean, including its area walkthrough.
+    expect((await patch(app, `/api/projects/${repoId}`, { language: 'en' })).statusCode).toBe(200);
+    seen.length = 0;
+    expect((await post(app, `/api/digests/${first}/areas/src/explain`)).statusCode).toBe(200);
+    expect(seen).toEqual(['area:ko']);
+
+    // The next Explain rebuilds the context in English (the language changed, even though the
+    // last build is minutes old) and writes the new digest in English.
+    seen.length = 0;
+    write('src/c.ts', 'c\n');
+    const second = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId as number;
+    expect(seen).toEqual(['context:en', 'digest:en']);
+    expect((await get(app, `/api/digests/${second}`)).json().language).toBe('en');
+    expect((await get(app, `/api/digests/${first}`)).json().language).toBe('ko');
+  });
+});
+
 describe('one-at-a-time in-process guards (area explain, context refresh)', () => {
   it('409s a second click on the same area while the first explainArea call is still running', async () => {
     const { db, repoId } = await setup();
