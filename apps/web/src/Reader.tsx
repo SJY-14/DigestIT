@@ -3,7 +3,7 @@
 // area an area picker (the walkthrough itself is in Walkthrough.tsx). MainV2 composes these.
 import { useRef, type KeyboardEvent, type MouseEvent } from 'react';
 import type { DigestDetailDto, DigestL2Item } from '@digestit/core';
-import { LEVELS, READER as T, humanDateTime, plural } from './copy.js';
+import { humanDateTime, levelsCopy, readerCopy, type Lang } from './copy.js';
 import type { ReadingLevel } from './v2Url.js';
 
 export const LEVEL_TAB_ID = (l: ReadingLevel) => `level-tab-${l}`;
@@ -30,7 +30,9 @@ export function readerKey(e: Pick<globalThis.KeyboardEvent, 'key' | 'target' | '
 const ALL_LEVELS: readonly ReadingLevel[] = [0, 1, 2, 3];
 
 /** GitHub-style underline tabs; a WAI-ARIA tablist with arrow-key roving and automatic activation. */
-export function LevelSwitcher({ level, onLevel }: { level: ReadingLevel; onLevel: (l: ReadingLevel) => void }) {
+export function LevelSwitcher({ level, onLevel, lang = 'en' }: { level: ReadingLevel; onLevel: (l: ReadingLevel) => void; lang?: Lang }) {
+  const T = readerCopy(lang);
+  const LEVELS = levelsCopy(lang);
   const tabs = useRef(new Map<ReadingLevel, HTMLButtonElement>());
   const go = (l: ReadingLevel) => {
     onLevel(l);
@@ -83,16 +85,18 @@ export interface BreadcrumbProps {
   onDigest: () => void;
   onArea: () => void;
   onLevel: () => void;
+  lang?: Lang;
 }
 
 /** `Digest · Today, 17:05 › <area> › L3 Code`; every segment is a button. */
-export function Breadcrumb({ digest, level, area, onDigest, onArea, onLevel }: BreadcrumbProps) {
-  const lv = LEVELS[level];
+export function Breadcrumb({ digest, level, area, onDigest, onArea, onLevel, lang = 'en' }: BreadcrumbProps) {
+  const T = readerCopy(lang);
+  const lv = levelsCopy(lang)[level];
   const showArea = level === 3 && area !== null;
   return (
     <nav className="breadcrumb" aria-label={T.breadcrumbLabel}>
       <ol>
-        <li><button type="button" className="crumb" onClick={onDigest}>{T.digestCrumb(humanDateTime(digest.toAt))}</button></li>
+        <li><button type="button" className="crumb" onClick={onDigest}>{T.digestCrumb(humanDateTime(digest.toAt, Date.now(), lang))}</button></li>
         {showArea && <li><button type="button" className="crumb" onClick={onArea}>{area.title}</button></li>}
         <li>
           <button type="button" className="crumb current" aria-current="location" onClick={onLevel}>
@@ -119,12 +123,13 @@ export function areaStats(item: DigestL2Item, digest: DigestDetailDto): { files:
   };
 }
 
-function NextLevel({ level, onLevel }: { level: 0 | 1 | 2; onLevel: (l: ReadingLevel) => void }) {
+function NextLevel({ level, onLevel, lang = 'en' }: { level: 0 | 1 | 2; onLevel: (l: ReadingLevel) => void; lang?: Lang }) {
   const next = (level + 1) as ReadingLevel;
+  const nextLv = levelsCopy(lang)[next];
   return (
     <p className="next-level">
       <button type="button" className="btn" onClick={() => onLevel(next)}>
-        {T.nextLevel(LEVELS[next].key, LEVELS[next].label)} <span aria-hidden="true">→</span>
+        {readerCopy(lang).nextLevel(nextLv.key, nextLv.label)} <span aria-hidden="true">→</span>
       </button>
     </p>
   );
@@ -132,21 +137,23 @@ function NextLevel({ level, onLevel }: { level: 0 | 1 | 2; onLevel: (l: ReadingL
 
 // --- L0 / L1 -------------------------------------------------------------------------------------
 
-export function SummaryView({ digest, onLevel }: { digest: DigestDetailDto; onLevel: (l: ReadingLevel) => void }) {
+export function SummaryView({ digest, onLevel, lang = 'en' }: { digest: DigestDetailDto; onLevel: (l: ReadingLevel) => void; lang?: Lang }) {
+  const T = readerCopy(lang);
   const { files, additions, deletions } = digest.stats;
   return (
     <section className="level-view level-0">
       <h2 className="l0-headline">{digest.l0?.text ?? T.noHeadline}</h2>
       <p className="l0-stats">
-        {plural(files, 'file')} · <Delta additions={additions} deletions={deletions} />
-        <span className="muted"> · {T.period(humanDateTime(digest.fromAt), humanDateTime(digest.toAt))}</span>
+        {T.fileCount(files)} · <Delta additions={additions} deletions={deletions} />
+        <span className="muted"> · {T.period(humanDateTime(digest.fromAt, Date.now(), lang), humanDateTime(digest.toAt, Date.now(), lang))}</span>
       </p>
-      <NextLevel level={0} onLevel={onLevel} />
+      <NextLevel level={0} onLevel={onLevel} lang={lang} />
     </section>
   );
 }
 
-export function ImpactView({ digest, onLevel }: { digest: DigestDetailDto; onLevel: (l: ReadingLevel) => void }) {
+export function ImpactView({ digest, onLevel, lang = 'en' }: { digest: DigestDetailDto; onLevel: (l: ReadingLevel) => void; lang?: Lang }) {
+  const T = readerCopy(lang);
   const l1 = digest.l1;
   return (
     <section className="level-view level-1">
@@ -158,7 +165,7 @@ export function ImpactView({ digest, onLevel }: { digest: DigestDetailDto; onLev
           <ul className="l1-bullets">{l1.bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>
         </>
       )}
-      <NextLevel level={1} onLevel={onLevel} />
+      <NextLevel level={1} onLevel={onLevel} lang={lang} />
     </section>
   );
 }
@@ -187,9 +194,11 @@ export interface StructureViewProps {
   onClearFilter: () => void;
   onHoverArea: (id: string | null) => void;
   onLevel: (l: ReadingLevel) => void;
+  lang?: Lang;
 }
 
-export function StructureView({ digest, filter, selectedAreaId, onOpenArea, onClearFilter, onHoverArea, onLevel }: StructureViewProps) {
+export function StructureView({ digest, filter, selectedAreaId, onOpenArea, onClearFilter, onHoverArea, onLevel, lang = 'en' }: StructureViewProps) {
+  const T = readerCopy(lang);
   const items = digest.l2?.items ?? [];
   const visible = filter ? items.filter((it) => filter.areaIds.has(it.id)) : items;
   const notAnalysed = digest.l2?.notAnalysed ?? [];
@@ -226,7 +235,7 @@ export function StructureView({ digest, filter, selectedAreaId, onOpenArea, onCl
                   {it.paths.slice(0, 4).map((p) => <code key={p}>{p}</code>)}
                   {it.paths.length > 4 && <span className="muted">+{it.paths.length - 4}</span>}
                 </span>
-                <span className="muted">{plural(s.files, 'file')}</span>
+                <span className="muted">{T.fileCount(s.files)}</span>
                 <Delta additions={s.additions} deletions={s.deletions} />
                 <span className="area-card-open" aria-hidden="true">{T.openArea} →</span>
               </div>
@@ -239,18 +248,20 @@ export function StructureView({ digest, filter, selectedAreaId, onOpenArea, onCl
           {T.notAnalysed}: {notAnalysed.map((p, i) => <span key={p}>{i > 0 && ', '}<code>{p}</code></span>)}
         </p>
       )}
-      <NextLevel level={2} onLevel={onLevel} />
+      <NextLevel level={2} onLevel={onLevel} lang={lang} />
     </section>
   );
 }
 
 // --- L3 without an area: compact area picker ------------------------------------------------------
 
-export function AreaPicker({ digest, onOpenArea, onHoverArea }: {
+export function AreaPicker({ digest, onOpenArea, onHoverArea, lang = 'en' }: {
   digest: DigestDetailDto;
   onOpenArea: (id: string) => void;
   onHoverArea: (id: string | null) => void;
+  lang?: Lang;
 }) {
+  const T = readerCopy(lang);
   const items = digest.l2?.items ?? [];
   return (
     <section className="level-view level-3-picker">
@@ -272,7 +283,7 @@ export function AreaPicker({ digest, onOpenArea, onHoverArea }: {
                 <span className="area-pick-title">{it.title}</span>
                 <span className="area-pick-effect">{it.effect}</span>
                 <span className="area-pick-meta">
-                  <span>{plural(s.files, 'file')}</span> <Delta additions={s.additions} deletions={s.deletions} />
+                  <span>{T.fileCount(s.files)}</span> <Delta additions={s.additions} deletions={s.deletions} />
                 </span>
               </button>
             </li>

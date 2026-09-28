@@ -69,6 +69,14 @@
   }
 }
 * { box-sizing: border-box; }
+/* `color-scheme` alone does not reliably theme native scrollbars on every platform/browser (seen
+   as a bright, un-themed strip at the edge of a scrolled dark pane, e.g. .reading-pane in L3), so
+   style them explicitly for both scrollbar-color (Firefox) and the WebKit pseudo-elements. */
+* { scrollbar-color: var(--border) var(--bg-inset); scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 12px; height: 12px; }
+*::-webkit-scrollbar-track { background: var(--bg-inset); }
+*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid var(--bg-inset); background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); line-height: 1.5; }
 code, .mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; font-size: 12px; }
 h1, h2, h3 { margin: 0; }
@@ -410,7 +418,9 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .digest-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit; color: var(--fg); background: none; border: 0; padding: 8px 12px; cursor: pointer; }
 .digest-row-main:hover, .digest-row-main:focus-visible { background: var(--hover); outline: none; }
 .digest-row-main[aria-current='true'] { background: var(--selected); }
-.digest-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The trigger (.digest-picker-current) truncates to one line; a row in the open list has room to
+   wrap, so it always shows the whole L0 headline instead of cutting it off. */
+.digest-row-label { overflow-wrap: anywhere; white-space: normal; }
 .digest-row-main[aria-current='true'] .digest-row-label { font-weight: 600; }
 .digest-row .meta { display: flex; gap: 8px; align-items: center; font-size: 12px; }
 .digest-status { white-space: nowrap; }

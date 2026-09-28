@@ -18,7 +18,7 @@ import {
   AreaPicker, Breadcrumb, ImpactView, LEVEL_TAB_ID, LevelSwitcher, READING_PANE_ID, readerKey, StructureView, SummaryView,
 } from './Reader.js';
 import {
-  apiErrorMessage, EMPTY, explainOutcomeMessage, GRAPH, LEVELS, READER, resetsLabel, WALKTHROUGH,
+  apiErrorMessage, emptyCopy, explainOutcomeMessage, graphCopy, levelsCopy, readerCopy, resetsLabel, walkthroughCopy,
 } from './copy.js';
 import { useV2Url, type ReadingLevel, type V2Url } from './v2Url.js';
 
@@ -44,11 +44,12 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
     }
   };
 
+  const T = emptyCopy();
   return (
     <div className="box setup">
-      <h2 className="box-head">{EMPTY.noProjects.heading}</h2>
+      <h2 className="box-head">{T.noProjects.heading}</h2>
       <ol className="empty-steps">
-        {EMPTY.noProjects.steps.map((s, i) => <li key={i}>{s}</li>)}
+        {T.noProjects.steps.map((s, i) => <li key={i}>{s}</li>)}
       </ol>
       <form className="setup-form" onSubmit={(e) => void submit(e)}>
         <label className="field">
@@ -81,8 +82,8 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
 }
 
 /** An API failure as a sentence: server error codes go through `apiErrorMessage`. */
-function errorText(e: unknown): string {
-  return e instanceof ApiError ? apiErrorMessage(e.message) : e instanceof Error ? e.message : String(e);
+function errorText(e: unknown, lang: ExplainLanguage = 'en'): string {
+  return e instanceof ApiError ? apiErrorMessage(e.message, lang) : e instanceof Error ? e.message : String(e);
 }
 
 // --- L2 filter from a graph node ----------------------------------------------------------------
@@ -271,6 +272,9 @@ export function MainV2() {
 
   const fallbackProjectId = useMemo(() => (projects ? defaultProject(projects, loadLastProject())?.id ?? null : null), [projects]);
   const currentProjectId = url.project ?? fallbackProjectId;
+  // The UI chrome's language follows the current project's setting; 'en' before any project is
+  // known (the setup form, or while projects are still loading).
+  const lang: ExplainLanguage = projects?.find((p) => p.id === currentProjectId)?.language ?? 'en';
   useEffect(() => {
     if (url.project === null && fallbackProjectId !== null) replace({ project: fallbackProjectId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -354,9 +358,11 @@ export function MainV2() {
   // (when there was never a filter to clear).
   const prevNodeRef = useRef<string | null>(null);
   useEffect(() => {
-    if (filter) setAnnounce(READER.filterAnnounce(filter.path));
-    else if (url.node === null && prevNodeRef.current !== null) setAnnounce(READER.filterCleared);
+    const T = readerCopy(lang);
+    if (filter) setAnnounce(T.filterAnnounce(filter.path));
+    else if (url.node === null && prevNodeRef.current !== null) setAnnounce(T.filterCleared);
     prevNodeRef.current = url.node;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, url.node]);
 
   const openAreaItem = digest?.l2?.items.find((it) => it.id === url.area) ?? null;
@@ -388,24 +394,26 @@ export function MainV2() {
     explainProject(currentProjectId)
       .then((r) => {
         if (r.noChanges) {
-          setExplainNotice(explainOutcomeMessage('no_changes', undefined, ''));
+          setExplainNotice(explainOutcomeMessage('no_changes', undefined, '', lang));
           return;
         }
         // The digest exists but the budget ran out before it was explained: it lands anyway, and
         // the header says when calls come back.
-        if (r.status === 'pending') setExplainNotice(explainOutcomeMessage('budget', undefined, resetsLabel(r.budget.resetsAt)));
+        if (r.status === 'pending') {
+          setExplainNotice(explainOutcomeMessage('budget', undefined, resetsLabel(r.budget.resetsAt, Date.now(), lang), lang));
+        }
         if (r.digestId !== null) {
           digests.reload();
           // A new digest after Explain lands at L0 (docs/ux-v3.md §1).
           replace({ digest: r.digestId, level: null, node: null, area: null, step: null });
         }
       })
-      .catch((e: unknown) => setExplainError(explainOutcomeMessage('error', errorText(e), '')))
+      .catch((e: unknown) => setExplainError(explainOutcomeMessage('error', errorText(e, lang), '', lang)))
       .finally(() => {
         setExplainingLocal(false);
         refreshStatus();
       });
-  }, [currentProjectId, refreshStatus, replace, digests]);
+  }, [currentProjectId, refreshStatus, replace, digests, lang]);
 
   const onRefreshContext = useCallback(() => {
     if (currentProjectId === null) return;
@@ -419,9 +427,9 @@ export function MainV2() {
     setLanguageError(null);
     setProjectLanguage(currentProjectId, language)
       .then((updated) => { setProjects((prev) => prev?.map((p) => (p.id === updated.id ? updated : p)) ?? prev); refreshStatus(); })
-      .catch((e: unknown) => setLanguageError(errorText(e)))
+      .catch((e: unknown) => setLanguageError(errorText(e, lang)))
       .finally(() => setSettingLanguage(false));
-  }, [currentProjectId, refreshStatus]);
+  }, [currentProjectId, refreshStatus, lang]);
 
   const onSwitchProject = useCallback((id: number) => push({ project: id, digest: null, node: null, area: null, step: null }), [push]);
   const onSelectDigest = useCallback((id: number) => push({ digest: id, node: null, area: null, step: null }), [push]);
@@ -437,8 +445,8 @@ export function MainV2() {
   const toTop = () => paneRef.current?.scrollTo?.({ top: 0 });
 
   // Global reading keys: 0–3 switch level, n/p move between walkthrough steps.
-  const keyState = useRef({ level, step: url.step, stepCount, onLevel, onStep });
-  keyState.current = { level, step: url.step, stepCount, onLevel, onStep };
+  const keyState = useRef({ level, step: url.step, stepCount, onLevel, onStep, lang });
+  keyState.current = { level, step: url.step, stepCount, onLevel, onStep, lang };
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       const action = readerKey(e);
@@ -447,14 +455,15 @@ export function MainV2() {
       if (action.kind === 'level') {
         e.preventDefault();
         k.onLevel(action.level);
-        setAnnounce(`${LEVELS[action.level].key} ${LEVELS[action.level].label}`);
+        const lv = levelsCopy(k.lang)[action.level];
+        setAnnounce(`${lv.key} ${lv.label}`);
       } else if (k.level === 3 && k.stepCount > 0 && !(k.step === null && action.delta < 0)) {
         // At the overview (no step yet) only `n` moves: `p` has nowhere earlier to go.
         const next = Math.min(k.stepCount, Math.max(1, (k.step ?? 0) + action.delta));
         if (next !== k.step) {
           e.preventDefault();
           k.onStep(next);
-          setAnnounce(WALKTHROUGH.stepOf(next, k.stepCount));
+          setAnnounce(walkthroughCopy(k.lang).stepOf(next, k.stepCount));
         }
       }
     };
@@ -493,21 +502,25 @@ export function MainV2() {
   }
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? projects[0]!;
   const noBudget = (status?.budget.remaining ?? 1) === 0;
+  const T = readerCopy(lang);
+  const TW = walkthroughCopy(lang);
+  const TG = graphCopy(lang);
+  const TE = emptyCopy(lang);
 
   const digestNotice = digest && digest.status !== 'ok' && (
     <div className={digest.status === 'error' ? 'notice error' : 'notice muted'} role={digest.status === 'error' ? 'alert' : 'status'}>
-      <span>{digest.status === 'pending' ? READER.digestPending : digest.status === 'error' ? READER.digestError : READER.digestTruncated}</span>
+      <span>{digest.status === 'pending' ? T.digestPending : digest.status === 'error' ? T.digestError : T.digestTruncated}</span>
       {digest.status !== 'pending' && (
         <button type="button" className="btn" onClick={() => onRetryDigest(digest.id)} disabled={retryingId !== null || noBudget}>
-          {noBudget ? READER.retryNoBudget : retryingId === digest.id ? READER.retrying : READER.retry}
+          {noBudget ? T.retryNoBudget : retryingId === digest.id ? T.retrying : T.retry}
         </button>
       )}
     </div>
   );
 
   const levelView = !digest ? null
-    : level === 0 ? <SummaryView digest={digest} onLevel={onLevel} />
-      : level === 1 ? <ImpactView digest={digest} onLevel={onLevel} />
+    : level === 0 ? <SummaryView digest={digest} onLevel={onLevel} lang={lang} />
+      : level === 1 ? <ImpactView digest={digest} onLevel={onLevel} lang={lang} />
         : level === 2 ? (
           <StructureView
             digest={digest}
@@ -517,11 +530,12 @@ export function MainV2() {
             onClearFilter={onClearFilter}
             onHoverArea={setHoverAreaId}
             onLevel={onLevel}
+            lang={lang}
           />
         ) : !openAreaItem ? (
-          <AreaPicker digest={digest} onOpenArea={onOpenArea} onHoverArea={setHoverAreaId} />
+          <AreaPicker digest={digest} onOpenArea={onOpenArea} onHoverArea={setHoverAreaId} lang={lang} />
         ) : areaError ? (
-          <p role="alert" className="error">{WALKTHROUGH.loadError(areaError)}</p>
+          <p role="alert" className="error">{TW.loadError(areaError)}</p>
         ) : areaDetail ? (
           <WalkthroughView
             area={areaGenerating ? { ...areaDetail, status: 'pending' } : areaDetail}
@@ -530,17 +544,21 @@ export function MainV2() {
             onStep={onStep}
             onGenerate={onGenerateArea}
             callsRemaining={status?.budget.remaining ?? null}
+            lang={lang}
           />
         ) : (
-          <p className="muted">{WALKTHROUGH.loading}</p>
+          <p className="muted">{TW.loading}</p>
         );
 
   const graphPane = graphError ? (
-    <p role="alert" className="error">{GRAPH.loadError(graphError)}</p>
+    <p role="alert" className="error">{TG.loadError(graphError)}</p>
   ) : graph ? (
-    <ProjectGraph graph={graph} highlightNodeIds={highlightNodeIds} selectedNodeId={url.node} onSelectNode={onSelectNode} onExpand={onExpandGraphNode} />
+    <ProjectGraph
+      graph={graph} highlightNodeIds={highlightNodeIds} selectedNodeId={url.node} onSelectNode={onSelectNode} onExpand={onExpandGraphNode}
+      lang={lang}
+    />
   ) : (
-    <p className="muted">{GRAPH.loading}</p>
+    <p className="muted">{TG.loading}</p>
   );
 
   return (
@@ -560,6 +578,7 @@ export function MainV2() {
           onSetLanguage={onSetLanguage}
           settingLanguage={settingLanguage}
           languageError={languageError}
+          lang={lang}
           picker={digests.items.length > 0 && (
             <DigestPicker
               digests={digests}
@@ -568,20 +587,21 @@ export function MainV2() {
               onRetry={onRetryDigest}
               retryingId={retryingId}
               retryDisabled={noBudget}
+              lang={lang}
             />
           )}
         />
         {explainError && <p role="alert" className="notice error">{explainError}</p>}
         {explainNotice && <p role="status" className="notice muted">{explainNotice}</p>}
-        {digestError && <p role="alert" className="error">{READER.digestLoadError(digestError)}</p>}
+        {digestError && <p role="alert" className="error">{T.digestLoadError(digestError)}</p>}
         {!digestError && currentDigestId === null && digests.done && !digests.error && (
           <div className="box empty-state">
-            <h2 className="box-head">{EMPTY.noDigests.heading}</h2>
-            <p>{EMPTY.noDigests.body}</p>
+            <h2 className="box-head">{TE.noDigests.heading}</h2>
+            <p>{TE.noDigests.body}</p>
           </div>
         )}
         {!digestError && currentDigestId === null && !digests.done && <p className="muted">Loading…</p>}
-        {!digestError && currentDigestId !== null && !digest && <p className="muted">{READER.loadingDigest}</p>}
+        {!digestError && currentDigestId !== null && !digest && <p className="muted">{T.loadingDigest}</p>}
         {digest && (
           <>
             <div className="reader-nav">
@@ -592,8 +612,9 @@ export function MainV2() {
                 onDigest={() => { push({ level: null, area: null, step: null, node: null }); toTop(); }}
                 onArea={() => { replace({ step: null }); toTop(); }}
                 onLevel={() => { if (url.step !== null) replace({ step: null }); toTop(); }}
+                lang={lang}
               />
-              <LevelSwitcher level={level} onLevel={onLevel} />
+              <LevelSwitcher level={level} onLevel={onLevel} lang={lang} />
             </div>
           </>
         )}
@@ -610,14 +631,14 @@ export function MainV2() {
             style={narrow ? undefined : { flexBasis: `${leftPct}%` }}
           >
             {digestNotice}
-            {digest.stats.files === 0 && <p className="notice muted" role="status">{EMPTY.digestNoChanges}</p>}
+            {digest.stats.files === 0 && <p className="notice muted" role="status">{TE.digestNoChanges}</p>}
             {levelView}
           </div>
           {!narrow && <Divider pct={leftPct} onChange={setLeftPct} />}
-          <aside className="graph-pane" aria-label={GRAPH.label}>
+          <aside className="graph-pane" aria-label={TG.label}>
             {narrow && (
               <button type="button" className="btn graph-toggle" aria-expanded={graphSectionOpen} onClick={() => setGraphSectionOpen((o) => !o)}>
-                {graphSectionOpen ? GRAPH.hide : GRAPH.show}
+                {graphSectionOpen ? TG.hide : TG.show}
               </button>
             )}
             {(!narrow || graphSectionOpen) && graphPane}

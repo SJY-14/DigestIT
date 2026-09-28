@@ -17,16 +17,20 @@ export function shortSha(sha: string): string {
   return sha.slice(0, 7);
 }
 
-const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+const RTF = {
+  en: new Intl.RelativeTimeFormat('en-US', { numeric: 'auto' }),
+  ko: new Intl.RelativeTimeFormat('ko-KR', { numeric: 'auto' }),
+};
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60],
 ];
 
-/** "3 days ago" style time; falls back to the absolute date for unparsable input. */
-export function relativeTime(iso: string, now: number = Date.now()): string {
+/** "3 days ago" style time (or the Korean equivalent); falls back to the absolute date for
+ * unparsable input. `lang` is last (not `now`) so existing English-only callers are unaffected. */
+export function relativeTime(iso: string, now: number = Date.now(), lang: 'en' | 'ko' = 'en'): string {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return iso;
   const s = Math.round((t - now) / 1000);
-  for (const [unit, secs] of UNITS) if (Math.abs(s) >= secs) return rtf.format(Math.trunc(s / secs), unit);
-  return 'just now';
+  for (const [unit, secs] of UNITS) if (Math.abs(s) >= secs) return RTF[lang].format(Math.trunc(s / secs), unit);
+  return lang === 'ko' ? '방금' : 'just now';
 }
