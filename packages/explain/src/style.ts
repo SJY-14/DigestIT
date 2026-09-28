@@ -43,6 +43,18 @@ export function sentenceCount(s: string): number {
   return t.split(/(?<=[.!?。])\s+/).filter((p) => p.trim() !== '').length;
 }
 
+/** The first `max` sentences of `s` (split as in `sentenceCount`); `s` itself when it has no more. */
+export function truncateSentences(s: string, max: number): string {
+  const t = s.trim();
+  const masked = t.replace(ABBREVIATIONS, (m) => 'x'.repeat(m.length));
+  const boundary = /(?<=[.!?。])\s+/g;
+  let seen = 0;
+  for (let m = boundary.exec(masked); m; m = boundary.exec(masked)) {
+    if (++seen === max) return t.slice(0, m.index);
+  }
+  return t;
+}
+
 interface Pattern {
   re: RegExp;
   label: string;

@@ -39,7 +39,7 @@ Replaces `AreaL3Content {why, design, risks, notes}` with `AreaWalkthrough`:
 ```ts
 { overview: string;                       // 2–3 sentences
   steps: { title: string;                 // ≤ 8 words
-           body: string;                  // now / before / why, prose
+           body: string;                  // now / before / why, 2–4 sentences, ≤ 70 words
            hunks: { path: string; hunk: number }[];   // 1-based, ≥ 1
            mechanical: boolean }[];       // at most one step is mechanical
   check: string[] }                       // "What to check", 1–5 items

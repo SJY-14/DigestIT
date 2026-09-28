@@ -11,6 +11,7 @@ import {
   checkAreaWalkthrough, checkDigestLevels, createProvider, explainArea, prepareAreaInput, prepareDigestInput,
 } from './index.js';
 import type { AreaInput, AreaResult, ExplanationProvider, ProviderFile } from './index.js';
+import { truncateSentences } from './style.js';
 
 function seedArea(
   db: DatabaseSync,
@@ -147,7 +148,7 @@ const baseInput: AreaInput = {
 };
 
 const step = (hunks: { path: string; hunk: number }[], patch: Partial<AreaWalkthrough['steps'][number]> = {}) => ({
-  title: 'Route the settings screen', body: 'App registers a /settings route so the screen is linkable.', hunks, mechanical: false, ...patch,
+  title: 'Route the settings screen', body: 'App registers a /settings route so the screen is linkable. Before, there was no way in.', hunks, mechanical: false, ...patch,
 });
 const ALL_HUNKS = [
   { path: 'apps/web/src/App.tsx', hunk: 1 }, { path: 'apps/web/src/App.tsx', hunk: 2 }, { path: 'apps/web/src/Settings.tsx', hunk: 1 },
@@ -174,6 +175,7 @@ describe('buildAreaPrompt', () => {
     expect(p).toContain('Hunk list (cover every one):\n- apps/web/src/App.tsx: hunk 1, hunk 2\n- apps/web/src/Settings.tsx: hunk 1\n</change>');
     expect(p).toContain('{"overview":string,"steps":[{"title":string,"body":string,"hunks":[{"path":string,"hunk":number}],"mechanical":boolean}],"check":string[]}');
     expect(p).toContain('what this code does now, what it did before, and why it was changed this way');
+    expect(p).toContain('2-4 short sentences, never more (at most 70 words in total)');
     expect(p).toContain('true for at most one step that groups purely mechanical edits');
   });
 
@@ -340,11 +342,56 @@ describe('checkAreaWalkthrough', () => {
     const reply = { ...validReply, steps: [{ ...validReply.steps[0]!, title: long, body: long }, validReply.steps[1]!], check: Array(7).fill('Test the retry path.') };
     const r = checkAreaWalkthrough(reply, FILES)!;
     expect(r.violations).toEqual(expect.arrayContaining([
-      'step 1 title: 150 words, limit 8', 'step 1 body: 150 words, limit 120', 'check: 7 items, limit 5',
+      'step 1 title: 150 words, limit 8', 'step 1 body: 150 words, limit 70', 'step 1 body: 1 sentences, need 2-4', 'check: 7 items, limit 5',
     ]));
     expect(r.content.steps[0]!.title.split(' ').length).toBeLessThanOrEqual(9);
-    expect(r.content.steps[0]!.body.split(' ').length).toBeLessThanOrEqual(121);
+    expect(r.content.steps[0]!.body.split(' ').length).toBeLessThanOrEqual(71);
     expect(r.content.check).toHaveLength(5);
+  });
+
+  it('needs a 2-4 sentence body', () => {
+    const oneSentence = { ...validReply.steps[0]!, body: 'Settings.tsx adds an empty Settings component.' };
+    expect(checkAreaWalkthrough({ ...validReply, steps: [oneSentence, validReply.steps[1]!] }, FILES)?.violations)
+      .toEqual(['step 1 body: 1 sentences, need 2-4']);
+
+    const fiveSentences = {
+      ...validReply.steps[0]!,
+      body: 'One thing happens. Then another. And a third. Then a fourth. Finally a fifth.',
+    };
+    const r = checkAreaWalkthrough({ ...validReply, steps: [fiveSentences, validReply.steps[1]!] }, FILES)!;
+    expect(r.violations).toEqual(['step 1 body: 5 sentences, need 2-4']);
+    expect(r.content.steps[0]!.body).toBe('One thing happens. Then another. And a third. Then a fourth.');
+
+    const koFive = { ...KO_REPLY.steps[0]!, body: '설정 화면을 추가합니다. 이전에는 없었습니다. 라우트를 등록합니다. 예: /settings 경로입니다. 테스트는 없습니다.' };
+    const ko = checkAreaWalkthrough({ ...KO_REPLY, steps: [koFive, KO_REPLY.steps[1]!] }, FILES, 'ko')!;
+    expect(ko.violations).toEqual(['step 1 body: 5 sentences, need 2-4']);
+    expect(ko.content.steps[0]!.body).toBe('설정 화면을 추가합니다. 이전에는 없었습니다. 라우트를 등록합니다. 예: /settings 경로입니다.');
+  });
+
+  it('cuts an over-long body at a sentence boundary, not at an abbreviation or identifier', () => {
+    expect(truncateSentences('Use e.g. config.ts first. Then b. Then c.', 2)).toBe('Use e.g. config.ts first. Then b.');
+    expect(truncateSentences('Only one.', 4)).toBe('Only one.');
+  });
+
+  it('rejects an over-long English body by word count, even with a valid sentence count', () => {
+    const filler = Array(10).fill('additionally').join(' ');
+    const sentence = (n: number) => `This step touches several small helpers across the module and ${filler}, adjusting behaviour in change ${n} of the sequence.`;
+    const body = [sentence(1), sentence(2), sentence(3)].join(' ');
+    const reply = { ...validReply, steps: [{ ...validReply.steps[0]!, body }, validReply.steps[1]!] };
+    const r = checkAreaWalkthrough(reply, FILES)!;
+    expect(r.violations).toEqual(expect.arrayContaining([expect.stringMatching(/^step 1 body: \d+ words, limit 70$/)]));
+    expect(r.violations).not.toEqual(expect.arrayContaining([expect.stringMatching(/^step 1 body: \d+ sentences, need 2-4$/)]));
+    expect(r.content.steps[0]!.body.split(' ').length).toBeLessThanOrEqual(71);
+  });
+
+  it('rejects an over-long Korean body by word count, in sentences that still parse as 2-4', () => {
+    const filler = Array(12).fill('추가로').join(' ');
+    const sentence = (n: number) => `이 단계는 여러 파일에 걸쳐 작은 도우미 함수 ${filler} 조금씩 손보는 변경 ${n}을 설명합니다.`;
+    const body = [sentence(1), sentence(2), sentence(3)].join(' ');
+    const r = checkAreaWalkthrough({ ...KO_REPLY, steps: [{ ...KO_REPLY.steps[0]!, body }, KO_REPLY.steps[1]!] }, FILES, 'ko')!;
+    expect(r.violations).toEqual(expect.arrayContaining([expect.stringMatching(/^step 1 body: \d+ words, limit 70$/)]));
+    expect(r.violations).not.toEqual(expect.arrayContaining([expect.stringMatching(/^step 1 body: \d+ sentences, need 2-4$/)]));
+    expect(r.content.steps[0]!.body.split(' ').length).toBeLessThanOrEqual(71);
   });
 
   it('needs at least one check item', () => {
@@ -352,10 +399,10 @@ describe('checkAreaWalkthrough', () => {
   });
 
   it('caps Korean text by characters too', () => {
-    const body = '가나다라마바사아자차'.repeat(70);
+    const body = '가나다라마바사아자차'.repeat(40);
     const r = checkAreaWalkthrough({ ...KO_REPLY, steps: [{ ...KO_REPLY.steps[0]!, body }, KO_REPLY.steps[1]!] }, FILES, 'ko')!;
-    expect(r.violations).toEqual(['step 1 body: 700 characters, limit 600']);
-    expect([...r.content.steps[0]!.body].length).toBeLessThanOrEqual(600);
+    expect(r.violations).toEqual(['step 1 body: 400 characters, limit 350', 'step 1 body: 1 sentences, need 2-4']);
+    expect([...r.content.steps[0]!.body].length).toBeLessThanOrEqual(350);
   });
 
   it.each([
@@ -374,7 +421,11 @@ describe('checkAreaWalkthrough', () => {
   it('rejects Korean boilerplate', () => {
     const reply = { ...KO_REPLY, steps: [{ ...KO_REPLY.steps[0]!, title: 'apps/web 변경 사항', body: '여기서 변경됨.' }, KO_REPLY.steps[1]!] };
     const v = checkAreaWalkthrough(reply, FILES, 'ko')!.violations;
-    expect(v).toEqual(['step 1 title: is only the filler "<폴더> 변경 사항"', 'step 1 body: is only the filler "여기서 변경됨"']);
+    expect(v).toEqual([
+      'step 1 title: is only the filler "<폴더> 변경 사항"',
+      'step 1 body: is only the filler "여기서 변경됨"',
+      'step 1 body: 1 sentences, need 2-4',
+    ]);
   });
 
   it('expects no steps when the area has no analysable hunk', () => {
