@@ -375,7 +375,7 @@ export function MainV2() {
     if (!noDigestsYet || currentProjectId === null) return;
     const ac = new AbortController();
     fetchProjectGraph(currentProjectId, firstRunExpand, ac.signal).then(
-      setFirstRunGraph,
+      (g) => { if (!ac.signal.aborted) setFirstRunGraph(g); },
       (e: unknown) => { if (!ac.signal.aborted) setFirstRunGraphError(e instanceof Error ? e.message : String(e)); },
     );
     return () => ac.abort();

@@ -143,6 +143,19 @@ describe('GET /api/projects/:id/graph', () => {
     const readme = body.nodes.find((n: { id: string }) => n.id === 'f:README.md');
     expect(readme).toBeDefined();
   });
+
+  it('unfolds a quiet folder on ?expand= and rejects a folder that is not in the tree', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const res = await get(app, `/api/projects/${repoId}/graph?expand=src`);
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.nodes.find((n: { id: string }) => n.id === 'd:src')).toMatchObject({ collapsed: false });
+    expect(body.nodes.find((n: { id: string }) => n.id === 'f:src/a.ts')).toBeDefined();
+    const bad = await get(app, `/api/projects/${repoId}/graph?expand=nope`);
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toBe('bad_expand');
+  });
 });
 
 describe('POST /api/projects (register)', () => {

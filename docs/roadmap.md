@@ -9,7 +9,7 @@ project with no digests had no graph, and the pending count included files skipp
 |---|---|---|---|---|
 | 0 | DIG-57 | Project switch resets digest/level/URL; project-specific first-run copy (merged) | Frontend engineer | — |
 | 1 | DIG-58 | `GET /api/projects/:id/graph` from the latest checkpoint; pending excludes skipped files (merged) | Diff engineer | — |
-| 2 | DIG-59 | Gray first-run graph in the graph pane | Frontend engineer | DIG-58 |
+| 2 | DIG-59 | Gray first-run graph in the graph pane; project graph accepts `expand` (merged) | Frontend engineer | DIG-58 |
 
 ## Non-git projects with generated outputs (done)
 

@@ -43,6 +43,23 @@ type Row = Record<string, unknown>;
 
 const V2_BODY_LIMIT = 8192;
 const MAX_EXPAND = 20;
+
+/** The graph `expand` query (one or repeated `expand=<dir>`), or null if it asks for too many. */
+function parseExpand(raw: unknown): string[] | null {
+  const expand = raw === undefined ? [] : (Array.isArray(raw) ? raw : [raw]).map(String);
+  return expand.length > MAX_EXPAND ? null : expand;
+}
+
+/** Every folder (and the root, '') that appears in `paths`: the valid `expand` values. */
+function dirsOf(paths: Iterable<string>): Set<string> {
+  const dirs = new Set<string>(['']);
+  for (const p of paths) {
+    if (p === '') continue;
+    const parts = p.split('/');
+    for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
+  }
+  return dirs;
+}
 const DEFAULT_DIGEST_LIMIT = 20;
 const MAX_DIGEST_LIMIT = 100;
 
@@ -299,17 +316,22 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     };
   });
 
-  app.get<{ Params: { id: string } }>('/api/projects/:id/graph', async (req, reply) => {
+  app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>('/api/projects/:id/graph', async (req, reply) => {
     const id = parseId(req.params.id);
     const row = id === null ? undefined : findProjectRow(id);
     if (!row) return reply.code(404).send({ error: 'not_found' });
+
+    const expand = parseExpand(req.query.expand);
+    if (expand === null) return reply.code(400).send({ error: 'too_many_expand' });
 
     const latest = latestCheckpoint(db, row.id);
     if (!latest) return { digestId: null, nodes: [], edges: [], totalFiles: 0, truncated: false } satisfies ProjectGraphDto;
 
     const shadow = await openShadow(projectDataDir(home, row.id), row.path);
     const paths = await listTree(shadow, latest.treeSha);
-    const result = buildProjectGraph({ paths, files: [] });
+    const validDirs = dirsOf(paths);
+    if (expand.some((e) => !validDirs.has(e))) return reply.code(400).send({ error: 'bad_expand' });
+    const result = buildProjectGraph({ paths, files: [], expand });
     return { digestId: null, ...result } satisfies ProjectGraphDto;
   });
 
@@ -392,9 +414,8 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       ).get(id) as { repoId: number; treeSha: string; projectPath: string } | undefined;
       if (!digestRow) return reply.code(404).send({ error: 'not_found' });
 
-      const raw = req.query.expand;
-      const expand = raw === undefined ? [] : (Array.isArray(raw) ? raw : [raw]).map(String);
-      if (expand.length > MAX_EXPAND) return reply.code(400).send({ error: 'too_many_expand' });
+      const expand = parseExpand(req.query.expand);
+      if (expand === null) return reply.code(400).send({ error: 'too_many_expand' });
 
       // JSON-encoded, not comma-joined: a folder name can itself contain a comma, which would
       // otherwise let e.g. expand=["a,b"] collide with expand=["a","b"].
@@ -409,13 +430,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       const shadow = await openShadow(projectDataDir(home, digestRow.repoId), digestRow.projectPath);
       const paths = await listTree(shadow, digestRow.treeSha);
 
-      const allPaths = new Set(paths.filter((p) => p !== ''));
-      for (const f of files) allPaths.add(f.path);
-      const validDirs = new Set<string>(['']);
-      for (const p of allPaths) {
-        const parts = p.split('/');
-        for (let i = 1; i < parts.length; i++) validDirs.add(parts.slice(0, i).join('/'));
-      }
+      const validDirs = dirsOf([...paths, ...files.map((f) => f.path)]);
       if (expand.some((e) => !validDirs.has(e))) return reply.code(400).send({ error: 'bad_expand' });
 
       const l2 = loadDigestL2(id!);
