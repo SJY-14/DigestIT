@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { splitHunks, walkPatch } from './hunks.js';
 
@@ -63,4 +66,30 @@ describe('splitHunks', () => {
     expect(kinds.slice(0, 4)).toEqual(['header', 'header', 'header', 'header']);
     expect(kinds.filter((k) => k === 'hunk')).toHaveLength(2);
   });
+});
+
+// The same vector the web UI's splitPatch passes (apps/web/src/hunks.test.ts), so the prompt, the
+// validator and the UI number hunks identically.
+interface VectorCase {
+  name: string;
+  patch: string;
+  hunks: { hunk: number; header: string; oldStart: number; newStart: number; lines: string[] }[];
+}
+const vector = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../test-vectors/hunk-split.json'), 'utf8'),
+) as { cases: VectorCase[] };
+
+describe('splitHunks (shared vector, test-vectors/hunk-split.json)', () => {
+  for (const c of vector.cases) {
+    it(c.name, () => {
+      const got = splitHunks(c.patch).map((h) => ({
+        hunk: h.index,
+        header: h.header,
+        oldStart: h.oldStart,
+        newStart: h.newStart,
+        lines: h.lines.filter((l) => l.kind !== '\\').map((l) => `${l.kind}${l.text}`),
+      }));
+      expect(got).toEqual(c.hunks);
+    });
+  }
 });
