@@ -1,0 +1,63 @@
+{
+ "repoName": "snapback",
+ "title": "digest",
+ "message": "",
+ "files": [
+  {
+   "path": "README.md",
+   "status": "M",
+   "additions": 5,
+   "deletions": 2,
+   "patch": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -6,3 +6,3 @@ Back up a photo folder to an S3-compatible bucket.\n \n-    snapback --bucket my-photos --concurrency 4 ~/Pictures\n+    snapback --bucket my-photos --concurrency 4 --retries 3 ~/Pictures\n \n@@ -12,3 +12,6 @@ Options:\n - `--concurrency <n>`: parallel uploads, default 4.\n+- `--retries <n>`: retries per file after a network error or a 5xx reply, 0-10, default 3\n+  (or `SNAPBACK_RETRIES`). Waits 200 ms, 400 ms, 800 ms, … (plus jitter, at most 10 s).\n \n-The first failed upload stops the run.\n+A file that still fails is listed at the end; the other files keep uploading. The exit code\n+is 2 when any file failed.\n"
+  },
+  {
+   "path": "src/cli.ts",
+   "status": "M",
+   "additions": 10,
+   "deletions": 5,
+   "patch": "diff --git a/src/cli.ts b/src/cli.ts\n--- a/src/cli.ts\n+++ b/src/cli.ts\n@@ -4,6 +4,6 @@ import { loadConfig } from './config.js';\n import { runQueue } from './queue.js';\n-import { uploadFile, type StorageClient } from './upload.js';\n+import { UploadError, uploadFile, type StorageClient } from './upload.js';\n \n export async function main(argv: string[], client: StorageClient): Promise<number> {\n-  const args: { bucket?: string; concurrency?: number } = {};\n+  const args: { bucket?: string; concurrency?: number; retries?: number } = {};\n   const dirs: string[] = [];\n@@ -13,2 +13,3 @@ export async function main(argv: string[], client: StorageClient): Promise<numbe\n     else if (a === '--concurrency') args.concurrency = Number(argv[++i]);\n+    else if (a === '--retries') args.retries = Number(argv[++i]);\n     else dirs.push(a);\n@@ -17,5 +18,9 @@ export async function main(argv: string[], client: StorageClient): Promise<numbe\n   const files = (await Promise.all(dirs.map(async (d) => (await readdir(d)).map((f) => join(d, f))))).flat();\n-  const keys = await runQueue(files, config.concurrency, (f) => uploadFile(client, config.bucket, f));\n-  console.log(`uploaded ${keys.length} files`);\n-  return 0;\n+  const outcomes = await runQueue(files, config.concurrency, (f) => uploadFile(client, config.bucket, f, config.retries));\n+  const failed = outcomes.flatMap((o) => (o.ok ? [] : [o.error]));\n+  console.log(`uploaded ${outcomes.length - failed.length} of ${outcomes.length} files`);\n+  for (const err of failed) {\n+    console.error(err instanceof UploadError ? `  failed: ${err.filePath} (${err.attempts} attempts)` : `  failed: ${String(err)}`);\n+  }\n+  return failed.length > 0 ? 2 : 0;\n }\n"
+  },
+  {
+   "path": "src/config.ts",
+   "status": "M",
+   "additions": 8,
+   "deletions": 1,
+   "patch": "diff --git a/src/config.ts b/src/config.ts\n--- a/src/config.ts\n+++ b/src/config.ts\n@@ -3,4 +3,7 @@ export interface Config {\n   concurrency: number;\n+  retries: number;\n }\n \n+export const MAX_RETRIES = 10;\n+\n export function loadConfig(env: Record<string, string | undefined>, args: Partial<Config> = {}): Config {\n@@ -10,3 +13,7 @@ export function loadConfig(env: Record<string, string | undefined>, args: Partia\n   if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error('concurrency must be a positive integer');\n-  return { bucket, concurrency };\n+  const retries = args.retries ?? Number(env.SNAPBACK_RETRIES ?? 3);\n+  if (!Number.isInteger(retries) || retries < 0 || retries > MAX_RETRIES) {\n+    throw new Error(`retries must be an integer from 0 to ${MAX_RETRIES}`);\n+  }\n+  return { bucket, concurrency, retries };\n }\n"
+  },
+  {
+   "path": "src/queue.ts",
+   "status": "M",
+   "additions": 10,
+   "deletions": 3,
+   "patch": "diff --git a/src/queue.ts b/src/queue.ts\n--- a/src/queue.ts\n+++ b/src/queue.ts\n@@ -1,3 +1,6 @@\n-export async function runQueue<T, R>(items: T[], concurrency: number, work: (item: T) => Promise<R>): Promise<R[]> {\n-  const results: R[] = new Array(items.length);\n+export type Outcome<R> = { ok: true; value: R } | { ok: false; error: unknown };\n+\n+/** Runs `work` over `items` with at most `concurrency` in flight; one failure no longer stops the others. */\n+export async function runQueue<T, R>(items: T[], concurrency: number, work: (item: T) => Promise<R>): Promise<Outcome<R>[]> {\n+  const results: Outcome<R>[] = new Array(items.length);\n   let next = 0;\n@@ -6,3 +9,7 @@ export async function runQueue<T, R>(items: T[], concurrency: number, work: (ite\n       const i = next++;\n-      results[i] = await work(items[i]!);\n+      try {\n+        results[i] = { ok: true, value: await work(items[i]!) };\n+      } catch (error) {\n+        results[i] = { ok: false, error };\n+      }\n     }\n"
+  },
+  {
+   "path": "src/retry.ts",
+   "status": "A",
+   "additions": 33,
+   "deletions": 0,
+   "patch": "diff --git a/src/retry.ts b/src/retry.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/retry.ts\n@@ -0,0 +1,33 @@\n+export interface RetryOptions {\n+  retries: number;\n+  baseDelayMs?: number;\n+  maxDelayMs?: number;\n+  /** Injected for tests. */\n+  sleep?: (ms: number) => Promise<void>;\n+  random?: () => number;\n+}\n+\n+const RETRYABLE_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'EPIPE']);\n+\n+/** Network errors and 5xx replies are worth another try; 4xx (bad key, no permission) never are. */\n+export function isRetryable(err: unknown): boolean {\n+  const e = err as { code?: string; status?: number };\n+  if (e.code && RETRYABLE_CODES.has(e.code)) return true;\n+  return typeof e.status === 'number' && e.status >= 500;\n+}\n+\n+export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions): Promise<{ value: T; attempts: number }> {\n+  const base = opts.baseDelayMs ?? 200;\n+  const max = opts.maxDelayMs ?? 10_000;\n+  const sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));\n+  const random = opts.random ?? Math.random;\n+  for (let attempt = 1; ; attempt++) {\n+    try {\n+      return { value: await fn(), attempts: attempt };\n+    } catch (err) {\n+      if (attempt > opts.retries || !isRetryable(err)) throw err;\n+      const delay = Math.min(max, base * 2 ** (attempt - 1));\n+      await sleep(delay / 2 + random() * (delay / 2));\n+    }\n+  }\n+}\n"
+  },
+  {
+   "path": "src/upload.ts",
+   "status": "M",
+   "additions": 21,
+   "deletions": 6,
+   "patch": "diff --git a/src/upload.ts b/src/upload.ts\n--- a/src/upload.ts\n+++ b/src/upload.ts\n@@ -2,2 +2,3 @@ import { readFile } from 'node:fs/promises';\n import { basename } from 'node:path';\n+import { withRetry } from './retry.js';\n \n@@ -7,10 +8,24 @@ export interface StorageClient {\n \n-export function objectKey(path: string, prefix = ''): string {\n-  return `${prefix}${basename(path)}`;\n+export class UploadError extends Error {\n+  constructor(readonly filePath: string, readonly attempts: number, readonly cause: unknown) {\n+    super(`upload of ${filePath} failed after ${attempts} attempt${attempts === 1 ? '' : 's'}`);\n+  }\n }\n \n-export async function uploadFile(client: StorageClient, bucket: string, path: string): Promise<string> {\n-  const body = await readFile(path);\n-  const key = objectKey(path);\n-  await client.put(bucket, key, body);\n+export function objectKey(filePath: string, prefix = ''): string {\n+  return `${prefix}${basename(filePath)}`;\n+}\n+\n+export async function uploadFile(client: StorageClient, bucket: string, filePath: string, retries = 0): Promise<string> {\n+  const body = await readFile(filePath);\n+  const key = objectKey(filePath);\n+  let attempts = 0;\n+  try {\n+    await withRetry(() => {\n+      attempts++;\n+      return client.put(bucket, key, body);\n+    }, { retries });\n+  } catch (err) {\n+    throw new UploadError(filePath, attempts, err);\n+  }\n   return key;\n"
+  },
+  {
+   "path": "test/retry.test.ts",
+   "status": "A",
+   "additions": 38,
+   "deletions": 0,
+   "patch": "diff --git a/test/retry.test.ts b/test/retry.test.ts\nnew file mode 100644\n--- /dev/null\n+++ b/test/retry.test.ts\n@@ -0,0 +1,38 @@\n+import { describe, expect, it } from 'vitest';\n+import { isRetryable, withRetry } from '../src/retry.js';\n+\n+const noSleep = async () => undefined;\n+\n+describe('withRetry', () => {\n+  it('retries a network error and returns the attempt count', async () => {\n+    let calls = 0;\n+    const r = await withRetry(async () => {\n+      if (++calls < 3) throw Object.assign(new Error('reset'), { code: 'ECONNRESET' });\n+      return 'ok';\n+    }, { retries: 3, sleep: noSleep });\n+    expect(r).toEqual({ value: 'ok', attempts: 3 });\n+  });\n+\n+  it('never retries a 4xx reply', async () => {\n+    let calls = 0;\n+    await expect(withRetry(async () => { calls++; throw Object.assign(new Error('denied'), { status: 403 }); }, { retries: 3, sleep: noSleep }))\n+      .rejects.toThrow('denied');\n+    expect(calls).toBe(1);\n+  });\n+\n+  it('doubles the delay up to the cap, with jitter in the upper half', async () => {\n+    const delays: number[] = [];\n+    await withRetry(async () => { throw Object.assign(new Error('x'), { status: 503 }); }, {\n+      retries: 4, baseDelayMs: 100, maxDelayMs: 300, sleep: async (ms) => { delays.push(ms); }, random: () => 1,\n+    }).catch(() => undefined);\n+    expect(delays).toEqual([100, 200, 300, 300]);\n+  });\n+});\n+\n+describe('isRetryable', () => {\n+  it('accepts 5xx and connection errors only', () => {\n+    expect(isRetryable({ status: 502 })).toBe(true);\n+    expect(isRetryable({ code: 'ETIMEDOUT' })).toBe(true);\n+    expect(isRetryable({ status: 404 })).toBe(false);\n+  });\n+});\n"
+  },
+  {
+   "path": "test/upload.test.ts",
+   "status": "M",
+   "additions": 10,
+   "deletions": 1,
+   "patch": "diff --git a/test/upload.test.ts b/test/upload.test.ts\n--- a/test/upload.test.ts\n+++ b/test/upload.test.ts\n@@ -1,3 +1,3 @@\n import { describe, expect, it } from 'vitest';\n-import { objectKey } from '../src/upload.js';\n+import { UploadError, objectKey, uploadFile } from '../src/upload.js';\n \n@@ -8 +8,10 @@ describe('objectKey', () => {\n });\n+\n+describe('uploadFile', () => {\n+  it('reports the file and the attempt count when every retry fails', async () => {\n+    const client = { put: async () => { throw Object.assign(new Error('reset'), { code: 'ECONNRESET' }); } };\n+    const err = await uploadFile(client, 'b', __filename, 0).catch((e: unknown) => e);\n+    expect(err).toBeInstanceOf(UploadError);\n+    expect((err as UploadError).attempts).toBe(1);\n+  });\n+});\n"
+  }
+ ]
+}
