@@ -250,10 +250,14 @@ const EMPTY_EN = {
       'Come back and press Explain to see what changed.',
     ],
   },
-  noDigests: {
-    heading: 'No digests yet',
-    body: 'Work in this project with any tool, then press Explain above. Each Explain turns the changes since the last one into a digest.',
-  },
+  /** First-run reading pane state for a project with no digests yet (DIG-57): specific to the
+   * project and, once known, how much is already waiting to be explained. */
+  noDigests: (projectName: string, pendingFiles: number) => ({
+    heading: `No explanations yet for ${projectName}`,
+    body: pendingFiles > 0
+      ? `${plural(pendingFiles, 'file')} changed since you registered it. Press Explain above to see what happened.`
+      : 'Work in this project with any tool, then press Explain above. Each Explain turns the changes since the last one into a digest.',
+  }),
   digestNoChanges: 'This digest has no file changes to explain. Keep working, then press Explain again.',
 } as const;
 const EMPTY_KO = {
@@ -265,10 +269,12 @@ const EMPTY_KO = {
       '다시 돌아와 Explain을 눌러 무엇이 바뀌었는지 확인하세요.',
     ],
   },
-  noDigests: {
-    heading: '아직 다이제스트가 없습니다',
-    body: '이 프로젝트에서 어떤 도구로든 작업한 뒤 위의 Explain을 눌러주세요. Explain을 누를 때마다 마지막 이후의 변경 사항이 다이제스트로 만들어집니다.',
-  },
+  noDigests: (projectName: string, pendingFiles: number) => ({
+    heading: `${projectName}에 대한 설명이 아직 없습니다`,
+    body: pendingFiles > 0
+      ? `등록 이후 파일 ${pendingFiles}개가 변경되었습니다. 위의 Explain을 눌러 무엇이 바뀌었는지 확인하세요.`
+      : '이 프로젝트에서 어떤 도구로든 작업한 뒤 위의 Explain을 눌러주세요. Explain을 누를 때마다 마지막 이후의 변경 사항이 다이제스트로 만들어집니다.',
+  }),
   digestNoChanges: '이 다이제스트에는 설명할 파일 변경 사항이 없습니다. 계속 작업한 뒤 다시 Explain을 눌러주세요.',
 } as const;
 export function emptyCopy(lang: Lang = 'en') {

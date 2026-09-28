@@ -32,6 +32,25 @@ export const fixtureStatus: ProjectStatusDto = {
   explainStartedAt: null,
 };
 
+/** A second, freshly registered project with no digests yet (DIG-57: project-switch tests). */
+export const fixtureProject2: ProjectDto = {
+  id: 2,
+  name: 'my-project',
+  rootPath: '/home/user/code/my-project',
+  language: 'en',
+  context: { status: 'none', builtAt: null, fromFiles: null, hasUserContext: false },
+  lastCheckpointAt: '2026-09-27T10:00:00Z',
+  digestCount: 0,
+};
+
+export const fixtureStatus2: ProjectStatusDto = {
+  project: fixtureProject2,
+  pending: { files: 5, additions: 0, deletions: 0 },
+  budget: { limit: 40, used: 17, remaining: 23, resetsAt: '2026-09-27T00:00:00Z' },
+  explaining: false,
+  explainStartedAt: null,
+};
+
 const files: DigestFileDto[] = [
   { path: 'apps/web/src/ProjectGraph.tsx', oldPath: null, status: 'A', additions: 180, deletions: 0, filteredReason: null },
   { path: 'apps/web/src/AreaView.tsx', oldPath: null, status: 'A', additions: 120, deletions: 0, filteredReason: null },
