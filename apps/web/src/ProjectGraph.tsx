@@ -7,7 +7,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import type { GraphEdge, GraphNode, ProjectGraphDto } from '@digestit/core';
 import { bounds, fitView, growFactor, layoutGraph, nodeRadius, rotatePositions, shouldRotate, type Point, type View } from './graphLayout.js';
 import { useRovingIndex } from './charts/roving.js';
-import { GRAPH as T, lineDelta } from './copy.js';
+import { graphCopy, lineDelta, type Lang } from './copy.js';
 
 /** Canvas size before the first measurement (and in environments without layout, e.g. tests). */
 const DEFAULT_SIZE = { w: 640, h: 640 };
@@ -48,21 +48,24 @@ function rootIdOf(graph: ProjectGraphDto): string | undefined {
 }
 
 /** "14 files changed in 5 folders." — the one-line orientation cue read before the nodes. */
-export function summarize(graph: ProjectGraphDto): string {
+export function summarize(graph: ProjectGraphDto, lang: Lang = 'en'): string {
+  const T = graphCopy(lang);
   const changedFiles = graph.nodes.filter((n) => n.kind === 'file' && n.changed).length;
   const changedFolders = graph.nodes.filter((n) => isFolder(n) && n.changed && n.id !== rootIdOf(graph)).length;
   return changedFiles === 0 ? T.summaryNone : T.summary(changedFiles, changedFolders);
 }
 
-export function tooltipText(n: GraphNode): string {
+export function tooltipText(n: GraphNode, lang: Lang = 'en'): string {
+  const T = graphCopy(lang);
   const parts = [n.path || n.name];
   if (n.kind !== 'file') parts.push(T.nodeFiles(n.fileCount));
   if (n.changed) parts.push(lineDelta(n.additions, n.deletions));
   return parts.join(' · ');
 }
 
-function nodeLabel(n: GraphNode): string {
-  return `${tooltipText(n)}. ${n.collapsed ? T.expandHint : T.openHint(n.areaIds.length)}`;
+function nodeLabel(n: GraphNode, lang: Lang = 'en'): string {
+  const T = graphCopy(lang);
+  return `${tooltipText(n, lang)}. ${n.collapsed ? T.expandHint : T.openHint(n.areaIds.length)}`;
 }
 
 function changedBounds(graph: ProjectGraphDto, positions: ReadonlyMap<string, Point>) {
@@ -87,9 +90,12 @@ export interface ProjectGraphProps {
   onSelectNode: (node: GraphNode) => void;
   /** A folded folder or group was clicked: re-fetch the graph with this path expanded. */
   onExpand: (path: string) => void;
+  /** The UI chrome's language; defaults to English for callers (mostly tests) that don't care. */
+  lang?: Lang;
 }
 
-export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelectNode, onExpand }: ProjectGraphProps) {
+export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelectNode, onExpand, lang = 'en' }: ProjectGraphProps) {
+  const T = graphCopy(lang);
   const priorPositions = useRef<Map<string, Point> | undefined>(undefined);
   const layout = useMemo(() => {
     const next = layoutGraph(graph.nodes, graph.edges, priorPositions.current);
@@ -229,7 +235,7 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
           <button type="button" className="btn graph-zoom" aria-label={T.zoomIn} onClick={() => zoomBy(ZOOM_STEP)}>+</button>
         </div>
       </div>
-      <p className="visually-hidden" id="graph-summary">{summarize(graph)} {T.keysHint}</p>
+      <p className="visually-hidden" id="graph-summary">{summarize(graph, lang)} {T.keysHint}</p>
       <div className="graph-canvas-wrap" ref={wrapRef}>
         <svg
           className="graph-canvas"
@@ -280,7 +286,7 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
                 ? { 'aria-hidden': true as const }
                 : {
                   role: 'button',
-                  'aria-label': nodeLabel(n),
+                  'aria-label': nodeLabel(n, lang),
                   tabIndex: roving.tabIndex(ri),
                   ref: roving.ref(ri),
                   onKeyDown: (e: KeyboardEvent) => roving.onKeyDown(e, ri),
@@ -323,7 +329,7 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
           </g>
         </svg>
       </div>
-      <p className="chart-tip" aria-hidden="true">{tipNode ? tooltipText(tipNode) : ' '}</p>
+      <p className="chart-tip" aria-hidden="true">{tipNode ? tooltipText(tipNode, lang) : ' '}</p>
       {graph.truncated && <p className="muted graph-note">{T.folded}</p>}
     </div>
   );

@@ -4,30 +4,32 @@
 // a row closes it, and focus goes back to the trigger. Error/truncated rows carry a Retry.
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import type { DigestSummaryDto } from '@digestit/core';
-import { digestRowLabel, lineDelta, PICKER } from './copy.js';
+import { digestRowLabel, lineDelta, pickerCopy, type Lang } from './copy.js';
 import type { useDigests } from './useDigests.js';
 
-function DigestRow({ d, current, onSelect, onRetry, retrying, retryDisabled }: {
+function DigestRow({ d, current, onSelect, onRetry, retrying, retryDisabled, lang }: {
   d: DigestSummaryDto;
   current: boolean;
   onSelect: () => void;
   onRetry: () => void;
   retrying: boolean;
   retryDisabled: boolean;
+  lang: Lang;
 }) {
+  const T = pickerCopy(lang);
   const retryable = d.status === 'error' || d.status === 'truncated';
   return (
     <li className="digest-row">
       <button type="button" className="digest-row-main" aria-current={current ? 'true' : undefined} onClick={onSelect}>
-        <span className="digest-row-label">{digestRowLabel(d.toAt, d.stats.files, d.l0?.text ?? null)}</span>
+        <span className="digest-row-label">{digestRowLabel(d.toAt, d.stats.files, d.l0?.text ?? null, Date.now(), lang)}</span>
         <span className="meta">
           <span className="stats">{lineDelta(d.stats.additions, d.stats.deletions)}</span>
-          {d.status !== 'ok' && <span className={`badge digest-status ${d.status}`}>{PICKER.status[d.status]}</span>}
+          {d.status !== 'ok' && <span className={`badge digest-status ${d.status}`}>{T.status[d.status]}</span>}
         </span>
       </button>
       {retryable && (
         <button type="button" className="btn retry" onClick={onRetry} disabled={retrying || retryDisabled}>
-          {retryDisabled ? PICKER.retryNoBudget : retrying ? PICKER.retrying : PICKER.retry}
+          {retryDisabled ? T.retryNoBudget : retrying ? T.retrying : T.retry}
         </button>
       )}
     </li>
@@ -41,9 +43,12 @@ export interface DigestPickerProps {
   onRetry: (id: number) => void;
   retryingId: number | null;
   retryDisabled: boolean;
+  /** The UI chrome's language; defaults to English for callers (mostly tests) that don't care. */
+  lang?: Lang;
 }
 
-export function DigestPicker({ digests, currentId, onSelect, onRetry, retryingId, retryDisabled }: DigestPickerProps) {
+export function DigestPicker({ digests, currentId, onSelect, onRetry, retryingId, retryDisabled, lang = 'en' }: DigestPickerProps) {
+  const T = pickerCopy(lang);
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -113,17 +118,17 @@ export function DigestPicker({ digests, currentId, onSelect, onRetry, retryingId
         aria-haspopup="true"
         aria-expanded={open}
         aria-controls={panelId}
-        aria-label={`${PICKER.label}: ${current ? digestRowLabel(current.toAt, current.stats.files, current.l0?.text ?? null) : PICKER.choose}`}
+        aria-label={`${T.label}: ${current ? digestRowLabel(current.toAt, current.stats.files, current.l0?.text ?? null, Date.now(), lang) : T.choose}`}
         onClick={() => setOpen((o) => !o)}
       >
         <span className="digest-picker-current">
-          {current ? digestRowLabel(current.toAt, current.stats.files, current.l0?.text ?? null) : PICKER.choose}
+          {current ? digestRowLabel(current.toAt, current.stats.files, current.l0?.text ?? null, Date.now(), lang) : T.choose}
         </span>
-        {current && current.status !== 'ok' && <span className={`badge digest-status ${current.status}`}>{PICKER.status[current.status]}</span>}
+        {current && current.status !== 'ok' && <span className={`badge digest-status ${current.status}`}>{T.status[current.status]}</span>}
         <span className="caret" aria-hidden="true">▾</span>
       </button>
       {open && (
-        <div className="digest-picker-panel" id={panelId} role="region" aria-label={PICKER.listLabel} ref={list} onKeyDown={onListKey}>
+        <div className="digest-picker-panel" id={panelId} role="region" aria-label={T.listLabel} ref={list} onKeyDown={onListKey}>
           <ol className="digest-list">
             {digests.items.map((d) => (
               <DigestRow
@@ -134,13 +139,14 @@ export function DigestPicker({ digests, currentId, onSelect, onRetry, retryingId
                 onRetry={() => onRetry(d.id)}
                 retrying={retryingId === d.id}
                 retryDisabled={retryDisabled}
+                lang={lang}
               />
             ))}
           </ol>
-          {digests.error && <p role="alert" className="error">{PICKER.loadError(digests.error)}</p>}
+          {digests.error && <p role="alert" className="error">{T.loadError(digests.error)}</p>}
           <div ref={sentinel} className="sentinel">
-            {digests.loading && <span className="muted">{PICKER.loading}</span>}
-            {digests.done && digests.items.length > 0 && <span className="muted">{PICKER.startOfHistory}</span>}
+            {digests.loading && <span className="muted">{T.loading}</span>}
+            {digests.done && digests.items.length > 0 && <span className="muted">{T.startOfHistory}</span>}
           </div>
         </div>
       )}

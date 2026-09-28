@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  apiErrorMessage, callsLeftLabel, contextSummary, digestRowLabel, elapsedLabel, explainButtonLabel, explainingLabel,
-  explainOutcomeMessage, humanDateTime, lineDelta, plural, resetsLabel,
+  apiErrorMessage, callsLeftLabel, contextSummary, digestRowLabel, elapsedLabel, emptyCopy, explainButtonLabel, explainingLabel,
+  explainOutcomeMessage, graphCopy, headerCopy, humanDateTime, levelsCopy, lineDelta, pickerCopy, plural, readerCopy, resetsLabel,
+  walkthroughCopy, type Lang,
 } from './copy.js';
 
 describe('plural', () => {
@@ -104,5 +105,95 @@ describe('digestRowLabel', () => {
     expect(digestRowLabel(at, 15, 'Adds retry to uploads', now)).toBe('Today, 17:05 · 15 files · Adds retry to uploads');
     expect(digestRowLabel(at, 1, null, now)).toBe('Today, 17:05 · 1 file · Not explained yet');
     expect(humanDateTime(at, now)).toBe('Today, 17:05');
+  });
+});
+
+// --- Korean (DIG-52) ------------------------------------------------------------------------------
+// `lang` is always the last parameter (after `now`, where there is one), so every call above keeps
+// working with the English default. These check the `ko` branch of the same functions.
+
+describe('Korean formatters', () => {
+  const now = new Date(2026, 8, 28, 18, 0).getTime();
+  const at = new Date(2026, 8, 28, 17, 5).toISOString();
+  const midnight = new Date(2026, 8, 29, 0, 0).toISOString();
+
+  it('humanDateTime / digestRowLabel', () => {
+    expect(humanDateTime(at, now, 'ko')).toBe('오늘, 17:05');
+    expect(humanDateTime(new Date(2026, 8, 27, 9, 12).toISOString(), now, 'ko')).toBe('어제, 09:12');
+    expect(digestRowLabel(at, 15, '업로드에 재시도 추가', now, 'ko')).toBe('오늘, 17:05 · 파일 15개 · 업로드에 재시도 추가');
+    expect(digestRowLabel(at, 1, null, now, 'ko')).toBe('오늘, 17:05 · 파일 1개 · 아직 설명되지 않음');
+  });
+
+  it('explainButtonLabel / elapsedLabel / explainingLabel', () => {
+    expect(explainButtonLabel(12, 'ko')).toBe('변경 사항 12개 설명하기');
+    expect(explainButtonLabel(0, 'ko')).toBe('새 변경 사항 없음');
+    expect(elapsedLabel(65, 'ko')).toBe('1분 05초');
+    expect(explainingLabel(12, 'ko')).toBe('설명 작성 중… 12초');
+  });
+
+  it('callsLeftLabel / resetsLabel', () => {
+    expect(callsLeftLabel(35, midnight, now, 'ko')).toBe('오늘 남은 호출 35회');
+    expect(callsLeftLabel(0, midnight, now, 'ko')).toBe('오늘 남은 호출 없음 · 00:00 초기화');
+    expect(resetsLabel(midnight, now, 'ko')).toBe('00:00');
+  });
+
+  it('contextSummary / explainOutcomeMessage / apiErrorMessage', () => {
+    expect(contextSummary('none', null, null, false, 'ko')).toBe('아직 빌드된 컨텍스트가 없습니다. 첫 Explain 때 만들어집니다.');
+    expect(contextSummary('ok', '3시간 전', 42, true, 'ko')).toBe('3시간 전 빌드됨, 파일 42개 기준, 사용자 노트 포함');
+    expect(explainOutcomeMessage('no_changes', undefined, '', 'ko'))
+      .toBe('마지막 확인 이후 변경된 내용이 없습니다. 어떤 도구로든 프로젝트에서 작업한 뒤 다시 Explain을 눌러주세요.');
+    expect(apiErrorMessage('bad_language', 'ko')).toBe('지원하지 않는 언어입니다.');
+    expect(apiErrorMessage('some_new_error_code', 'ko')).toBe('서버에 문제가 발생했습니다.');
+  });
+});
+
+/** A value's shape with every leaf reduced to its type (functions become `'fn'`), so two tables
+ * can be compared structurally regardless of their actual (language-specific) text. */
+function shape(v: unknown): unknown {
+  if (typeof v === 'function') return 'fn';
+  if (Array.isArray(v)) return v.map(shape);
+  if (v !== null && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v as Record<string, unknown>).sort()) out[k] = shape((v as Record<string, unknown>)[k]);
+    return out;
+  }
+  return typeof v;
+}
+
+/** Every string leaf of `en`/`ko` (dot-path -> value), for tables with the same shape. */
+function stringLeaves(v: unknown, path = ''): [string, string][] {
+  if (typeof v === 'string') return [[path, v]];
+  if (Array.isArray(v)) return v.flatMap((item, i) => stringLeaves(item, `${path}[${i}]`));
+  if (v !== null && typeof v === 'object') {
+    return Object.entries(v as Record<string, unknown>).flatMap(([k, val]) => stringLeaves(val, path ? `${path}.${k}` : k));
+  }
+  return [];
+}
+
+describe('every English chrome table has a matching Korean entry (DIG-52)', () => {
+  const tables: [string, (lang: Lang) => unknown][] = [
+    ['headerCopy', headerCopy],
+    ['pickerCopy', pickerCopy],
+    ['emptyCopy', emptyCopy],
+    ['readerCopy', readerCopy],
+    ['walkthroughCopy', walkthroughCopy],
+    ['graphCopy', graphCopy],
+    ['levelsCopy', levelsCopy],
+  ];
+
+  it.each(tables)('%s: ko has the same keys as en, and every string leaf is actually translated', (_name, table) => {
+    const en = table('en');
+    const ko = table('ko');
+    expect(shape(ko)).toEqual(shape(en));
+    const enLeaves = new Map(stringLeaves(en));
+    const koLeaves = new Map(stringLeaves(ko));
+    expect([...koLeaves.keys()].sort()).toEqual([...enLeaves.keys()].sort());
+    for (const [path, koText] of koLeaves) {
+      expect(koText.length, `${String(_name)} ${path} is empty`).toBeGreaterThan(0);
+      // `key` (levelsCopy's "L0".."L3") is a level identifier shown verbatim next to the
+      // translated label, not prose, so it is deliberately the same in both languages.
+      if (path.endsWith('.key')) continue;
+      expect(koText, `${String(_name)} ${path} was not translated`).not.toBe(enLeaves.get(path));
+    }
   });
 });

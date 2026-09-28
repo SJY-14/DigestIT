@@ -4,7 +4,7 @@
 // the area's full diff is shown instead, so the code is always one click away.
 import { useEffect, useMemo, useState } from 'react';
 import type { AreaDetailDto, AreaWalkthrough, DigestL2Item, HunkRef } from '@digestit/core';
-import { WALKTHROUGH as T, lineDelta } from './copy.js';
+import { lineDelta, walkthroughCopy, type Lang } from './copy.js';
 import { splitPatch, uncoveredHunks, type PatchHunk } from './hunks.js';
 import type { DiffLine } from './diff.js';
 
@@ -32,7 +32,8 @@ function DiffRow({ line }: { line: DiffLine }) {
 }
 
 /** One hunk, rendered with the diff styling; long ones fold with "Show all". */
-export function HunkBlock({ path, hunk }: { path: string; hunk: PatchHunk }) {
+export function HunkBlock({ path, hunk, lang = 'en' }: { path: string; hunk: PatchHunk; lang?: Lang }) {
+  const T = walkthroughCopy(lang);
   const [open, setOpen] = useState(false);
   const long = hunk.lines.length > FOLD_THRESHOLD;
   const lines = long && !open ? hunk.lines.slice(0, FOLD_PREVIEW) : hunk.lines;
@@ -60,20 +61,22 @@ export function HunkBlock({ path, hunk }: { path: string; hunk: PatchHunk }) {
 
 type HunkIndex = Map<string, PatchHunk[]>;
 
-function StepHunks({ refs, index }: { refs: HunkRef[]; index: HunkIndex }) {
+function StepHunks({ refs, index, lang = 'en' }: { refs: HunkRef[]; index: HunkIndex; lang?: Lang }) {
+  const T = walkthroughCopy(lang);
   return (
     <>
       {refs.map((r) => {
         const h = index.get(r.path)?.[r.hunk - 1];
         return h
-          ? <HunkBlock key={`${r.path}#${r.hunk}`} path={r.path} hunk={h} />
+          ? <HunkBlock key={`${r.path}#${r.hunk}`} path={r.path} hunk={h} lang={lang} />
           : <p key={`${r.path}#${r.hunk}`} className="muted hunk-missing">{T.missingHunk(r.path, r.hunk)}</p>;
       })}
     </>
   );
 }
 
-function StepNav({ step, total, onStep }: { step: number | null; total: number; onStep: (n: number) => void }) {
+function StepNav({ step, total, onStep, lang = 'en' }: { step: number | null; total: number; onStep: (n: number) => void; lang?: Lang }) {
+  const T = walkthroughCopy(lang);
   const cur = step ?? 0;
   return (
     <div className="step-bar">
@@ -99,9 +102,12 @@ export interface WalkthroughViewProps {
   onGenerate: () => void;
   /** Remaining daily LLM calls; null when unknown. */
   callsRemaining: number | null;
+  /** The UI chrome's language; defaults to English for callers (mostly tests) that don't care. */
+  lang?: Lang;
 }
 
-export function WalkthroughView({ area, item, step, onStep, onGenerate, callsRemaining }: WalkthroughViewProps) {
+export function WalkthroughView({ area, item, step, onStep, onGenerate, callsRemaining, lang = 'en' }: WalkthroughViewProps) {
+  const T = walkthroughCopy(lang);
   const walkthrough = walkthroughOf(area);
   const shown = useMemo(() => area.files.filter((f) => !f.filteredReason), [area.files]);
   const filtered = area.files.filter((f) => f.filteredReason);
@@ -156,7 +162,7 @@ export function WalkthroughView({ area, item, step, onStep, onGenerate, callsRem
       {notice}
       {walkthrough ? (
         <>
-          {steps.length > 0 && <StepNav step={step} total={steps.length} onStep={onStep} />}
+          {steps.length > 0 && <StepNav step={step} total={steps.length} onStep={onStep} lang={lang} />}
           <div className={steps.length > 3 ? 'walkthrough-body with-toc' : 'walkthrough-body'}>
             {steps.length > 3 && (
               <nav className="step-toc" aria-label={T.stepsNav}>
@@ -193,7 +199,7 @@ export function WalkthroughView({ area, item, step, onStep, onGenerate, callsRem
                     {s.mechanical && <span className="badge step-mech">{T.mechanical}</span>}
                   </h3>
                   <p className="step-body">{s.body}</p>
-                  <StepHunks refs={s.hunks} index={index} />
+                  <StepHunks refs={s.hunks} index={index} lang={lang} />
                 </section>
               ))}
               {walkthrough.check.length > 0 && (
@@ -206,7 +212,7 @@ export function WalkthroughView({ area, item, step, onStep, onGenerate, callsRem
                 <section className="uncovered" aria-labelledby="wt-uncovered">
                   <h3 id="wt-uncovered">{T.uncovered}</h3>
                   <p className="muted">{T.uncoveredNote}</p>
-                  {leftover.map((h) => <HunkBlock key={`${h.path}#${h.hunk}`} path={h.path} hunk={h} />)}
+                  {leftover.map((h) => <HunkBlock key={`${h.path}#${h.hunk}`} path={h.path} hunk={h} lang={lang} />)}
                 </section>
               )}
             </div>
@@ -218,7 +224,7 @@ export function WalkthroughView({ area, item, step, onStep, onGenerate, callsRem
           {shown.map((f) => {
             const hunks = index.get(f.path) ?? [];
             return hunks.length > 0
-              ? hunks.map((h) => <HunkBlock key={`${f.path}#${h.hunk}`} path={f.path} hunk={h} />)
+              ? hunks.map((h) => <HunkBlock key={`${f.path}#${h.hunk}`} path={f.path} hunk={h} lang={lang} />)
               : <p key={f.path} className="muted"><code>{f.path}</code> {T.noTextChange}</p>;
           })}
         </section>
