@@ -30,8 +30,8 @@ const validReply = {
   l2: {
     items: [
       {
-        id: 'storage', paths: ['packages/core/src/db.ts'], title: 'Storage layer', effect: 'No visible change',
-        how: 'Adjusted a query.', why: 'reason not evident from the change',
+        id: 'storage', paths: ['packages/core/src/db.ts'], title: 'Faster settings lookup', effect: 'Nothing changes for users; the settings query just runs faster.',
+        how: 'loadSettings now reads through an index instead of scanning the table.', why: 'The full scan got slow once projects kept many digests.',
       },
       {
         id: 'settings-ui', paths: ['apps/web/src/App.tsx'], title: 'Settings screen', effect: 'A new settings screen is reachable from the app.',
@@ -64,7 +64,7 @@ const callRows = (db: DatabaseSync) =>
 
 describe('buildDigestPrompt', () => {
   it('renders the diff as quoted data, with the project context only when given', () => {
-    const input: DigestInput = { repoName: 'DigestIT', files: FILES };
+    const input: DigestInput = { repoName: 'DigestIT', files: FILES, language: 'en' };
     const p = buildDigestPrompt(input);
     expect(p).toContain('<change repo="DigestIT">');
     expect(p).toContain('not analysed (lockfile)');
@@ -173,8 +173,8 @@ describe('checkDigestLevels', () => {
     };
     const r = checkDigestLevels(reply, [FILES[0]!]);
     expect(r?.violations.some((v) => v.includes('l0:'))).toBe(true);
-    expect(r?.violations.some((v) => v.includes('title has'))).toBe(true);
-    expect(r?.violations.some((v) => v.includes('effect has'))).toBe(true);
+    expect(r?.violations.some((v) => v.includes('title: 50 words'))).toBe(true);
+    expect(r?.violations.some((v) => v.includes('effect: 50 words'))).toBe(true);
     expect(r?.levels.l2.items[0]!.title.split(' ').length).toBeLessThanOrEqual(9); // 8 words + ellipsis token
     expect(r?.levels.l2.items[0]!.effect.split(' ').length).toBeLessThanOrEqual(21); // 20 words + ellipsis token
   });
@@ -309,7 +309,7 @@ describe('StubProvider.digest', () => {
     expect(r2).toMatchObject({ outcome: 'cached', calls: 0 });
   });
 
-  it('sets effect to "No visible change" for a tests-only area, and a fixed phrase otherwise', async () => {
+  it('says a tests-only area changes nothing for users, and admits it did not read the code otherwise', async () => {
     const db = openDb(':memory:');
     const id = seedDigest(db, [
       { path: 'packages/core/src/db.ts' },
@@ -319,8 +319,8 @@ describe('StubProvider.digest', () => {
     expect(r.outcome).toBe('ok');
     const l2 = JSON.parse(rows(db)[2]!.content) as { items: { id: string; paths: string[]; effect: string }[] };
     const byId = Object.fromEntries(l2.items.map((it) => [it.id, it.effect]));
-    expect(byId['tests']).toBe('No visible change');
-    expect(byId['packages']).not.toBe('No visible change');
+    expect(byId['tests']).toBe('Only tests or docs; nothing changes for users.');
+    expect(byId['packages']).toBe('Not described: the stub provider does not read the code.');
   });
 
   it('dedupes stub ids that collide after case-folding', async () => {
@@ -333,5 +333,86 @@ describe('StubProvider.digest', () => {
     expect(r.outcome).toBe('ok');
     const l2 = JSON.parse(rows(db)[2]!.content) as { items: { id: string; paths: string[] }[] };
     expect(l2.items.map((it) => it.id).sort()).toEqual(['foo', 'foo-2']);
+  });
+});
+
+describe('natural language (DIG-48)', () => {
+  const area = validReply.l2.items[1]!;
+  const withArea = (patch: Record<string, string>) => ({ ...validReply, l2: { items: [validReply.l2.items[0]!, { ...area, ...patch }], notAnalysed: [] } });
+
+  it.each([
+    ['a stats line as L0', { ...validReply, l0: { text: '15 files changed, +120 / -30.' } }, 'l0: is a stats line'],
+    ['a bare "No user-visible change" bullet', { ...validReply, l1: { userVisible: false, bullets: ['No user-visible change'] } }, 'l1: bullet 0: is only the filler'],
+    ['"Changes in <dir>" as an area title', withArea({ title: 'Changes in apps/web' }), 'title: is only the filler "Changes in <folder>"'],
+    ['"may have changed" in an effect', withArea({ effect: 'Behavior in this area of the app may have changed.' }), 'effect: uses the filler "may have changed"'],
+    ['"reason not evident from the change" as why', withArea({ why: 'reason not evident from the change' }), 'why: uses the filler "reason not evident from the change"'],
+    ['"file(s)" in how', withArea({ how: 'Touches 3 file(s).' }), 'how: uses the filler "file(s)"-style plural'],
+    ['a bare "not evident from the diff"', withArea({ why: 'The reason is not evident from the diff.' }), 'without saying what is unclear'],
+  ])('rejects %s', (_name, reply, expected) => {
+    const r = checkDigestLevels(reply, FILES);
+    expect(r?.violations.some((v) => v.includes(expected))).toBe(true);
+  });
+
+  it('allows "not evident from the diff" when it says what is unclear and what would settle it', () => {
+    const why = 'Why the retry limit is 5 is not evident from the diff; the upload ticket or a load test would settle it.';
+    const r = checkDigestLevels(withArea({ why }), FILES);
+    expect(r?.violations).toEqual([]);
+  });
+
+  it('asks for the why in L0 and a senior engineer\'s voice, and names the forbidden filler', () => {
+    const p = buildDigestPrompt({ repoName: 'DigestIT', files: FILES, language: 'en' });
+    expect(p).toContain('senior engineer');
+    expect(p).toContain('active voice');
+    expect(p).toContain('never "Changes in <folder>"');
+    expect(p).toContain('Bad: "15 files changed, +120 / -30."');
+    expect(p).toContain('write every prose value in English');
+    expect(p).not.toContain('reason not evident from the change');
+  });
+
+  it('writes the Korean prompt: prose in Korean, code as written, ids in English', () => {
+    const p = buildDigestPrompt({ repoName: 'DigestIT', files: FILES, language: 'ko' });
+    expect(p).toContain('in Korean (한국어)');
+    expect(p).toContain('Keep code identifiers, file paths, flags, endpoints, commands and quoted code exactly as written');
+    expect(p).toContain('JSON keys, ids and hunk references stay exactly as specified');
+    expect(p).not.toContain('write every prose value in English');
+  });
+
+  it('puts the language in the input hash', () => {
+    const raw = { repoName: 'DigestIT', title: 'digest', message: '', files: FILES.map((f) => ({ ...f })) };
+    expect(prepareDigestInput(raw, undefined, 'en').inputHash).not.toBe(prepareDigestInput(raw, undefined, 'ko').inputHash);
+    expect(prepareDigestInput(raw, undefined, 'ko').input.language).toBe('ko');
+  });
+
+  it('checks Korean text by 어절 and a character cap, and accepts a natural Korean reply', () => {
+    const ko = {
+      l0: { text: '설정 화면을 추가해 사용자가 앱 안에서 알림을 직접 끌 수 있게 합니다.' },
+      l1: { userVisible: true, bullets: ['앱 메뉴에 설정 화면이 새로 생깁니다.'] },
+      l2: {
+        items: [
+          { id: 'storage', paths: ['packages/core/src/db.ts'], title: '설정 조회 속도 개선', effect: '사용자에게는 변화가 없고 설정 조회만 빨라집니다.', how: 'loadSettings가 전체 스캔 대신 인덱스를 사용합니다.', why: '다이제스트가 많아지면서 전체 스캔이 느려졌습니다.' },
+          { id: 'settings-ui', paths: ['apps/web/src/App.tsx'], title: '설정 화면', effect: '앱 메뉴에서 설정 화면을 열 수 있습니다.', how: 'App.tsx에 SettingsScreen 라우트를 추가했습니다.', why: '알림을 끌 곳이 없다는 요청에 대응합니다.' },
+        ],
+        notAnalysed: [],
+      },
+    };
+    expect(checkDigestLevels(ko, FILES, 'ko')?.violations).toEqual([]);
+    const long = { ...ko, l2: { ...ko.l2, items: [ko.l2.items[0]!, { ...ko.l2.items[1]!, title: '가나다라마바사아자차카타파하'.repeat(3) }] } };
+    const r = checkDigestLevels(long, FILES, 'ko');
+    expect(r?.violations.some((v) => v.includes('title: 42 characters, limit 40'))).toBe(true);
+    expect([...r!.levels.l2.items[1]!.title].length).toBeLessThanOrEqual(40);
+    const filler = { ...ko, l2: { ...ko.l2, items: [ko.l2.items[0]!, { ...ko.l2.items[1]!, effect: '이 영역의 동작이 변경되었을 수 있습니다.' }] } };
+    expect(checkDigestLevels(filler, FILES, 'ko')?.violations.some((v) => v.includes('변경되었을 수 있습니다'))).toBe(true);
+  });
+
+  it('stub digests pass the validator with no filler, in English and in Korean', async () => {
+    for (const language of ['en', 'ko'] as const) {
+      const db = openDb(':memory:');
+      const id = seedDigest(db, [{ path: 'packages/core/src/db.ts' }, { path: 'apps/web/src/App.tsx' }, { path: 'README.md' }]);
+      const r = await explainDigest(db, id, new StubProvider(), { budget: 40, language });
+      expect(r).toMatchObject({ outcome: 'ok', calls: 1 });
+      const text = rows(db).map((row) => row.content).join('\n');
+      expect(text).not.toMatch(/\(s\)|may have changed|Changes in|No user-visible change|reason not evident/);
+      if (language === 'ko') expect(JSON.parse(rows(db)[0]!.content).text).toMatch(/[가-힣]/);
+    }
   });
 });

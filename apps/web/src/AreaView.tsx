@@ -1,5 +1,6 @@
 // L3 area view (DIG-41, docs/direction-v2.md §4-5): a Generate/pending/error/truncated notice
-// gated on `status`, then why/design/risks (once generated), then the diff — shown regardless of
+// gated on `status`, then the walkthrough's overview/steps/check (once generated; the step-by-step
+// UI is DIG-50, docs/ux-v3.md §2), then the diff — shown regardless of
 // `status` since the raw patch is already in the GET payload and costs no LLM call. Hunks of <= 20
 // lines show inline with their notes; longer ones fold to the annotated lines +/- 3, with an
 // Expand per fold and a Show all per file ('e' expands everything). Swaps in for the project
@@ -156,13 +157,14 @@ export interface AreaViewProps {
   onGenerate: () => void;
   /** Remaining daily LLM calls, shown in the Generate button. Omitted if unknown. */
   callsRemaining?: number | null;
+  /** Line notes shown in the diff. The walkthrough (UX v3) has none; kept for the diff renderer. */
+  annotations?: Annotation[];
 }
 
-export function AreaView({ area, title, onBack, focusPath, onGenerate, callsRemaining }: AreaViewProps) {
+export function AreaView({ area, title, onBack, focusPath, onGenerate, callsRemaining, annotations = [] }: AreaViewProps) {
   const l3 = area.l3;
   const shown = area.files.filter((f) => !f.filteredReason);
   const filtered = area.files.filter((f) => f.filteredReason);
-  const annotations: Annotation[] = l3?.notes ?? [];
   const [expandAllTick, setExpandAllTick] = useState(0);
 
   useEffect(() => {
@@ -202,14 +204,22 @@ export function AreaView({ area, title, onBack, focusPath, onGenerate, callsRema
       )}
       {l3 && (
         <div className="area-l3">
-          <h3>Why</h3>
-          <p>{l3.why}</p>
-          <h3>Design</h3>
-          <p className="muted">{l3.design}</p>
-          {l3.risks.length > 0 && (
+          <h3>Overview</h3>
+          <p>{l3.overview}</p>
+          <h3>Steps</h3>
+          <ol className="walk-steps">
+            {l3.steps.map((st, i) => (
+              <li key={i}>
+                <strong>{st.title}</strong>
+                <p>{st.body}</p>
+                <p className="muted">{st.hunks.map((h) => `${h.path} #${h.hunk}`).join(', ')}</p>
+              </li>
+            ))}
+          </ol>
+          {l3.check.length > 0 && (
             <>
-              <h3>Risks</h3>
-              <ul>{l3.risks.map((r, i) => <li key={i}>{r}</li>)}</ul>
+              <h3>What to check</h3>
+              <ul>{l3.check.map((c, i) => <li key={i}>{c}</li>)}</ul>
             </>
           )}
         </div>

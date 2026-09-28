@@ -126,8 +126,8 @@ export class ClaudeCodeProvider implements ExplanationProvider {
 
   async explainArea(input: AreaInput): Promise<AreaResult> {
     const v = parseJson(await this.call(buildAreaPrompt(input)));
-    if (typeof v.why !== 'string' || typeof v.design !== 'string' || !Array.isArray(v.risks) || !Array.isArray(v.notes)) {
-      throw new Error('invalid area explanation');
+    if (typeof v.overview !== 'string' || !Array.isArray(v.steps) || !Array.isArray(v.check)) {
+      throw new Error('invalid area walkthrough');
     }
     return { content: v as unknown as AreaResult['content'], provider: this.id, model: this.model };
   }

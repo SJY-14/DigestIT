@@ -15,17 +15,19 @@ export const LIMITS = {
   digestAreaWords: 30,
   digestEffectWords: 20,
   digestIdMaxLen: 40,
-  areaWhyWords: 120,
-  areaDesignWords: 80,
-  areaRisksMax: 3,
-  areaRiskWords: 30,
-  areaNotesMax: 12,
-  areaNoteWords: 40,
+  walkOverviewWords: 80,
+  walkOverviewSentencesMin: 2,
+  walkOverviewSentencesMax: 3,
+  walkStepsMax: 12,
+  walkTitleWords: 8,
+  walkBodyWords: 120,
+  walkCheckMin: 1,
+  walkCheckMax: 5,
+  walkCheckWords: 30,
 } as const;
 
+/** Required first L1 bullet of a *commit* (not a digest) with nothing user-visible. */
 export const NO_CHANGE = 'No user-visible change';
-/** Required verbatim for a digest area's `effect` when nothing about it is user-visible. */
-export const NO_VISIBLE_CHANGE = 'No visible change';
 
 export interface CheckResult {
   /** Sanitised copy that satisfies every limit (over-limit parts are cut). */
@@ -36,9 +38,13 @@ export interface CheckResult {
 
 export const wordCount = (s: string): number => (s.trim() === '' ? 0 : s.trim().split(/\s+/).length);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const HTML = /<\/?[a-zA-Z][^>]*>/g;
+/**
+ * Real HTML tags only: prose that names code keeps generics and JSX components such as
+ * `Outcome<R>`, `Promise<void>` or `<Settings />` intact.
+ */
+const HTML = /<\/?(?:a|abbr|b|blockquote|br|button|code|div|em|embed|form|h[1-6]|hr|i|iframe|img|input|li|link|meta|object|ol|p|pre|s|script|small|span|strong|style|sub|sup|svg|table|td|th|tr|u|ul)(?=[\s/>])[^>]*>/gi;
 const URL_RE = /\bhttps?:\/\/\S+/gi;
-const FILE_REF = /`|\b[\w-]+\.(?:tsx?|jsx?|json|md|ya?ml|py|sql|sh|css|html|toml|lock)\b|\b[\w-]+\/[\w./-]+/;
+export const FILE_REF = /`|\b[\w-]+\.(?:tsx?|jsx?|json|md|ya?ml|py|sql|sh|css|html|toml|lock)\b|\b[\w-]+\/[\w./-]+/;
 
 export function truncateWords(s: string, n: number): string {
   const parts = s.trim().split(/\s+/);

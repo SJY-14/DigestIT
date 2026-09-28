@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AreaDetailDto } from '@digestit/core';
 import { AreaView } from './AreaView.js';
+import type { Annotation } from './diff.js';
 import { fixtureArea } from './v2Fixtures.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,25 +30,28 @@ const key = async (k: string, target: EventTarget = document) => {
 };
 const noop = () => undefined;
 
+/** A line note on the fixture file, passed through the `annotations` prop. */
+const NOTES: Annotation[] = [{ path: 'apps/web/src/ProjectGraph.tsx', side: 'new', startLine: 20, endLine: 20, note: 'the important bit' }];
+
 function longHunkArea(): AreaDetailDto {
   const lines = ['@@ -1,40 +1,40 @@'];
   for (let i = 1; i <= 40; i++) lines.push(i === 20 ? ' key line' : ' filler');
   return {
     ...fixtureArea,
-    l3: { ...fixtureArea.l3!, notes: [{ path: 'apps/web/src/ProjectGraph.tsx', side: 'new', startLine: 20, endLine: 20, note: 'the important bit' }] },
     files: [{ ...fixtureArea.files[0]!, patch: lines.join('\n') }],
   };
 }
 
 describe('AreaView', () => {
-  it('renders why/design/risks under their own headings and calls onBack', async () => {
+  it('renders the walkthrough overview, steps and what to check, and calls onBack', async () => {
     const onBack = vi.fn();
     await render(<AreaView area={fixtureArea} title="Project graph pane" onBack={onBack} onGenerate={noop} />);
     const headings = [...host.querySelectorAll('.area-l3 h3')].map((h) => h.textContent);
-    expect(headings).toEqual(['Why', 'Design', 'Risks']);
-    expect(host.textContent).toContain(fixtureArea.l3!.why);
-    expect(host.textContent).toContain(fixtureArea.l3!.design);
-    expect(host.textContent).toContain(fixtureArea.l3!.risks[0]);
+    expect(headings).toEqual(['Overview', 'Steps', 'What to check']);
+    expect(host.textContent).toContain(fixtureArea.l3!.overview);
+    expect(host.textContent).toContain(fixtureArea.l3!.steps[0]!.body);
+    expect(host.textContent).toContain('apps/web/src/ProjectGraph.tsx #1');
+    expect(host.textContent).toContain(fixtureArea.l3!.check[0]);
     await click(host.querySelector('.back'));
     expect(onBack).toHaveBeenCalled();
   });
@@ -98,7 +102,7 @@ describe('AreaView', () => {
   });
 
   it('folds a long hunk to +/- 3 lines around the annotated line, with an Expand control on each side', async () => {
-    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} />);
+    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} annotations={NOTES} />);
     // Visible: header + lines 17..23 (key line 20 +/- 3) = 7 content rows, folded before and after.
     expect(host.querySelectorAll('.dl').length).toBe(1 + 7);
     expect(host.querySelectorAll('.fold-expand')).toHaveLength(2);
@@ -111,13 +115,13 @@ describe('AreaView', () => {
   });
 
   it('"Show all" reveals every line without needing per-fold Expand clicks', async () => {
-    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} />);
+    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} annotations={NOTES} />);
     await click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Show all'));
     expect(host.querySelectorAll('.dl').length).toBe(1 + 40);
   });
 
   it("'e' expands every fold across every file", async () => {
-    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} />);
+    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} annotations={NOTES} />);
     expect(host.querySelector('.fold-expand')).toBeTruthy();
     await key('e');
     expect(host.querySelectorAll('.dl').length).toBe(1 + 40);
@@ -125,7 +129,7 @@ describe('AreaView', () => {
   });
 
   it("ignores 'e' while composing (IME input in progress)", async () => {
-    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} />);
+    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} annotations={NOTES} />);
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true, isComposing: true }));
     });
@@ -133,7 +137,7 @@ describe('AreaView', () => {
   });
 
   it("ignores 'e' typed into a contenteditable region", async () => {
-    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} />);
+    await render(<AreaView area={longHunkArea()} title="x" onBack={noop} onGenerate={noop} annotations={NOTES} />);
     const editable = document.createElement('div');
     // jsdom doesn't implement contentEditable reflection, so stub the property the guard reads.
     Object.defineProperty(editable, 'isContentEditable', { value: true });
@@ -180,8 +184,8 @@ describe('AreaView', () => {
   });
 
   it('a file with notes starts open even when not focused', async () => {
-    // fixtureArea's one file (ProjectGraph.tsx) carries the l3 note.
-    await render(<AreaView area={fixtureArea} title="x" onBack={noop} onGenerate={noop} />);
+    // The note is on fixtureArea's one file (ProjectGraph.tsx).
+    await render(<AreaView area={fixtureArea} title="x" onBack={noop} onGenerate={noop} annotations={NOTES} />);
     const details = host.querySelector('details.file') as HTMLDetailsElement;
     expect(details.open).toBe(true);
   });

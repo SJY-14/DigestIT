@@ -109,10 +109,16 @@ export const fixtureArea: AreaDetailDto = {
   areaId: 'graph-pane',
   status: 'ok',
   l3: {
-    why: 'The Board asked for a two-pane digest view so the project graph and the change list stay in sync.',
-    design: 'A deterministic tree layout (radial seed + a fixed d3-force tick count) replaces an animated force layout to keep renders reproducible.',
-    risks: ['Very large trees may still need the 400-node fold to stay readable.'],
-    notes: [{ path: 'apps/web/src/ProjectGraph.tsx', side: 'new', startLine: 60, endLine: 76, note: 'Radial seed keeps siblings within their parent\'s angular sector before relaxing.' }],
+    overview: 'The graph pane gets a deterministic layout so the same digest always draws the same picture. Node size now follows how much changed.',
+    steps: [
+      {
+        title: 'Size nodes by how much changed',
+        body: 'nodeRadius returns 5 for unchanged nodes and grows with the square root of added plus deleted lines, capped at 22. Before, every node had the same size, so large edits did not stand out.',
+        hunks: [{ path: 'apps/web/src/ProjectGraph.tsx', hunk: 1 }],
+        mechanical: false,
+      },
+    ],
+    check: ['Very large trees may still need the 400-node fold to stay readable.'],
   },
   files: [
     {
