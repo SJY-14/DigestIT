@@ -18,6 +18,7 @@ export const fixtureProject: ProjectDto = {
   id: 1,
   name: 'digestit',
   rootPath: '/home/user/code/digestit',
+  language: 'en',
   context: fixtureContext,
   lastCheckpointAt: '2026-09-26T16:40:00Z',
   digestCount: 3,
@@ -28,6 +29,7 @@ export const fixtureStatus: ProjectStatusDto = {
   pending: { files: 12, additions: 340, deletions: 25 },
   budget: { limit: 40, used: 17, remaining: 23, resetsAt: '2026-09-27T00:00:00Z' },
   explaining: false,
+  explainStartedAt: null,
 };
 
 const files: DigestFileDto[] = [
@@ -45,6 +47,7 @@ export const fixtureDigest: DigestDetailDto = {
   toAt: '2026-09-26T16:40:00Z',
   stats: { files: 12, additions: 340, deletions: 25 },
   status: 'ok',
+  language: 'en',
   l0: { text: 'Two-pane main screen: change list plus project graph' },
   l1: { userVisible: true, bullets: ['The home screen now shows a project graph next to the change list.'] },
   l2: {
@@ -80,13 +83,20 @@ export const fixtureDigestSummary: DigestSummaryDto = {
   stats: fixtureDigest.stats,
   status: fixtureDigest.status,
   l0: fixtureDigest.l0,
+  language: fixtureDigest.language,
 };
 
 export const fixtureDigestPage: DigestPageDto = {
   items: [
     fixtureDigestSummary,
-    { id: 40, seq: 2, fromAt: '2026-09-26T09:00:00Z', toAt: '2026-09-26T14:05:00Z', stats: { files: 4, additions: 60, deletions: 10 }, status: 'ok', l0: { text: 'Digest explanation endpoint' } },
-    { id: 39, seq: 1, fromAt: '2026-09-25T09:00:00Z', toAt: '2026-09-26T09:00:00Z', stats: { files: 6, additions: 90, deletions: 4 }, status: 'error', l0: null },
+    {
+      id: 40, seq: 2, fromAt: '2026-09-26T09:00:00Z', toAt: '2026-09-26T14:05:00Z',
+      stats: { files: 4, additions: 60, deletions: 10 }, status: 'ok', l0: { text: 'Digest explanation endpoint' }, language: 'en',
+    },
+    {
+      id: 39, seq: 1, fromAt: '2026-09-25T09:00:00Z', toAt: '2026-09-26T09:00:00Z',
+      stats: { files: 6, additions: 90, deletions: 4 }, status: 'error', l0: null, language: 'en',
+    },
   ],
   nextCursor: null,
 };

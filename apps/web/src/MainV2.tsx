@@ -2,17 +2,22 @@
 // status, budget, Explain button), and the two-pane digest view (change list + project graph).
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import type {
-  AreaDetailDto, DigestDetailDto, DigestL2Item, DigestSummaryDto, GraphNode, ProjectDto, ProjectGraphDto, ProjectStatusDto,
+  AreaDetailDto, DigestDetailDto, DigestL2Item, DigestSummaryDto, ExplainLanguage, GraphNode, ProjectDto, ProjectGraphDto,
+  ProjectStatusDto,
 } from '@digestit/core';
 import {
-  ApiError, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph, fetchProjectStatus, fetchProjects, refreshContext,
-  retryDigest,
+  ApiError, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph, fetchProjectStatus, fetchProjects,
+  refreshContext, retryDigest, setProjectLanguage,
 } from './v2Api.js';
 import { useDigests } from './useDigests.js';
 import { startLive } from './liveClient.js';
-import { formatDate, relativeTime } from './format.js';
+import {
+  digestRowLabel, DIGEST_NO_CHANGES_EMPTY_STATE, DIGEST_STATUS_LABEL, explainOutcomeMessage, humanDateTime,
+  NO_DIGESTS_EMPTY_STATE, NO_PROJECTS_EMPTY_STATE,
+} from './copy.js';
 import { ProjectGraph } from './ProjectGraph.js';
 import { AreaView } from './AreaView.js';
+import { ProjectHeader } from './ProjectHeader.js';
 import { useV2Url } from './v2Url.js';
 
 // --- setup form (no project registered yet) -----------------------------------------------------
@@ -39,7 +44,10 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
 
   return (
     <div className="box setup">
-      <h2 className="box-head">Start a project</h2>
+      <h2 className="box-head">{NO_PROJECTS_EMPTY_STATE.heading}</h2>
+      <ol className="empty-steps">
+        {NO_PROJECTS_EMPTY_STATE.steps.map((s, i) => <li key={i}>{s}</li>)}
+      </ol>
       <form className="setup-form" onSubmit={(e) => void submit(e)}>
         <label className="field">
           <span>Project folder</span>
@@ -70,101 +78,11 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
   );
 }
 
-// --- project bar: switcher, context status, budget, Explain ------------------------------------
-
-function BudgetMeter({ status }: { status: ProjectStatusDto }) {
-  const { limit, remaining } = status.budget;
-  return (
-    <span className="budget-meter" title={`Resets ${formatDate(status.budget.resetsAt)}`}>
-      {remaining} of {limit} LLM calls left today
-    </span>
-  );
-}
-
-function pendingLabel(status: ProjectStatusDto): string {
-  const { files, additions, deletions } = status.pending;
-  if (files === 0) return 'Nothing pending since last check';
-  return `${files} ${files === 1 ? 'file' : 'files'}, +${additions} −${deletions} since last check`;
-}
-
-function explainDisabledReason(status: ProjectStatusDto, explaining: boolean): string | null {
-  if (explaining) return 'Explaining…';
-  if (status.pending.files === 0) return 'Nothing pending since last check';
-  if (status.budget.remaining === 0) return 'Daily budget used up';
-  return null;
-}
-
-function ExplainButton({ status, explaining, onExplain }: { status: ProjectStatusDto; explaining: boolean; onExplain: () => void }) {
-  const reason = explainDisabledReason(status, explaining);
-  return (
-    <button type="button" className="btn primary explain-btn" disabled={reason !== null} onClick={onExplain} title={reason ?? undefined}>
-      {explaining ? 'Explaining…' : 'Explain changes since last check'}
-      <span className="explain-pending">{pendingLabel(status)}</span>
-    </button>
-  );
-}
-
-function contextLabel(status: ProjectStatusDto): string {
-  const c = status.project.context;
-  if (c.status === 'none') return 'No context built yet';
-  const built = c.builtAt ? `Built ${relativeTime(c.builtAt)}` : 'Building…';
-  const from = c.fromFiles !== null ? `, from ${c.fromFiles} ${c.fromFiles === 1 ? 'file' : 'files'}` : '';
-  const user = `, user context ${c.hasUserContext ? 'yes' : 'no'}`;
-  return `${built}${from}${user}`;
-}
-
-function ProjectBar({
-  projects, currentProject, onSwitch, status, statusError, onRefreshContext, refreshing, explaining, onExplain,
-}: {
-  projects: ProjectDto[];
-  currentProject: ProjectDto;
-  onSwitch: (id: number) => void;
-  status: ProjectStatusDto | null;
-  statusError: string | null;
-  onRefreshContext: () => void;
-  refreshing: boolean;
-  explaining: boolean;
-  onExplain: () => void;
-}) {
-  return (
-    <div className="project-bar">
-      <div className="project-bar-row">
-        {projects.length > 1 ? (
-          <select aria-label="Project" value={currentProject.id} onChange={(e) => onSwitch(Number(e.target.value))}>
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        ) : (
-          <span className="project-name">{currentProject.name}</span>
-        )}
-        <code className="project-path">{currentProject.rootPath}</code>
-      </div>
-      <div className="project-bar-row">
-        {statusError ? (
-          <span role="alert" className="context-status error">Could not load status: {statusError}</span>
-        ) : (
-          <span className="context-status muted">
-            {status ? contextLabel(status) : 'Loading context…'}
-          </span>
-        )}
-        <button type="button" className="btn" onClick={onRefreshContext} disabled={refreshing}>
-          {refreshing ? 'Refreshing…' : 'Refresh'}
-        </button>
-        {status && <BudgetMeter status={status} />}
-      </div>
-      {status && (
-        <div className="project-bar-row">
-          <ExplainButton status={status} explaining={explaining} onExplain={onExplain} />
-        </div>
-      )}
-    </div>
-  );
-}
-
 // --- digest picker: past digests, newest first, infinite scroll --------------------------------
 
 function statusChip(status: DigestSummaryDto['status']) {
   if (status === 'ok') return null;
-  return <span className="badge digest-error">{status === 'error' ? 'error' : status === 'pending' ? 'pending' : 'truncated'}</span>;
+  return <span className="badge digest-error">{DIGEST_STATUS_LABEL[status]}</span>;
 }
 
 function DigestRow({ d, current, onSelect, onRetry, retrying, retryDisabled }: {
@@ -179,11 +97,9 @@ function DigestRow({ d, current, onSelect, onRetry, retrying, retryDisabled }: {
   return (
     <li className="digest-row">
       <button type="button" className="digest-row-main" aria-current={current ? 'true' : undefined} onClick={onSelect}>
-        <span className="digest-l0">{d.l0?.text ?? '(not explained yet)'}</span>
+        <span className="digest-l0">{digestRowLabel(d.toAt, d.stats.files, d.l0?.text ?? null)}</span>
         <span className="meta">
-          <span>{formatDate(d.fromAt)} → {formatDate(d.toAt)}</span>
           <span className="stats">
-            {d.stats.files} {d.stats.files === 1 ? 'file' : 'files'}{' '}
             <span className="add">+{d.stats.additions}</span> <span className="del">−{d.stats.deletions}</span>
           </span>
           {statusChip(d.status)}
@@ -227,7 +143,7 @@ function DigestPicker({
     <details className="digest-picker">
       <summary>
         {current ? (
-          <span>Digest: {current.l0?.text ?? `#${current.seq}`} ({formatDate(current.fromAt)} → {formatDate(current.toAt)})</span>
+          <span>{digestRowLabel(current.toAt, current.stats.files, current.l0?.text ?? null)}</span>
         ) : (
           <span>Select a digest</span>
         )}
@@ -360,7 +276,7 @@ function ChangeList({
           {digest.l1 && <ul className="l1-bullets">{digest.l1.bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>}
         </div>
       )}
-      {items.length === 0 && <p className="empty">No areas to show yet.</p>}
+      {digest.l2 !== null && items.length === 0 && <p className="empty">{DIGEST_NO_CHANGES_EMPTY_STATE}</p>}
       <ul className="area-rows">
         {visible.map((it) => (
           <AreaRow
@@ -496,7 +412,10 @@ export function MainV2() {
   const [url, push, replace] = useV2Url('/');
   const [explainingLocal, setExplainingLocal] = useState(false);
   const [explainError, setExplainError] = useState<string | null>(null);
+  const [explainNotice, setExplainNotice] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [settingLanguage, setSettingLanguage] = useState(false);
+  const [languageError, setLanguageError] = useState<string | null>(null);
   const [digest, setDigest] = useState<DigestDetailDto | null>(null);
   const [digestError, setDigestError] = useState<string | null>(null);
   const [expand, setExpand] = useState<string[]>([]);
@@ -625,14 +544,23 @@ export function MainV2() {
     if (currentProjectId === null) return;
     setExplainingLocal(true);
     setExplainError(null);
+    setExplainNotice(null);
     explainProject(currentProjectId)
       .then((r) => {
+        if (r.noChanges) {
+          setExplainNotice(explainOutcomeMessage('no_changes', undefined, ''));
+          return;
+        }
+        if (r.status === 'pending') setExplainNotice(explainOutcomeMessage('budget', undefined, humanDateTime(r.budget.resetsAt)));
         if (r.digestId !== null) {
           digests.reload();
           replace({ digest: r.digestId, node: null, area: null });
         }
       })
-      .catch((e: unknown) => setExplainError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => {
+        const detail = e instanceof Error ? e.message : String(e);
+        setExplainError(explainOutcomeMessage('error', detail, ''));
+      })
       .finally(() => {
         setExplainingLocal(false);
         refreshStatus();
@@ -644,6 +572,16 @@ export function MainV2() {
     setRefreshing(true);
     refreshContext(currentProjectId).finally(() => { setRefreshing(false); refreshStatus(); });
   }, [currentProjectId, refreshStatus]);
+
+  const onSetLanguage = useCallback((language: ExplainLanguage) => {
+    if (currentProjectId === null) return;
+    setSettingLanguage(true);
+    setLanguageError(null);
+    setProjectLanguage(currentProjectId, language)
+      .then((updated) => setProjects((prev) => prev?.map((p) => (p.id === updated.id ? updated : p)) ?? prev))
+      .catch((e: unknown) => setLanguageError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setSettingLanguage(false));
+  }, [currentProjectId]);
 
   const onSwitchProject = useCallback((id: number) => push({ project: id, digest: null, node: null, area: null }), [push]);
   const onSelectNode = useCallback((node: GraphNode) => push({ node: node.id, area: null }), [push]);
@@ -700,21 +638,28 @@ export function MainV2() {
   return (
     <div className="main-v2">
       <div aria-live="polite" className="visually-hidden">{announce}</div>
-      <ProjectBar
+      <ProjectHeader
         projects={projects}
         currentProject={currentProject}
         onSwitch={onSwitchProject}
         status={status}
         statusError={statusError}
-        onRefreshContext={onRefreshContext}
-        refreshing={refreshing}
         explaining={explaining}
         onExplain={onExplain}
+        onRefreshContext={onRefreshContext}
+        refreshingContext={refreshing}
+        onSetLanguage={onSetLanguage}
+        settingLanguage={settingLanguage}
+        languageError={languageError}
       />
-      {explainError && <p role="alert" className="error">Could not explain: {explainError}</p>}
+      {explainError && <p role="alert" className="error">{explainError}</p>}
+      {explainNotice && <p role="status" className="muted">{explainNotice}</p>}
       {digestError && <p role="alert" className="error">Could not load the digest: {digestError}</p>}
       {!digestError && currentDigestId === null && digests.done && (
-        <p className="empty">No digests yet. Use <strong>Explain changes since last check</strong> above to create the first one.</p>
+        <div className="empty">
+          <p>{NO_DIGESTS_EMPTY_STATE.heading}</p>
+          <p className="muted">{NO_DIGESTS_EMPTY_STATE.body}</p>
+        </div>
       )}
       {!digestError && currentDigestId === null && !digests.done && <p className="muted">Loading…</p>}
       {!digestError && currentDigestId !== null && !digest && <p className="muted">Loading digest…</p>}

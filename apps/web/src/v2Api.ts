@@ -1,7 +1,7 @@
 // v2 API client (docs/direction-v2.md §5, DIG-39 contract in packages/core/src/v2.ts).
 // Component tests use fixtures (v2Fixtures.ts) instead of a live server.
 import type {
-  AreaDetailDto, ContextStatusDto, DigestDetailDto, DigestPageDto, ExplainResultDto,
+  AreaDetailDto, ContextStatusDto, DigestDetailDto, DigestPageDto, ExplainLanguage, ExplainResultDto,
   ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 
@@ -36,6 +36,17 @@ async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Pr
   return (await res.json()) as T;
 }
 
+async function patchJson<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, {
+    method: 'PATCH',
+    signal,
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'x-digestit': '1' },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as T;
+}
+
 export function fetchProjects(signal?: AbortSignal): Promise<ProjectDto[]> {
   return getJson('/api/projects', signal);
 }
@@ -46,6 +57,10 @@ export function createProject(rootPath: string, contextPath: string | null, sign
 
 export function fetchProjectStatus(id: number, signal?: AbortSignal): Promise<ProjectStatusDto> {
   return getJson(`/api/projects/${id}/status`, signal);
+}
+
+export function setProjectLanguage(id: number, language: ExplainLanguage, signal?: AbortSignal): Promise<ProjectDto> {
+  return patchJson(`/api/projects/${id}`, { language }, signal);
 }
 
 export function refreshContext(id: number, signal?: AbortSignal): Promise<ContextStatusDto> {

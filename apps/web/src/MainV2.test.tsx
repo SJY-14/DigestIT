@@ -113,8 +113,8 @@ describe('MainV2: project bar', () => {
   it('shows the budget meter and the Explain button with the pending count', async () => {
     await render(<MainV2 />);
     await waitFor(() => host.querySelector('.explain-btn') !== null);
-    expect(host.textContent).toContain('23 of 40 LLM calls left today');
-    expect(host.querySelector('.explain-btn')?.textContent).toContain('12 files, +340 −25 since last check');
+    expect(host.textContent).toContain('23 calls left today');
+    expect(host.querySelector('.explain-btn')?.textContent).toContain('Explain 12 changes');
   });
 
   it('disables Explain with a reason when nothing is pending', async () => {
@@ -254,7 +254,7 @@ describe('MainV2: empty and error states', () => {
     }));
     await render(<MainV2 />);
     await waitFor(() => host.querySelector('.empty') !== null);
-    expect(host.querySelector('.empty')?.textContent).toContain('Explain changes since last check');
+    expect(host.querySelector('.empty')?.textContent).toContain('press Explain');
     expect(host.textContent).not.toContain('Loading digest…');
   });
 
@@ -269,8 +269,7 @@ describe('MainV2: empty and error states', () => {
       throw new Error(`unhandled: ${method} ${url}`);
     }));
     await render(<MainV2 />);
-    await waitFor(() => host.querySelector('.context-status.error') !== null);
-    expect(host.querySelector('.context-status.error')?.textContent).toContain('db is down');
+    await waitFor(() => host.querySelector('.error')?.textContent?.includes('db is down') ?? false);
     expect(host.textContent).not.toContain('Loading context…');
   });
 

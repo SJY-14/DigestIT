@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { humanDateTime, lineDelta, plural } from './copy.js';
+import {
+  callsLeftLabel, contextSummary, digestRowLabel, elapsedLabel, explainButtonLabel, explainingLabel,
+  explainOutcomeMessage, humanDateTime, lineDelta, plural,
+} from './copy.js';
 
 describe('plural', () => {
   it('never writes "(s)"', () => {
@@ -24,4 +27,57 @@ describe('humanDateTime', () => {
 
 describe('lineDelta', () => {
   it('uses a real minus sign', () => expect(lineDelta(7, 3)).toBe('+7 −3'));
+});
+
+describe('explainButtonLabel', () => {
+  it('shows the pending count, and a plain no-op state at zero', () => {
+    expect(explainButtonLabel(12)).toBe('Explain 12 changes');
+    expect(explainButtonLabel(1)).toBe('Explain 1 change');
+    expect(explainButtonLabel(0)).toBe('No new changes');
+  });
+});
+
+describe('elapsedLabel / explainingLabel', () => {
+  it('formats seconds, then minutes and seconds', () => {
+    expect(elapsedLabel(0)).toBe('0s');
+    expect(elapsedLabel(12)).toBe('12s');
+    expect(elapsedLabel(65)).toBe('1m 05s');
+    expect(elapsedLabel(600)).toBe('10m 00s');
+  });
+  it('prefixes with "Explaining…"', () => expect(explainingLabel(12)).toBe('Explaining… 12s'));
+});
+
+describe('callsLeftLabel', () => {
+  it('never writes "(s)", and flags zero specially', () => {
+    expect(callsLeftLabel(35)).toBe('35 calls left today');
+    expect(callsLeftLabel(1)).toBe('1 call left today');
+    expect(callsLeftLabel(0)).toBe('No calls left today');
+  });
+});
+
+describe('contextSummary', () => {
+  it('covers none, building, ok and error, with no raw booleans', () => {
+    expect(contextSummary('none', null, null, false)).toBe('No context built yet');
+    expect(contextSummary('pending', null, null, false)).toBe('Building context…');
+    expect(contextSummary('ok', '3 hours ago', 42, true)).toBe('Built 3 hours ago, from 42 files, with your notes');
+    expect(contextSummary('ok', '3 hours ago', 1, false)).toBe('Built 3 hours ago, from 1 file');
+    expect(contextSummary('error', 'yesterday', null, false)).toBe('Failed to build (last try yesterday)');
+  });
+});
+
+describe('explainOutcomeMessage', () => {
+  it('says what happened and, for budget, when to try again', () => {
+    expect(explainOutcomeMessage('no_changes', undefined, '')).toBe('Nothing changed since the last check.');
+    expect(explainOutcomeMessage('budget', undefined, 'at midnight')).toBe('Daily budget used up. It resets at midnight.');
+    expect(explainOutcomeMessage('error', 'no_provider', '')).toBe('Explain failed: no_provider. Try again.');
+    expect(explainOutcomeMessage('error', undefined, '')).toBe('Explain failed. Try again.');
+  });
+});
+
+describe('digestRowLabel', () => {
+  it('reads "<when> · <n files> · <headline>"', () => {
+    const at = new Date(2026, 8, 28, 17, 5).toISOString();
+    expect(digestRowLabel(at, 15, 'Adds retry to uploads')).toBe(`${humanDateTime(at)} · 15 files · Adds retry to uploads`);
+    expect(digestRowLabel(at, 1, null)).toBe(`${humanDateTime(at)} · 1 file · Not explained yet`);
+  });
 });

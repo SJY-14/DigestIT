@@ -359,18 +359,29 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .field input:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
 
 .main-v2 { display: flex; flex-direction: column; gap: 16px; }
-.project-bar { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-inset); }
-.project-bar-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* Compact header (DIG-49): project switcher, Explain, calls-left badge, info popover. */
+.project-header { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-inset); flex-wrap: wrap; }
 .project-name { font-weight: 600; }
-.project-path { color: var(--muted); }
-.context-status { flex: 1 1 auto; }
-.budget-meter { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; }
-.explain-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding: 8px 14px; }
-/* A chip behind the pending count, not just a lighter text color: the accent blue is too light in
-   dark mode for any text color on it to clear 4.5:1, so darken the chip itself instead. */
-.explain-pending { display: inline-flex; font-weight: 400; font-size: 12px; padding: 1px 6px; border-radius: 2em; background: rgba(0, 0, 0, 0.3); color: #fff; }
-.explain-btn:disabled { opacity: 1; background: var(--bg-inset); border-color: var(--border); color: var(--muted); }
-.explain-btn:disabled .explain-pending { background: none; padding: 1px 0; color: var(--muted); }
+.explain-btn { display: inline-flex; align-items: center; gap: 6px; }
+/* Idle (nothing pending): a calm no-op, not a greyed-out version of the primary action. */
+.explain-btn:disabled { opacity: 1; }
+.calls-left { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; white-space: nowrap; }
+
+.info-popover { position: relative; }
+.info-popover > summary { list-style: none; cursor: pointer; font-size: 16px; line-height: 1; padding: 4px 8px; border-radius: 6px; color: var(--muted); }
+.info-popover > summary::-webkit-details-marker { display: none; }
+.info-popover > summary:hover, .info-popover[open] > summary { background: var(--hover); color: var(--fg); }
+.info-popover-panel {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 10; display: flex; flex-direction: column; gap: 8px;
+  width: 260px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.info-popover-panel .context-status { margin: 0; color: var(--muted); }
+.language-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.language-field select { font: inherit; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+
+.empty-steps { margin: 0 0 12px; padding-left: 1.25rem; color: var(--muted); }
 
 .digest-picker { border: 1px solid var(--border); border-radius: 6px; }
 .digest-picker > summary { list-style: none; cursor: pointer; padding: 8px 12px; background: var(--bg-inset); border-radius: 6px; }
