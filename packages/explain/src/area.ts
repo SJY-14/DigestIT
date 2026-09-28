@@ -10,7 +10,7 @@ import { RepoNotAllowedError } from './config.js';
 import { loadChange } from './pipeline.js';
 import { DEFAULT_PREPARE_OPTIONS, prepareInput, type PrepareOptions, type RawChange } from './prepare.js';
 import { redact } from './redact.js';
-import { DEFAULT_LANGUAGE, VOICE, checkProse, languageInstruction, sentenceCount } from './style.js';
+import { DEFAULT_LANGUAGE, VOICE, checkProse, languageInstruction, sentenceCount, truncateSentences } from './style.js';
 import { LIMITS } from './validate.js';
 
 /** Bump whenever the instructions or the rendering below change. `a1` was the why/design/risks/notes shape; `a2` allowed a 120-word body paragraph. */
@@ -158,7 +158,7 @@ export function checkAreaWalkthrough(
       return;
     }
     const title = checkProse(s.title, `${label} title`, LIMITS.walkTitleWords, language, v);
-    const body = checkProse(s.body, `${label} body`, LIMITS.walkBodyWords, language, v);
+    let body = checkProse(s.body, `${label} body`, LIMITS.walkBodyWords, language, v);
     if (title === '') v.push(`${label}: title is empty`);
     if (body === '') v.push(`${label}: body is empty`);
     else {
@@ -166,6 +166,7 @@ export function checkAreaWalkthrough(
       if (bodySentences < LIMITS.walkBodySentencesMin || bodySentences > LIMITS.walkBodySentencesMax) {
         v.push(`${label} body: ${bodySentences} sentences, need ${LIMITS.walkBodySentencesMin}-${LIMITS.walkBodySentencesMax}`);
       }
+      if (bodySentences > LIMITS.walkBodySentencesMax) body = truncateSentences(body, LIMITS.walkBodySentencesMax);
     }
 
     const refs: HunkRef[] = [];

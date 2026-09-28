@@ -11,6 +11,7 @@ import {
   checkAreaWalkthrough, checkDigestLevels, createProvider, explainArea, prepareAreaInput, prepareDigestInput,
 } from './index.js';
 import type { AreaInput, AreaResult, ExplanationProvider, ProviderFile } from './index.js';
+import { truncateSentences } from './style.js';
 
 function seedArea(
   db: DatabaseSync,
@@ -357,8 +358,19 @@ describe('checkAreaWalkthrough', () => {
       ...validReply.steps[0]!,
       body: 'One thing happens. Then another. And a third. Then a fourth. Finally a fifth.',
     };
-    expect(checkAreaWalkthrough({ ...validReply, steps: [fiveSentences, validReply.steps[1]!] }, FILES)?.violations)
-      .toEqual(['step 1 body: 5 sentences, need 2-4']);
+    const r = checkAreaWalkthrough({ ...validReply, steps: [fiveSentences, validReply.steps[1]!] }, FILES)!;
+    expect(r.violations).toEqual(['step 1 body: 5 sentences, need 2-4']);
+    expect(r.content.steps[0]!.body).toBe('One thing happens. Then another. And a third. Then a fourth.');
+
+    const koFive = { ...KO_REPLY.steps[0]!, body: '설정 화면을 추가합니다. 이전에는 없었습니다. 라우트를 등록합니다. 예: /settings 경로입니다. 테스트는 없습니다.' };
+    const ko = checkAreaWalkthrough({ ...KO_REPLY, steps: [koFive, KO_REPLY.steps[1]!] }, FILES, 'ko')!;
+    expect(ko.violations).toEqual(['step 1 body: 5 sentences, need 2-4']);
+    expect(ko.content.steps[0]!.body).toBe('설정 화면을 추가합니다. 이전에는 없었습니다. 라우트를 등록합니다. 예: /settings 경로입니다.');
+  });
+
+  it('cuts an over-long body at a sentence boundary, not at an abbreviation or identifier', () => {
+    expect(truncateSentences('Use e.g. config.ts first. Then b. Then c.', 2)).toBe('Use e.g. config.ts first. Then b.');
+    expect(truncateSentences('Only one.', 4)).toBe('Only one.');
   });
 
   it('rejects an over-long English body by word count, even with a valid sentence count', () => {
