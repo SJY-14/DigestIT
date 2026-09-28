@@ -1,5 +1,16 @@
 # Roadmap
 
+## Project switching and first-run state (in progress)
+
+Board bug DIG-57 (2026-09-28): switching projects kept the previous project's digest and graph, a
+project with no digests had no graph, and the pending count included files skipped at checkpoint.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-57 | Project switch resets digest/level/URL; project-specific first-run copy (merged) | Frontend engineer | — |
+| 1 | DIG-58 | `GET /api/projects/:id/graph` from the latest checkpoint; pending excludes skipped files | Diff engineer | — |
+| 2 | DIG-59 | Gray first-run graph in the graph pane | Frontend engineer | DIG-58 |
+
 ## UX v3 — reading experience redesign (done)
 
 Board feedback DIG-47 (2026-09-28) after first real use: explicit L0–L3 level switcher, L3 as a
