@@ -48,3 +48,99 @@ export const LEVELS = [
 
 // Each issue adds its own section below (header, digest picker, reader, walkthrough, graph,
 // empty states, history). Keep strings as plain values or small functions of numbers/dates.
+
+// --- Reader (DIG-50): level switcher, breadcrumb, the L0–L3 views -------------------------------
+
+export const READER = {
+  switcherLabel: 'Explanation level',
+  switcherHint: 'Press 0–3 to switch level',
+  breadcrumbLabel: 'You are here',
+  digestCrumb: (when: string) => `Digest · ${when}`,
+  loadingDigest: 'Loading this digest…',
+  digestLoadError: (msg: string) => `Couldn't load this digest: ${msg}`,
+  // Digest-level status notices, shown above every level.
+  digestPending: 'This digest is still being explained.',
+  digestError: "This digest couldn't be explained. Try again, or pick another digest.",
+  digestTruncated: 'Part of this digest was cut to fit the size limit, so some areas may be missing.',
+  retry: 'Try again',
+  retrying: 'Trying again…',
+  retryNoBudget: 'No calls left today',
+  // L0
+  noHeadline: 'This digest has no summary yet.',
+  period: (from: string, to: string) => `${from} → ${to}`,
+  // L1
+  noImpact: 'This digest has no impact summary yet.',
+  internalOnly: 'Nothing a user would notice: these changes are internal.',
+  // L2
+  noAreas: 'This digest has no areas yet.',
+  areaHow: 'What changed',
+  areaWhy: 'Why',
+  openArea: 'Walk through the code',
+  filteredTo: (shown: number, total: number) => `${shown} of ${plural(total, 'area')} touch`,
+  noAreaForNode: 'No area covers this part of the project.',
+  clearFilter: 'Show all areas',
+  filterAnnounce: (path: string) => `Showing the areas that touch ${path}`,
+  filterCleared: 'Showing all areas',
+  notAnalysed: 'Not analysed',
+  // L3 without an area
+  pickArea: 'Pick an area to walk through its code.',
+  // "Next level" link at the bottom of L0–L2
+  nextLevel: (key: string, label: string) => `Next: ${key} ${label}`,
+} as const;
+
+// --- L3 walkthrough (DIG-50) -------------------------------------------------------------------
+
+export const WALKTHROUGH = {
+  regionLabel: (title: string) => `Code walkthrough: ${title}`,
+  loading: 'Loading this area…',
+  loadError: (msg: string) => `Couldn't load this area: ${msg}`,
+  generate: 'Explain this code',
+  generateCost: (left: number) => `Uses 1 of ${plural(left, 'call')} left today`,
+  noBudget: 'No calls left today. The walkthrough can be generated after the daily limit resets.',
+  notGenerated: 'This area has no walkthrough yet. The diff is below.',
+  generating: 'Writing the walkthrough…',
+  generateError: "Couldn't write the walkthrough.",
+  retry: 'Try again',
+  truncated: 'The walkthrough was cut short; the parts it skipped are listed at the end.',
+  overview: 'Overview',
+  stepLabel: (n: number) => `Step ${n}`,
+  stepOf: (n: number, total: number) => `Step ${n} of ${total}`,
+  mechanical: 'Mechanical',
+  stepsNav: 'Steps',
+  previous: 'Previous',
+  next: 'Next',
+  stepKeysHint: 'Press n / p for the next or previous step',
+  check: 'What to check',
+  uncovered: 'Not covered by the walkthrough',
+  uncoveredNote: 'These hunks did not fit in the explanation, so no step describes them.',
+  fullDiff: 'The diff',
+  missingHunk: (path: string, hunk: number) => `Hunk ${hunk} of ${path} is not in the stored diff.`,
+  showAll: (n: number) => `Show all ${plural(n, 'line')}`,
+  showLess: 'Show less',
+  noTextChange: 'No text changes to show (binary or mode change).',
+  notAnalysed: 'Not analysed',
+} as const;
+
+// --- Graph pane (DIG-50) -------------------------------------------------------------------------
+
+export const GRAPH = {
+  label: 'Project graph',
+  legendChanged: 'Blue: changed in this digest',
+  legendSelected: 'Outlined: selected area',
+  fitChanges: 'Fit to changes',
+  fitAll: 'Show everything',
+  zoomIn: 'Zoom in',
+  zoomOut: 'Zoom out',
+  loading: 'Loading the graph…',
+  loadError: (msg: string) => `Couldn't load the graph: ${msg}`,
+  folded: 'Some unchanged folders are folded to keep the graph readable.',
+  keysHint: 'Arrow keys move between nodes; Enter opens one.',
+  show: 'Show graph',
+  hide: 'Hide graph',
+  nodeFiles: (n: number) => plural(n, 'file'),
+  summaryNone: 'No files changed.',
+  summary: (files: number, folders: number) =>
+    folders > 0 ? `${plural(files, 'file')} changed in ${plural(folders, 'folder')}.` : `${plural(files, 'file')} changed.`,
+  openHint: (areas: number) => (areas === 1 ? 'Opens its area at L3' : areas > 1 ? `Touches ${plural(areas, 'area')}; opens them at L2` : 'Not in any area'),
+  expandHint: 'Folded; press to unfold',
+} as const;

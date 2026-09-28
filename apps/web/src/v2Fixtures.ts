@@ -3,7 +3,7 @@
 // fine under vitest (Node) but must never end up in the browser bundle.
 import { buildProjectGraph } from '@digestit/core';
 import type {
-  AreaDetailDto, ContextStatusDto, DigestDetailDto, DigestFileDto, DigestPageDto, DigestSummaryDto,
+  AreaDetailDto, AreaWalkthrough, ContextStatusDto, DigestDetailDto, DigestFileDto, DigestPageDto, DigestSummaryDto,
   ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 
@@ -104,26 +104,91 @@ export const fixtureGraph: ProjectGraphDto = (() => {
   return { digestId: fixtureDigest.id, ...result };
 })();
 
+const graphPatch = [
+  'diff --git a/apps/web/src/ProjectGraph.tsx b/apps/web/src/ProjectGraph.tsx',
+  '--- a/apps/web/src/ProjectGraph.tsx',
+  '+++ b/apps/web/src/ProjectGraph.tsx',
+  '@@ -60,4 +60,7 @@ export function ProjectGraph({ graph }: ProjectGraphProps) {',
+  '   const rootId = useMemo(() => rootIdOf(graph), [graph]);',
+  '-  const VIEWPORT = 640;',
+  '+  const wrapRef = useRef<HTMLDivElement>(null);',
+  '+  const [size, setSize] = useState({ w: 640, h: 640 });',
+  '+  useLayoutEffect(() => observeSize(wrapRef.current, setSize), []);',
+  '+',
+  '   const drag = useRef<DragState | null>(null);',
+  '   const svgRef = useRef<SVGSVGElement>(null);',
+  '@@ -90,3 +93,30 @@ export function ProjectGraph({ graph }: ProjectGraphProps) {',
+  '   const [view, setView] = useState<View>(initial);',
+  '-  if (priorGraph.current !== graph) setView(fitted);',
+  ...Array.from({ length: 28 }, (_, i) => `+  // refit step ${i + 1}: keep the view when only a folder was unfolded`),
+  '   return null;',
+  '@@ -200,2 +229,3 @@ export function ProjectGraph({ graph }: ProjectGraphProps) {',
+  '   <p className="chart-tip">{tip}</p>',
+  '+  <p className="muted graph-note">{T.folded}</p>',
+  '   </div>',
+].join('\n');
+
+const layoutPatch = [
+  '@@ -120,4 +120,5 @@ export function bounds(nodes, positions, ids) {',
+  '-export function fitView(b: Bounds | null, viewport = 640): View {',
+  '-  const scale = (viewport * 0.85) / Math.max(w, h);',
+  '+export function fitView(b: Bounds | null, width = 640, height = width): View {',
+  '+  const pad = fitPadding(width, height);',
+  '+  const scale = Math.min((width - 2 * pad.x) / w, (height - 2 * pad.y) / h);',
+  '   const cx = (b.minX + b.maxX) / 2;',
+  '   const cy = (b.minY + b.maxY) / 2;',
+  '@@ -140,2 +143,2 @@ export const MAX_FIT_SCALE = 1.5;',
+  '-const fitPad = (w: number) => w * 0.1;',
+  '+const fitPadding = (w: number) => w * 0.1;',
+  '   export { fitPadding };',
+].join('\n');
+
+/** An area L3 in the walkthrough shape (docs/ux-v3.md §2): 4 steps (one mechanical), a long hunk
+ * that folds, and one hunk no step covers. */
+export const fixtureWalkthrough: AreaWalkthrough = {
+  overview:
+    'The graph pane now measures itself and fits the changed files into the space it really has, instead of drawing into a fixed 640-pixel square. The fit runs again when you open another digest, but not when you unfold a folder.',
+  steps: [
+    {
+      title: 'Measure the pane before drawing',
+      body: 'ProjectGraph now keeps the canvas size in state and updates it from a ResizeObserver. Before, the SVG used a fixed 640×640 viewBox, so a wide pane had large empty margins on both sides.',
+      hunks: [{ path: 'apps/web/src/ProjectGraph.tsx', hunk: 1 }],
+      mechanical: false,
+    },
+    {
+      title: 'Fit to changes on every new digest',
+      body: 'The view is refitted when graph.digestId changes or when the pane is resized and the user has not panned. Unfolding a folder returns a new graph for the same digest, so it keeps the current view and the user does not lose their place.',
+      hunks: [{ path: 'apps/web/src/ProjectGraph.tsx', hunk: 2 }],
+      mechanical: false,
+    },
+    {
+      title: 'Fit into a rectangle, not a square',
+      body: 'fitView takes a width and a height and keeps a fixed screen margin (fitPadding) so labels at the edge are not clipped. It used to scale by 85% of the square side.',
+      hunks: [{ path: 'packages/core/src/graphLayout.ts', hunk: 1 }],
+      mechanical: false,
+    },
+    {
+      title: 'Rename the padding helper',
+      body: 'fitPad becomes fitPadding. No behaviour change.',
+      hunks: [{ path: 'packages/core/src/graphLayout.ts', hunk: 2 }],
+      mechanical: true,
+    },
+  ],
+  check: [
+    'Resize the window with the graph panned: the view should stay where you left it.',
+    'A digest whose only change is a deleted file still fits (the node is drawn dashed).',
+  ],
+};
+
 export const fixtureArea: AreaDetailDto = {
   digestId: fixtureDigest.id,
   areaId: 'graph-pane',
   status: 'ok',
-  l3: {
-    why: 'The Board asked for a two-pane digest view so the project graph and the change list stay in sync.',
-    design: 'A deterministic tree layout (radial seed + a fixed d3-force tick count) replaces an animated force layout to keep renders reproducible.',
-    risks: ['Very large trees may still need the 400-node fold to stay readable.'],
-    notes: [{ path: 'apps/web/src/ProjectGraph.tsx', side: 'new', startLine: 60, endLine: 76, note: 'Radial seed keeps siblings within their parent\'s angular sector before relaxing.' }],
-  },
+  // Cast: AreaDetailDto.l3 switches to AreaWalkthrough with DIG-48.
+  l3: fixtureWalkthrough as unknown as AreaDetailDto['l3'],
   files: [
-    {
-      ...files[0]!,
-      patch: [
-        '@@ -0,0 +1,4 @@',
-        '+export function nodeRadius(n) {',
-        '+  if (!n.changed) return 5;',
-        '+  return Math.min(22, 5 + Math.sqrt(n.additions + n.deletions));',
-        '+}',
-      ].join('\n'),
-    },
+    { ...files[0]!, additions: 32, deletions: 2, patch: graphPatch },
+    { path: 'packages/core/src/graphLayout.ts', oldPath: null, status: 'M', additions: 4, deletions: 3, filteredReason: null, patch: layoutPatch },
+    { ...files[3]!, patch: null },
   ],
 };

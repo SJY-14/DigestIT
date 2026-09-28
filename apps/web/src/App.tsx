@@ -186,7 +186,7 @@ export function App() {
   const gutter = rows.reduce((m, r) => Math.max(m, r.lanes.width), 1);
 
   return (
-    <div className={page === 'main' ? 'app with-panel' : anySelected && showsPanel ? 'app with-panel' : 'app'}>
+    <div className={page === 'main' ? 'app with-panel home' : anySelected && showsPanel ? 'app with-panel' : 'app'}>
       <header className="top">
         <h1>DigestIT</h1>
         {page !== 'main' && repos.length > 1 && (
