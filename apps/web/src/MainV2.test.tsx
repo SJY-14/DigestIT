@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeFilter, defaultProject, MainV2, nodeTarget } from './MainV2.js';
 import { humanDateTime, plural } from './copy.js';
 import {
-  fixtureArea, fixtureDigest, fixtureDigestPage, fixtureGraph, fixtureProject, fixtureProject2, fixtureStatus, fixtureStatus2,
+  fixtureArea, fixtureDigest, fixtureDigestPage, fixtureGraph, fixtureProject, fixtureProject2, fixtureProjectGraph, fixtureStatus, fixtureStatus2,
 } from './v2Fixtures.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -37,6 +37,8 @@ function mockFetch() {
       if (url.startsWith(`/api/projects/${fixtureProject2.id}/digests`)) return { items: [], nextCursor: null };
       if (url.startsWith(`/api/digests/${fixtureDigest.id}/areas/`) && (method === 'GET' || method === 'POST')) return fixtureArea;
       if (/^\/api\/digests\/\d+\/graph/.test(url) && method === 'GET') return fixtureGraph;
+      // The first-run structure graph for a project with no digest yet (DIG-59).
+      if (/^\/api\/projects\/\d+\/graph/.test(url) && method === 'GET') return fixtureProjectGraph;
       const explainMatch = /^\/api\/digests\/(\d+)\/explain$/.exec(url);
       if (explainMatch && method === 'POST') {
         const id = Number(explainMatch[1]);
@@ -184,8 +186,12 @@ describe('MainV2: switching projects (DIG-57)', () => {
     // Nothing from project 1 stays on screen: no old digest content, no stale graph.
     expect(host.textContent).not.toContain(fixtureDigest.l0!.text);
     await waitFor(() => host.querySelector('.explain-btn')?.textContent === `Explain ${plural(fixtureStatus2.pending.files, 'change')}`);
-    expect(host.querySelector('.graph-canvas')).toBeNull();
     expect(host.querySelector('.l0-headline')).toBeNull();
+    // Project 2 has no digest, so its own gray structure graph replaces project 1's changed one:
+    // never project 1's nodes (a path only its graph has), never a "changed" (blue) node.
+    await waitFor(() => host.querySelector('.graph-canvas') !== null);
+    expect(host.textContent).not.toContain('ProjectGraph.tsx');
+    expect(host.querySelector('.graph-node.changed')).toBeNull();
   });
 
   it('shows a project-specific first-run state for a project with no digests yet', async () => {
@@ -197,6 +203,18 @@ describe('MainV2: switching projects (DIG-57)', () => {
     expect(host.querySelector('.empty-state p')?.textContent).toBe(
       `${plural(fixtureStatus2.pending.files, 'file')} changed since you registered it. Press Explain above to see what happened.`,
     );
+  });
+
+  it('renders the gray first-run graph for a no-digest project, with every node gray and no areas', async () => {
+    await render(<MainV2 />);
+    await ready();
+    await select(host.querySelector('.project-switcher') as HTMLSelectElement, String(fixtureProject2.id));
+    await waitFor(() => host.querySelector('.graph-canvas') !== null);
+    expect(host.querySelectorAll('.graph-node.changed')).toHaveLength(0);
+    // A folded folder is still clickable (to unfold); nothing else is, since there are no areas
+    // yet for a node click to open.
+    const changedOrCollapsed = fixtureProjectGraph.nodes.filter((n) => n.changed || n.collapsed);
+    expect(host.querySelectorAll('.graph-node.clickable')).toHaveLength(changedOrCollapsed.length);
   });
 });
 

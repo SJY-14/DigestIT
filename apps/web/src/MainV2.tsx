@@ -5,8 +5,8 @@ import type {
   AreaDetailDto, DigestDetailDto, ExplainLanguage, GraphNode, ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 import {
-  ApiError, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph, fetchProjectStatus, fetchProjects, refreshContext,
-  retryDigest, setProjectLanguage,
+  ApiError, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph, fetchProjectGraph, fetchProjectStatus, fetchProjects,
+  refreshContext, retryDigest, setProjectLanguage,
 } from './v2Api.js';
 import { useDigests } from './useDigests.js';
 import { startLive } from './liveClient.js';
@@ -248,6 +248,9 @@ export function MainV2() {
   const [expand, setExpand] = useState<string[]>([]);
   const [graph, setGraph] = useState<ProjectGraphDto | null>(null);
   const [graphError, setGraphError] = useState<string | null>(null);
+  const [firstRunExpand, setFirstRunExpand] = useState<string[]>([]);
+  const [firstRunGraph, setFirstRunGraph] = useState<ProjectGraphDto | null>(null);
+  const [firstRunGraphError, setFirstRunGraphError] = useState<string | null>(null);
   const [areaDetail, setAreaDetail] = useState<AreaDetailDto | null>(null);
   const [areaError, setAreaError] = useState<string | null>(null);
   const [areaGenerating, setAreaGenerating] = useState(false);
@@ -310,6 +313,21 @@ export function MainV2() {
     fetchGraph(currentDigestId, expand, ac.signal).then(setGraph, (e: unknown) => { if (!ac.signal.aborted) setGraphError(e instanceof Error ? e.message : String(e)); });
     return () => ac.abort();
   }, [currentDigestId, expand]);
+
+  // A project with no digest yet (DIG-59): the gray structure graph from the latest checkpoint,
+  // with no areas to click through. Switching projects must never leave the previous project's
+  // tree on screen, so it resets on every project change, not just when it happens to be shown.
+  const noDigestsYet = !digestError && currentDigestId === null && digests.done && !digests.error;
+  useEffect(() => { setFirstRunExpand([]); setFirstRunGraph(null); setFirstRunGraphError(null); }, [currentProjectId]);
+  useEffect(() => {
+    if (!noDigestsYet || currentProjectId === null) return;
+    const ac = new AbortController();
+    fetchProjectGraph(currentProjectId, firstRunExpand, ac.signal).then(
+      setFirstRunGraph,
+      (e: unknown) => { if (!ac.signal.aborted) setFirstRunGraphError(e instanceof Error ? e.message : String(e)); },
+    );
+    return () => ac.abort();
+  }, [currentProjectId, noDigestsYet, firstRunExpand]);
 
   // Tracks a generate/retry POST in flight so a superseded request (the user opened a
   // different area before it settled) is aborted rather than landing on the wrong area.
@@ -445,6 +463,12 @@ export function MainV2() {
   }, [push]);
   const onClearFilter = useCallback(() => push({ node: null }), [push]);
   const onExpandGraphNode = useCallback((path: string) => setExpand((prev) => (prev.includes(path) ? prev : [...prev, path])), []);
+  const onExpandFirstRunGraphNode = useCallback(
+    (path: string) => setFirstRunExpand((prev) => (prev.includes(path) ? prev : [...prev, path])),
+    [],
+  );
+  // No areas exist before the first digest, so a first-run graph node never opens anything.
+  const onSelectFirstRunGraphNode = useCallback(() => undefined, []);
   const toTop = () => paneRef.current?.scrollTo?.({ top: 0 });
 
   // Global reading keys: 0–3 switch level, n/p move between walkthrough steps.
@@ -564,6 +588,14 @@ export function MainV2() {
     <p className="muted">{TG.loading}</p>
   );
 
+  const firstRunGraphPane = firstRunGraphError ? (
+    <p role="alert" className="error">{TG.loadError(firstRunGraphError)}</p>
+  ) : firstRunGraph ? (
+    <ProjectGraph graph={firstRunGraph} onSelectNode={onSelectFirstRunGraphNode} onExpand={onExpandFirstRunGraphNode} lang={lang} />
+  ) : (
+    <p className="muted">{TG.loading}</p>
+  );
+
   return (
     <div className={narrow ? 'main-v2 narrow' : 'main-v2'}>
       <div aria-live="polite" className="visually-hidden">{announce}</div>
@@ -597,15 +629,6 @@ export function MainV2() {
         {explainError && <p role="alert" className="notice error">{explainError}</p>}
         {explainNotice && <p role="status" className="notice muted">{explainNotice}</p>}
         {digestError && <p role="alert" className="error">{T.digestLoadError(digestError)}</p>}
-        {!digestError && currentDigestId === null && digests.done && !digests.error && (() => {
-          const nd = TE.noDigests(currentProject.name, status?.pending.files ?? 0);
-          return (
-            <div className="box empty-state">
-              <h2 className="box-head">{nd.heading}</h2>
-              <p>{nd.body}</p>
-            </div>
-          );
-        })()}
         {!digestError && currentDigestId === null && !digests.done && <p className="muted">Loading…</p>}
         {!digestError && currentDigestId !== null && !digest && <p className="muted">{T.loadingDigest}</p>}
         {digest && (
@@ -625,6 +648,28 @@ export function MainV2() {
           </>
         )}
       </div>
+      {noDigestsYet && (() => {
+        const nd = TE.noDigests(currentProject.name, status?.pending.files ?? 0);
+        return (
+          <div className="reader-split">
+            <div className="reading-pane" style={narrow ? undefined : { flexBasis: `${leftPct}%` }}>
+              <div className="box empty-state">
+                <h2 className="box-head">{nd.heading}</h2>
+                <p>{nd.body}</p>
+              </div>
+            </div>
+            {!narrow && <Divider pct={leftPct} onChange={setLeftPct} />}
+            <aside className="graph-pane" aria-label={TG.label}>
+              {narrow && (
+                <button type="button" className="btn graph-toggle" aria-expanded={graphSectionOpen} onClick={() => setGraphSectionOpen((o) => !o)}>
+                  {graphSectionOpen ? TG.hide : TG.show}
+                </button>
+              )}
+              {(!narrow || graphSectionOpen) && firstRunGraphPane}
+            </aside>
+          </div>
+        );
+      })()}
       {digest && (
         <div className="reader-split">
           <div
