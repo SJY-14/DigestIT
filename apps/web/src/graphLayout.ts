@@ -19,19 +19,37 @@ const TICKS = 70;
 const CHARGE_THETA = 1.15;
 const CHARGE_DISTANCE_MAX = 180;
 
+// A graph with only a handful of nodes settles into a tight cluster at the tuned spacing below
+// (it's sized for hundreds of nodes), so the auto-fit view — capped at MAX_FIT_SCALE to keep
+// labels from clipping — leaves most of the pane empty. Below GROW_NODE_COUNT nodes, links,
+// the radial seed step and node radii all grow together (up to GROW_MAX), so the same fitted
+// picture fills the pane instead of floating in the middle of it. Graphs at or above the
+// threshold are unaffected: this is purely a small-graph fix.
+const GROW_NODE_COUNT = 30;
+const GROW_MAX = 2;
+
+/** 1 at `GROW_NODE_COUNT` nodes and above, tapering linearly up to `GROW_MAX` as the node count
+ * shrinks toward a single node. */
+export function growFactor(nodeCount: number): number {
+  if (nodeCount >= GROW_NODE_COUNT) return 1;
+  return 1 + (GROW_MAX - 1) * (1 - Math.max(1, nodeCount) / GROW_NODE_COUNT);
+}
+
 export interface Point {
   x: number;
   y: number;
 }
 
-/** Changed-node radius scales with sqrt(lines changed), clamped; unchanged nodes get a fixed size. */
-export function nodeRadius(n: Pick<GraphNode, 'changed' | 'additions' | 'deletions'>): number {
-  if (!n.changed) return BASE_R;
-  return Math.min(MAX_R, BASE_R + Math.sqrt(n.additions + n.deletions));
+/** Changed-node radius scales with sqrt(lines changed), clamped; unchanged nodes get a fixed
+ * size. `growScale` (see `growFactor`) enlarges every radius together for a small graph. */
+export function nodeRadius(n: Pick<GraphNode, 'changed' | 'additions' | 'deletions'>, growScale = 1): number {
+  const r = n.changed ? Math.min(MAX_R, BASE_R + Math.sqrt(n.additions + n.deletions)) : BASE_R;
+  return r * growScale;
 }
 
 /** Initial radial position: root at the center, children fanned into their parent's angular
- * sector (angle span proportional to subtree size via `fileCount`). */
+ * sector (angle span proportional to subtree size via `fileCount`). The radial step grows for a
+ * small graph (see `growFactor`) so the seed itself is already spread out. */
 export function seedPositions(nodes: GraphNode[]): Map<string, Point> {
   const seed = new Map<string, Point>();
   const root = nodes.find((n) => n.parentId === null);
@@ -44,6 +62,7 @@ export function seedPositions(nodes: GraphNode[]): Map<string, Point> {
     if (list) list.push(n);
     else byParent.set(n.parentId, [n]);
   }
+  const radiusStep = RADIUS_STEP * growFactor(nodes.length);
   const weight = (n: GraphNode) => Math.max(1, n.fileCount);
   const place = (id: string, start: number, end: number) => {
     const children = byParent.get(id);
@@ -54,7 +73,7 @@ export function seedPositions(nodes: GraphNode[]): Map<string, Point> {
     for (const c of children) {
       const childSpan = (span * weight(c)) / total;
       const mid = a + childSpan / 2;
-      const r = c.depth * RADIUS_STEP;
+      const r = c.depth * radiusStep;
       seed.set(c.id, { x: r * Math.cos(mid), y: r * Math.sin(mid) });
       place(c.id, a, a + childSpan);
       a += childSpan;
@@ -79,15 +98,16 @@ export function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], prior?: Read
   const simNodes: SimNode[] = nodes.map((n) => ({ id: n.id, ...startOf(n.id) }));
   const simLinks: SimulationLinkDatum<SimNode>[] = edges.map((e) => ({ source: e.source, target: e.target }));
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  const growScale = growFactor(nodes.length);
   // Collide radius follows the drawn radius (plus room for a label) so changed siblings with
   // labels don't render fully on top of one another.
   const collideRadius = (id: string) => {
     const n = byId.get(id);
-    return n ? nodeRadius(n) + 8 : 8;
+    return n ? nodeRadius(n, growScale) + 8 * growScale : 8 * growScale;
   };
   const sim = forceSimulation(simNodes)
-    .force('link', forceLink<SimNode, SimulationLinkDatum<SimNode>>(simLinks).id((d) => d.id).distance(40).strength(0.6))
-    .force('charge', forceManyBody().strength(-50).distanceMax(CHARGE_DISTANCE_MAX).theta(CHARGE_THETA))
+    .force('link', forceLink<SimNode, SimulationLinkDatum<SimNode>>(simLinks).id((d) => d.id).distance(40 * growScale).strength(0.6))
+    .force('charge', forceManyBody().strength(-50).distanceMax(CHARGE_DISTANCE_MAX * growScale).theta(CHARGE_THETA))
     .force('collide', forceCollide<SimNode>((d) => collideRadius(d.id)))
     .force('x', forceX<SimNode>((d) => seed.get(d.id)?.x ?? 0).strength(0.06))
     .force('y', forceY<SimNode>((d) => seed.get(d.id)?.y ?? 0).strength(0.06))
@@ -105,16 +125,19 @@ export interface Bounds {
   maxY: number;
 }
 
-/** Bounding box (in layout units, padded by each node's radius) of `ids`, or every node if omitted. */
+/** Bounding box (in layout units, padded by each node's radius) of `ids`, or every node if
+ * omitted. `nodes` is always the graph's full node list (not just `ids`), so the grow scale for
+ * a small graph matches the one `layoutGraph` and `ProjectGraph`'s rendering use. */
 export function bounds(nodes: GraphNode[], positions: ReadonlyMap<string, Point>, ids?: string[]): Bounds | null {
   const list = ids ?? nodes.map((n) => n.id);
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  const growScale = growFactor(nodes.length);
   for (const id of list) {
     const p = positions.get(id);
     const n = byId.get(id);
     if (!p || !n) continue;
-    const r = nodeRadius(n);
+    const r = nodeRadius(n, growScale);
     minX = Math.min(minX, p.x - r); maxX = Math.max(maxX, p.x + r);
     minY = Math.min(minY, p.y - r); maxY = Math.max(maxY, p.y + r);
   }

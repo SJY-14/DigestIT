@@ -5,7 +5,7 @@
 // stop: arrow keys move between them, focus shows the same label and tip as hover, Enter opens.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { GraphEdge, GraphNode, ProjectGraphDto } from '@digestit/core';
-import { bounds, fitView, layoutGraph, nodeRadius, rotatePositions, shouldRotate, type Point, type View } from './graphLayout.js';
+import { bounds, fitView, growFactor, layoutGraph, nodeRadius, rotatePositions, shouldRotate, type Point, type View } from './graphLayout.js';
 import { useRovingIndex } from './charts/roving.js';
 import { GRAPH as T, lineDelta } from './copy.js';
 
@@ -97,6 +97,9 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
     return next;
   }, [graph]);
   const rootId = useMemo(() => rootIdOf(graph), [graph]);
+  // A small graph draws bigger nodes (see graphLayout's growFactor) so the fitted picture fills
+  // the pane; `bounds()` (used to fit) applies the same scale, so the two stay in sync.
+  const growScale = useMemo(() => growFactor(graph.nodes.length), [graph]);
 
   // The canvas's real size in CSS pixels; the viewBox matches it, so one layout unit at scale 1 is
   // one pixel and "fit" really fills the pane.
@@ -254,7 +257,7 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
             {graph.nodes.map((n) => {
               const p = positions.get(n.id);
               if (!p) return null;
-              const r = nodeRadius(n);
+              const r = nodeRadius(n, growScale);
               const box = isBoxShaped(n);
               const lit = highlightNodeIds?.has(n.id) ?? false;
               const selected = selectedNodeId === n.id;

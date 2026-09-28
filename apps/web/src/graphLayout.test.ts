@@ -1,6 +1,8 @@
 import { buildProjectGraph } from '@digestit/core';
 import { describe, expect, it } from 'vitest';
-import { bounds, fitPadding, fitView, layoutGraph, MAX_FIT_SCALE, nodeRadius, rotatePositions, seedPositions, shouldRotate } from './graphLayout.js';
+import {
+  bounds, fitPadding, fitView, growFactor, layoutGraph, MAX_FIT_SCALE, nodeRadius, rotatePositions, seedPositions, shouldRotate,
+} from './graphLayout.js';
 
 const small = buildProjectGraph({
   paths: ['src/a.ts', 'src/b.ts', 'src/sub/c.ts', 'docs/readme.md'],
@@ -169,5 +171,39 @@ describe('bounds/fitView', () => {
     expect(shouldRotate(null, 900, 420)).toBe(false);
     const turned = rotatePositions(new Map([['a', { x: 1, y: 2 }]]));
     expect(turned.get('a')).toEqual({ x: 2, y: -1 });
+  });
+
+  it('fills most of a square pane for a small (~12 node) graph, not just a cluster in the middle', () => {
+    const tiny = buildProjectGraph({
+      paths: [
+        'src/retry.js', 'src/upload.js', 'src/log.js', 'src/config.js', 'src/cli.js',
+        'test/upload.test.js', 'README.md', 'package.json',
+      ],
+      files: [
+        { path: 'src/retry.js', status: 'A', additions: 39, deletions: 0 },
+        { path: 'src/upload.js', status: 'M', additions: 20, deletions: 5 },
+        { path: 'src/cli.js', status: 'M', additions: 5, deletions: 1 },
+        { path: 'test/upload.test.js', status: 'M', additions: 21, deletions: 9 },
+        { path: 'README.md', status: 'M', additions: 5, deletions: 1 },
+      ],
+    });
+    expect(tiny.nodes.length).toBeGreaterThanOrEqual(10);
+    expect(tiny.nodes.length).toBeLessThanOrEqual(14);
+    const pos = layoutGraph(tiny.nodes, tiny.edges);
+    const changedIds = tiny.nodes.filter((n) => n.changed).map((n) => n.id);
+    const b = bounds(tiny.nodes, pos, changedIds);
+    const view = fitView(b, 640, 640);
+    const spanX = (b!.maxX - b!.minX) * view.scale;
+    const spanY = (b!.maxY - b!.minY) * view.scale;
+    expect(Math.max(spanX, spanY) / 640).toBeGreaterThanOrEqual(0.6);
+  });
+});
+
+describe('growFactor', () => {
+  it('is 1 at and above the small-graph threshold, and grows toward GROW_MAX below it', () => {
+    expect(growFactor(30)).toBe(1);
+    expect(growFactor(100)).toBe(1);
+    expect(growFactor(15)).toBeGreaterThan(1);
+    expect(growFactor(1)).toBeGreaterThan(growFactor(15));
   });
 });
