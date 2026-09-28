@@ -7,6 +7,7 @@ import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import type { SkipReason } from '@digestit/core';
 import { DIFF_FLAGS, combineDiffTree, nul, parseDiffRaw, type GitFile } from './git.js';
+import { compileIgnorePatterns, ignoreFilePath, matchesIgnorePatterns, readIgnorePatterns } from './ignore.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -177,7 +178,7 @@ const settingUp = new Map<string, Promise<void>>();
  * never reads a half-written file. Unconditional `git config` writes used to race on
  * `config.lock` and fail the request.
  */
-function setUpShadowRepo(gitDir: string, hooksDir: string): Promise<void> {
+function setUpShadowRepo(gitDir: string, hooksDir: string, projectIgnoreFile: string): Promise<void> {
   let p = settingUp.get(gitDir);
   if (!p) {
     p = (async () => {
@@ -186,6 +187,11 @@ function setUpShadowRepo(gitDir: string, hooksDir: string): Promise<void> {
       }
       await setConfigIfDifferent(gitDir, 'core.hooksPath', hooksDir);
       await setConfigIfDifferent(gitDir, 'core.fsmonitor', 'false');
+      // Claims the shadow repo's own "global excludes file" slot (never used for anything else:
+      // GIT_CONFIG_GLOBAL is /dev/null) for the project's own ignore patterns (DIG-56). Git treats
+      // a missing file here exactly like a missing .gitignore, so this is safe to set unconditionally
+      // even before the project has any patterns of its own.
+      await setConfigIfDifferent(gitDir, 'core.excludesFile', projectIgnoreFile);
       await replaceFileIfDifferent(join(gitDir, 'info', 'exclude'), DEFAULT_DENYLIST.join('\n') + '\n');
     })().finally(() => settingUp.delete(gitDir));
     settingUp.set(gitDir, p);
@@ -215,7 +221,7 @@ export async function openShadow(dataDir: string, projectRoot: string, opts: Sha
   await mkdir(dataDir, { recursive: true });
   await mkdir(hooksDir, { recursive: true });
 
-  await setUpShadowRepo(gitDir, hooksDir);
+  await setUpShadowRepo(gitDir, hooksDir, ignoreFilePath(dataDir));
 
   const gitExcludeFiles = await resolveGitExcludeFiles(projectRoot);
   return {
@@ -333,18 +339,29 @@ async function computeChanges(shadow: Shadow): Promise<ChangeSet> {
   const toAdd: string[] = [];
   const toDelete: string[] = [...deleted];
   const skipped: SkippedFile[] = [];
+  const projectPatterns = compileIgnorePatterns(readIgnorePatterns(shadow.dataDir));
 
+  // `ignored` (a git --exclude-standard listing) conflates the hardcoded denylist, the project's
+  // own ignore patterns (DIG-56, now also part of --exclude-standard via core.excludesFile) and
+  // the project's own .gitignore, so each entry is re-attributed in JS. A plain .gitignore match
+  // (neither of the other two) stays unreported, as before: the project owner already set that up
+  // and knows about it, unlike the other two sources DigestIT adds on its own.
   for (const path of ignored) {
-    if (matchesDenylist(path)) {
-      skipped.push({ path: isDirBoundary(path) ? path.slice(0, -1) : path, reason: 'denylist' });
-    }
+    const reported = isDirBoundary(path) ? path.slice(0, -1) : path;
+    if (matchesDenylist(path)) skipped.push({ path: reported, reason: 'denylist' });
+    else if (matchesIgnorePatterns(projectPatterns, path)) skipped.push({ path: reported, reason: 'project-ignore' });
   }
 
-  // A tracked file that now matches the project's own .gitignore (added after the file was first
-  // snapshotted) is pruned the same way a tracked-then-denylisted file is: removed from the shadow
-  // index and reported, so it stops reappearing in every future digest.
+  // A tracked file that now matches the project's own .gitignore, a project-ignore pattern, or the
+  // denylist (added/changed after the file was first snapshotted) is pruned: removed from the
+  // shadow index and reported, so it stops reappearing in every future digest.
   for (const path of trackedIgnored) {
-    skipped.push({ path, reason: 'denylist' });
+    const reason: SkipReason = matchesDenylist(path)
+      ? 'denylist'
+      : matchesIgnorePatterns(projectPatterns, path)
+        ? 'project-ignore'
+        : 'gitignore';
+    skipped.push({ path, reason });
     toDelete.push(path);
   }
 
