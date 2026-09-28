@@ -133,6 +133,14 @@ export const fixtureGraph: ProjectGraphDto = (() => {
   return { digestId: fixtureDigest.id, ...result };
 })();
 
+/** The gray structure graph `GET /api/projects/:id/graph` returns for a project with no digest
+ * yet (DIG-58/59): every node `changed: false`, no areas. */
+export const fixtureProjectGraph: ProjectGraphDto = (() => {
+  const paths = ['src/index.ts', 'src/lib/join.ts', 'README.md'];
+  const result = buildProjectGraph({ paths, files: [] });
+  return { digestId: null, ...result };
+})();
+
 const graphPatch = [
   'diff --git a/apps/web/src/ProjectGraph.tsx b/apps/web/src/ProjectGraph.tsx',
   '--- a/apps/web/src/ProjectGraph.tsx',

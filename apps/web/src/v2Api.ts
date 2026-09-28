@@ -107,6 +107,14 @@ export function fetchGraph(digestId: number, expand: string[], signal?: AbortSig
   return getJson(`/api/digests/${digestId}/graph${qs ? `?${qs}` : ''}`, signal);
 }
 
+/** The gray structure graph for a project with no digest yet (DIG-58/59). */
+export function fetchProjectGraph(projectId: number, expand: string[], signal?: AbortSignal): Promise<ProjectGraphDto> {
+  const q = new URLSearchParams();
+  for (const e of expand) q.append('expand', e);
+  const qs = q.toString();
+  return getJson(`/api/projects/${projectId}/graph${qs ? `?${qs}` : ''}`, signal);
+}
+
 export function fetchArea(digestId: number, areaId: string, signal?: AbortSignal): Promise<AreaDetailDto> {
   return getJson(`/api/digests/${digestId}/areas/${encodeURIComponent(areaId)}`, signal);
 }
