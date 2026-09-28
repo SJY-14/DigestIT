@@ -1,6 +1,6 @@
 import { buildProjectGraph } from '@digestit/core';
 import { describe, expect, it } from 'vitest';
-import { bounds, fitPadding, fitView, layoutGraph, MAX_FIT_SCALE, nodeRadius, seedPositions } from './graphLayout.js';
+import { bounds, fitPadding, fitView, layoutGraph, MAX_FIT_SCALE, nodeRadius, rotatePositions, seedPositions, shouldRotate } from './graphLayout.js';
 
 const small = buildProjectGraph({
   paths: ['src/a.ts', 'src/b.ts', 'src/sub/c.ts', 'docs/readme.md'],
@@ -159,5 +159,15 @@ describe('bounds/fitView', () => {
     const view = fitView(b, 900, 420);
     const pad = fitPadding(900, 420);
     expect((b.maxX - b.minX) * view.scale).toBeCloseTo(900 - 2 * pad.x);
+  });
+
+  it('turns a tall layout sideways in a wide pane (and not a layout that already fits the shape)', () => {
+    const tall = { minX: -50, minY: -300, maxX: 50, maxY: 300 };
+    expect(shouldRotate(tall, 900, 420)).toBe(true);
+    expect(shouldRotate(tall, 360, 820)).toBe(false);
+    expect(shouldRotate({ minX: -100, minY: -100, maxX: 100, maxY: 100 }, 900, 420)).toBe(false);
+    expect(shouldRotate(null, 900, 420)).toBe(false);
+    const turned = rotatePositions(new Map([['a', { x: 1, y: 2 }]]));
+    expect(turned.get('a')).toEqual({ x: 2, y: -1 });
   });
 });

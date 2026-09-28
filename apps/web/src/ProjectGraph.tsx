@@ -5,7 +5,7 @@
 // stop: arrow keys move between them, focus shows the same label and tip as hover, Enter opens.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { GraphEdge, GraphNode, ProjectGraphDto } from '@digestit/core';
-import { bounds, fitView, layoutGraph, nodeRadius, type Point, type View } from './graphLayout.js';
+import { bounds, fitView, layoutGraph, nodeRadius, rotatePositions, shouldRotate, type Point, type View } from './graphLayout.js';
 import { useRovingIndex } from './charts/roving.js';
 import { GRAPH as T, lineDelta } from './copy.js';
 
@@ -65,10 +65,17 @@ function nodeLabel(n: GraphNode): string {
   return `${tooltipText(n)}. ${n.collapsed ? T.expandHint : T.openHint(n.areaIds.length)}`;
 }
 
-/** The fitted view for a graph: its changed nodes (or every node if none changed). */
-export function fitToChanged(graph: ProjectGraphDto, positions: ReadonlyMap<string, Point>, width: number, height: number): View {
+function changedBounds(graph: ProjectGraphDto, positions: ReadonlyMap<string, Point>) {
   const changedIds = graph.nodes.filter((n) => n.changed).map((n) => n.id);
-  return fitView(bounds(graph.nodes, positions, changedIds.length > 0 ? changedIds : undefined), width, height);
+  return bounds(graph.nodes, positions, changedIds.length > 0 ? changedIds : undefined);
+}
+
+/** The fitted view for a graph: its changed nodes (or every node if none changed), plus whether
+ * the layout is turned a quarter to fill the pane's shape. */
+export function fitToChanged(graph: ProjectGraphDto, positions: ReadonlyMap<string, Point>, width: number, height: number): { view: View; rotated: boolean } {
+  const rotated = shouldRotate(changedBounds(graph, positions), width, height);
+  const shown = rotated ? rotatePositions(positions) : positions;
+  return { view: fitView(changedBounds(graph, shown), width, height), rotated };
 }
 
 export interface ProjectGraphProps {
@@ -84,7 +91,7 @@ export interface ProjectGraphProps {
 
 export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelectNode, onExpand }: ProjectGraphProps) {
   const priorPositions = useRef<Map<string, Point> | undefined>(undefined);
-  const positions = useMemo(() => {
+  const layout = useMemo(() => {
     const next = layoutGraph(graph.nodes, graph.edges, priorPositions.current);
     priorPositions.current = next;
     return next;
@@ -110,7 +117,15 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
     return () => ro.disconnect();
   }, []);
 
-  const [view, setView] = useState<View>(() => fitToChanged(graph, positions, size.w, size.h));
+  const [initialFit] = useState(() => fitToChanged(graph, layout, size.w, size.h));
+  const [view, setView] = useState<View>(initialFit.view);
+  const [rotated, setRotated] = useState(initialFit.rotated);
+  const positions = useMemo(() => (rotated ? rotatePositions(layout) : layout), [layout, rotated]);
+  const refit = () => {
+    const f = fitToChanged(graph, layout, size.w, size.h);
+    setRotated(f.rotated);
+    setView(f.view);
+  };
   // Re-fit when the digest changes, and on resize until the user pans or zooms. Unfolding a folder
   // (same digest, new graph) keeps the current view so the user doesn't lose their place.
   const fitted = useRef({ digestId: graph.digestId, w: size.w, h: size.h, userMoved: false });
@@ -120,11 +135,12 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
     const resized = f.w !== size.w || f.h !== size.h;
     if (digestChanged || (resized && !f.userMoved)) {
       fitted.current = { digestId: graph.digestId, w: size.w, h: size.h, userMoved: digestChanged ? false : f.userMoved };
-      setView(fitToChanged(graph, positions, size.w, size.h));
+      refit();
     } else {
       fitted.current = { ...f, w: size.w, h: size.h };
     }
-  }, [graph, positions, size]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, layout, size]);
 
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -136,7 +152,7 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
   };
   const fitToChanges = () => {
     fitted.current.userMoved = false;
-    setView(fitToChanged(graph, positions, size.w, size.h));
+    refit();
   };
   const fitAll = () => moveView(fitView(bounds(graph.nodes, positions), size.w, size.h));
   const zoomBy = (factor: number) => moveView((v) => {

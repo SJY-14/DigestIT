@@ -152,3 +152,23 @@ export function fitView(b: Bounds | null, width = 640, height = width): View {
   const cy = (b.minY + b.maxY) / 2;
   return { x: width / 2 - cx * scale, y: height / 2 - cy * scale, scale };
 }
+
+/** Quarter turn of a layout: (x, y) → (y, −x). */
+export function rotatePositions(positions: ReadonlyMap<string, Point>): Map<string, Point> {
+  const out = new Map<string, Point>();
+  for (const [id, p] of positions) out.set(id, { x: p.y, y: -p.x });
+  return out;
+}
+
+/**
+ * Whether turning the layout a quarter makes `b` fill a `width` x `height` pane noticeably
+ * better: a tall tree in a wide pane (or the reverse) otherwise leaves wide empty margins.
+ */
+export function shouldRotate(b: Bounds | null, width: number, height: number): boolean {
+  if (!b) return false;
+  const bw = Math.max(1, b.maxX - b.minX);
+  const bh = Math.max(1, b.maxY - b.minY);
+  const upright = Math.min(width / bw, height / bh);
+  const turned = Math.min(width / bh, height / bw);
+  return turned > upright * 1.15;
+}
