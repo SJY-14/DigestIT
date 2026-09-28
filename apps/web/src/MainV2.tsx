@@ -2,11 +2,12 @@
 // the digest picker (DIG-49, ProjectHeader.tsx / DigestPicker.tsx), and the reading pane + graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import type {
-  AreaDetailDto, DigestDetailDto, ExplainLanguage, GraphNode, ProjectDto, ProjectGraphDto, ProjectStatusDto,
+  AreaDetailDto, CreateProjectResponseDto, DigestDetailDto, ExplainLanguage, GraphNode, ProjectDto, ProjectGraphDto,
+  ProjectStatusDto,
 } from '@digestit/core';
 import {
-  ApiError, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph, fetchProjectStatus, fetchProjects, refreshContext,
-  retryDigest, setProjectLanguage,
+  ApiError, addIgnorePatterns, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph,
+  fetchProjectStatus, fetchProjects, refreshContext, retryDigest, setProjectLanguage,
 } from './v2Api.js';
 import { useDigests } from './useDigests.js';
 import { startLive } from './liveClient.js';
@@ -18,17 +19,65 @@ import {
   AreaPicker, Breadcrumb, ImpactView, LEVEL_TAB_ID, LevelSwitcher, READING_PANE_ID, readerKey, StructureView, SummaryView,
 } from './Reader.js';
 import {
-  apiErrorMessage, emptyCopy, explainOutcomeMessage, graphCopy, levelsCopy, readerCopy, resetsLabel, walkthroughCopy,
+  apiErrorMessage, emptyCopy, explainOutcomeMessage, graphCopy, ignoreCopy, levelsCopy, readerCopy, resetsLabel,
+  walkthroughCopy,
 } from './copy.js';
 import { useV2Url, type ReadingLevel, type V2Url } from './v2Url.js';
 
 // --- setup form (no project registered yet) -----------------------------------------------------
+
+/** Shown after creation, only when the folder had no `.gitignore` of its own and DigestIT detected
+ * likely output areas (DIG-56): one-click chips to add suggested ignore patterns. Never applied
+ * automatically — this is the only place the operator confirms them before moving on. */
+function IgnoreSuggestionsStep({ project, onContinue }: { project: CreateProjectResponseDto; onContinue: () => void }) {
+  const [added, setAdded] = useState<Set<string>>(new Set());
+  const [addingPattern, setAddingPattern] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const T = emptyCopy();
+  const TI = ignoreCopy();
+
+  const onAdd = (pattern: string) => {
+    setAddingPattern(pattern);
+    setError(null);
+    addIgnorePatterns(project.id, [pattern])
+      .then(() => setAdded((prev) => new Set(prev).add(pattern)))
+      .catch((e: unknown) => setError(errorText(e)))
+      .finally(() => setAddingPattern(null));
+  };
+
+  return (
+    <div className="box setup">
+      <h2 className="box-head">{T.noProjects.heading}</h2>
+      <div className="ignore-suggestions">
+        <p>{TI.suggestionsHeading}</p>
+        <p className="muted">{TI.suggestionsHint}</p>
+        <div className="suggestion-chips">
+          {project.suggestedIgnorePatterns.map((s) => (
+            <button
+              key={s.pattern}
+              type="button"
+              className="suggestion-chip"
+              title={s.reason}
+              disabled={addingPattern === s.pattern || added.has(s.pattern)}
+              onClick={() => onAdd(s.pattern)}
+            >
+              {added.has(s.pattern) ? `✓ ${s.pattern}` : TI.suggestionAdd(s.pattern)}
+            </button>
+          ))}
+        </div>
+        {error && <p role="alert" className="error">{error}</p>}
+        <button type="button" className="btn primary" onClick={onContinue}>{TI.continueLabel}</button>
+      </div>
+    </div>
+  );
+}
 
 function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
   const [rootPath, setRootPath] = useState('');
   const [contextPath, setContextPath] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<CreateProjectResponseDto | null>(null);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -36,13 +85,16 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
     setError(null);
     try {
       const project = await createProject(rootPath.trim(), contextPath.trim() || null);
-      onCreated(project);
+      if (project.suggestedIgnorePatterns.length > 0) setCreated(project);
+      else onCreated(project);
     } catch (e2) {
       setError(errorText(e2));
     } finally {
       setSubmitting(false);
     }
   };
+
+  if (created) return <IgnoreSuggestionsStep project={created} onContinue={() => onCreated(created)} />;
 
   const T = emptyCopy();
   return (

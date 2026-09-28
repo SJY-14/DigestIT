@@ -2,8 +2,26 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProjectHeader, type ProjectHeaderProps } from './ProjectHeader.js';
-import { fixtureProject, fixtureStatus } from './v2Fixtures.js';
+import type { ProjectIgnoreDto } from '@digestit/core';
+
+class MockApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
+}
+const fetchProjectIgnore = vi.fn(async (_id: number): Promise<ProjectIgnoreDto> => ({ patterns: [], notTracked: [] }));
+const addIgnorePatterns = vi.fn(async (_id: number, patterns: string[]): Promise<ProjectIgnoreDto> => ({ patterns, notTracked: [] }));
+const removeIgnorePattern = vi.fn(async (_id: number, _pattern: string): Promise<ProjectIgnoreDto> => ({ patterns: [], notTracked: [] }));
+vi.mock('./v2Api.js', () => ({
+  ApiError: MockApiError,
+  fetchProjectIgnore: (id: number) => fetchProjectIgnore(id),
+  addIgnorePatterns: (id: number, patterns: string[]) => addIgnorePatterns(id, patterns),
+  removeIgnorePattern: (id: number, pattern: string) => removeIgnorePattern(id, pattern),
+}));
+
+const { ProjectHeader } = await import('./ProjectHeader.js');
+type ProjectHeaderProps = import('./ProjectHeader.js').ProjectHeaderProps;
+const { fixtureProject, fixtureStatus } = await import('./v2Fixtures.js');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,6 +29,10 @@ let root: Root;
 let host: HTMLElement;
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  fetchProjectIgnore.mockResolvedValue({ patterns: [], notTracked: [] });
+  addIgnorePatterns.mockImplementation(async (_id: number, patterns: string[]) => ({ patterns, notTracked: [] }));
+  removeIgnorePattern.mockResolvedValue({ patterns: [], notTracked: [] });
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -28,6 +50,9 @@ const click = async (el: Element | null | undefined) => {
 const key = async (el: Element | Document, k: string) => {
   await act(async () => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })));
 };
+/** Flushes a macrotask, so a promise chain kicked off by a `toggle` event (jsdom queues it as a
+ * task, not a microtask) has settled and its state update has landed. */
+const flush = async () => { await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
 
 function baseProps(overrides: Partial<ProjectHeaderProps> = {}): ProjectHeaderProps {
   return {
@@ -165,5 +190,81 @@ describe('ProjectHeader: info popover', () => {
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(onSetLanguage).toHaveBeenCalledWith('ko');
+  });
+});
+
+describe('ProjectHeader: ignore patterns (DIG-56)', () => {
+  it('loads and lists this project\'s ignore patterns when the popover opens', async () => {
+    fetchProjectIgnore.mockResolvedValue({ patterns: ['out/', '*.log'], notTracked: [] });
+    await render(<ProjectHeader {...baseProps()} />);
+    await click(host.querySelector('.info-popover > summary'));
+    await flush(); // flush the fetch
+    expect(fetchProjectIgnore).toHaveBeenCalledWith(fixtureProject.id);
+    const items = [...host.querySelectorAll('.ignore-pattern-list code')].map((n) => n.textContent);
+    expect(items).toEqual(['out/', '*.log']);
+  });
+
+  it('shows an empty-state message with no patterns', async () => {
+    await render(<ProjectHeader {...baseProps()} />);
+    await click(host.querySelector('.info-popover > summary'));
+    await flush();
+    expect(host.querySelector('.ignore-pattern-list')?.textContent).toContain('No ignore patterns yet');
+  });
+
+  it('adds a pattern from the input and shows it in the list', async () => {
+    await render(<ProjectHeader {...baseProps()} />);
+    await click(host.querySelector('.info-popover > summary'));
+    await flush();
+    const input = host.querySelector('.ignore-add-form input') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(input, 'build/');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      host.querySelector('.ignore-add-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(addIgnorePatterns).toHaveBeenCalledWith(fixtureProject.id, ['build/']);
+    expect([...host.querySelectorAll('.ignore-pattern-list code')].map((n) => n.textContent)).toEqual(['build/']);
+  });
+
+  it('removes a pattern when its × button is clicked', async () => {
+    fetchProjectIgnore.mockResolvedValue({ patterns: ['out/'], notTracked: [] });
+    await render(<ProjectHeader {...baseProps()} />);
+    await click(host.querySelector('.info-popover > summary'));
+    await flush();
+    await click(host.querySelector('.ignore-pattern-list .btn-icon'));
+    expect(removeIgnorePattern).toHaveBeenCalledWith(fixtureProject.id, 'out/');
+  });
+
+  it('shows not-tracked groups with their pattern source and example paths', async () => {
+    fetchProjectIgnore.mockResolvedValue({
+      patterns: ['*.log'],
+      notTracked: [{ reason: 'project-ignore', count: 3, examples: ['a.log', 'b.log'] }],
+    });
+    await render(<ProjectHeader {...baseProps()} />);
+    await click(host.querySelector('.info-popover > summary'));
+    await flush();
+    const text = host.querySelector('.not-tracked-list')?.textContent ?? '';
+    expect(text).toContain('3');
+    expect(text).toContain('your project ignore pattern');
+    expect(text).toContain('a.log, b.log');
+  });
+
+  it('shows an error message when adding a pattern fails', async () => {
+    addIgnorePatterns.mockRejectedValueOnce(new MockApiError('bad_patterns', 400));
+    await render(<ProjectHeader {...baseProps()} />);
+    await click(host.querySelector('.info-popover > summary'));
+    await flush();
+    const input = host.querySelector('.ignore-add-form input') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(input, 'x');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      host.querySelector('.ignore-add-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(host.querySelector('.ignore-section .error')?.textContent).toContain('Enter at least one pattern');
   });
 });

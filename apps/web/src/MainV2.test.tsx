@@ -20,6 +20,7 @@ let root: Root;
 let host: HTMLElement;
 let projectsResponse: unknown[];
 let calls: { url: string; method: string }[];
+let createSuggestions: { pattern: string; reason: string }[];
 
 function mockFetch() {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -27,7 +28,8 @@ function mockFetch() {
     calls.push({ url, method });
     const body = ((): unknown => {
       if (url === '/api/projects' && method === 'GET') return projectsResponse;
-      if (url === '/api/projects' && method === 'POST') return fixtureProject;
+      if (url === '/api/projects' && method === 'POST') return { ...fixtureProject, suggestedIgnorePatterns: createSuggestions };
+      if (/^\/api\/projects\/\d+\/ignore$/.test(url) && method === 'POST') return { patterns: ['out/'], notTracked: [] };
       if (url === `/api/projects/${fixtureProject.id}/status`) return fixtureStatus;
       if (url === `/api/projects/${fixtureProject.id}/context/refresh`) return fixtureProject.context;
       if (url === `/api/projects/${fixtureProject.id}/explain`) return { noChanges: false, digestId: fixtureDigest.id, status: 'ok', budget: fixtureStatus.budget };
@@ -55,6 +57,7 @@ function mockFetch() {
 beforeEach(() => {
   localStorage.clear();
   calls = [];
+  createSuggestions = [];
   projectsResponse = [fixtureProject];
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
   mockFetch();
@@ -107,6 +110,39 @@ describe('MainV2: setup', () => {
     await click(host.querySelector('button[type="submit"]'));
     await waitFor(() => host.querySelector('[role="alert"]') !== null);
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('outside the allowed roots');
+  });
+
+  it('shows one-click ignore-pattern suggestions after registering a project with no .gitignore, never applied automatically (DIG-56)', async () => {
+    projectsResponse = [];
+    createSuggestions = [{ pattern: 'out/', reason: '1,200 entries' }];
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.setup-form') !== null);
+
+    await type(host.querySelector('input') as HTMLInputElement, '/data/research');
+    await click(host.querySelector('button[type="submit"]'));
+    await waitFor(() => host.querySelector('.suggestion-chip') !== null);
+    expect(host.textContent).toContain('no .gitignore');
+    expect(calls.some((c) => c.url === `/api/projects/${fixtureProject.id}/ignore`)).toBe(false); // not applied yet
+
+    await click(host.querySelector('.suggestion-chip'));
+    await waitFor(() => calls.some((c) => c.url === `/api/projects/${fixtureProject.id}/ignore` && c.method === 'POST'));
+    expect(host.querySelector('.suggestion-chip')?.textContent).toContain('out/');
+
+    const continueBtn = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Continue');
+    await click(continueBtn);
+    await waitFor(() => host.querySelector('.explain-btn') !== null);
+  });
+
+  it('skips the suggestions step and goes straight to the project when there is nothing to suggest', async () => {
+    projectsResponse = [];
+    createSuggestions = [];
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.setup-form') !== null);
+
+    await type(host.querySelector('input') as HTMLInputElement, '/data/research');
+    await click(host.querySelector('button[type="submit"]'));
+    await waitFor(() => host.querySelector('.explain-btn') !== null);
+    expect(host.querySelector('.suggestion-chip')).toBeNull();
   });
 });
 
