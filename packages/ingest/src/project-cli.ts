@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { EXPLAIN_LANGUAGES, type ExplainLanguage } from '@digestit/core';
 import { openProjectDb, ensureDir0700, projectDataDir } from './datahome.js';
-import { addIgnorePatterns, readIgnorePatterns, removeIgnorePatterns } from './ignore.js';
+import { addIgnorePatterns, isValidIgnorePattern, readIgnorePatterns, removeIgnorePatterns } from './ignore.js';
 import { DEFAULT_DAILY_BUDGET } from './scheduler.js';
 import { intOpt, providerFromArgs } from './watch.js';
 import {
@@ -347,6 +347,11 @@ export async function runIgnoreCli(argv: string[]): Promise<number> {
   }
   if (action !== 'list' && patterns.length === 0) {
     console.error(`${IGNORE_USAGE}\nat least one pattern is required for "${action}"`);
+    return 2;
+  }
+  const bad = action === 'add' ? patterns.find((p) => !isValidIgnorePattern(p)) : undefined;
+  if (bad !== undefined) {
+    console.error(`invalid ignore pattern: ${JSON.stringify(bad)}`);
     return 2;
   }
   const { db, home } = openProjectDb(values.db ?? process.env.DIGESTIT_DB);

@@ -15,9 +15,9 @@ import {
 } from '@digestit/core';
 import {
   DEFAULT_DAILY_BUDGET, ProjectLockedError, addIgnorePatterns, budgetStatus, buildContext, ensureContext,
-  explainProject, initProject, latestCheckpoint, latestContextText as sharedLatestContextText, listProjects,
-  listTree, openShadow, projectDataDir, projectStatus, readIgnorePatterns, removeIgnorePatterns, retryDigest,
-  updateProjectLanguage, type ProjectRow,
+  explainProject, initProject, isValidIgnorePattern, latestCheckpoint, latestContextText as sharedLatestContextText,
+  listProjects, listTree, openShadow, projectDataDir, projectStatus, readIgnorePatterns, removeIgnorePatterns,
+  retryDigest, updateProjectLanguage, type ProjectRow,
 } from '@digestit/ingest';
 import {
   AREA_PROMPT_VERSION, createProvider, explainArea,
@@ -175,6 +175,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
   const latestContextText = (repoId: number) => sharedLatestContextText(db, repoId);
 
   const NOT_TRACKED_EXAMPLES = 5;
+  const MAX_IGNORE_PATTERNS_PER_REQUEST = 100;
   /** Paths not stored in the shadow, from the latest checkpoint, grouped by why (DIG-56). */
   function notTrackedGroups(repoId: number): NotTrackedGroupDto[] {
     const latest = latestCheckpoint(db, repoId);
@@ -485,7 +486,10 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       if (typeof body !== 'object' || body === null) return reply.code(400).send({ error: 'bad_body' });
       const { action, patterns } = body as { action?: unknown; patterns?: unknown };
       if (action !== 'add' && action !== 'remove') return reply.code(400).send({ error: 'bad_action' });
-      if (!Array.isArray(patterns) || patterns.length === 0 || !patterns.every((p) => typeof p === 'string')) {
+      if (
+        !Array.isArray(patterns) || patterns.length === 0 || patterns.length > MAX_IGNORE_PATTERNS_PER_REQUEST ||
+        !patterns.every((p) => typeof p === 'string' && isValidIgnorePattern(p))
+      ) {
         return reply.code(400).send({ error: 'bad_patterns' });
       }
       const dataDir = projectDataDir(home, id);

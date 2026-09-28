@@ -48,8 +48,20 @@ async function writePatterns(dataDir: string, patterns: readonly string[]): Prom
   return [...patterns];
 }
 
+/** Longest pattern accepted; a real gitignore line is far shorter. */
+export const MAX_IGNORE_PATTERN_LENGTH = 512;
+
+/** One gitignore line: non-blank, bounded, and free of control characters (a newline would
+ * otherwise smuggle extra lines into the ignore file). */
+export function isValidIgnorePattern(raw: string): boolean {
+  const p = raw.trim();
+  return p.length > 0 && p.length <= MAX_IGNORE_PATTERN_LENGTH && !/[\u0000-\u001f\u007f]/.test(p);
+}
+
 /** Appends patterns not already present (comments/blank lines dropped, order preserved). Returns the resulting list. */
 export async function addIgnorePatterns(dataDir: string, patterns: readonly string[]): Promise<string[]> {
+  const bad = patterns.find((p) => p.trim() && !p.trim().startsWith('#') && !isValidIgnorePattern(p));
+  if (bad !== undefined) throw new Error(`invalid ignore pattern: ${JSON.stringify(bad.slice(0, 80))}`);
   const next = readIgnorePatterns(dataDir);
   const seen = new Set(next);
   for (const raw of patterns) {

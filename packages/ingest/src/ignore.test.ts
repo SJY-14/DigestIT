@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  addIgnorePatterns, compileIgnorePatterns, hasOwnGitignore, ignoreFilePath, matchesIgnorePatterns,
-  readIgnorePatterns, removeIgnorePatterns, suggestIgnorePatterns,
+  addIgnorePatterns, compileIgnorePatterns, hasOwnGitignore, ignoreFilePath, isValidIgnorePattern,
+  matchesIgnorePatterns, readIgnorePatterns, removeIgnorePatterns, suggestIgnorePatterns,
 } from './ignore.js';
 
 let root: string;
@@ -38,6 +38,15 @@ describe('read/add/remove', () => {
     const r = await removeIgnorePatterns(data, ['*.log']);
     expect(r).toEqual(['out/', 'build/']);
     expect(readIgnorePatterns(data)).toEqual(['out/', 'build/']);
+  });
+
+  it('rejects multi-line, control-character and oversized patterns without writing anything', async () => {
+    expect(isValidIgnorePattern('out/')).toBe(true);
+    expect(isValidIgnorePattern('out/\n!.env')).toBe(false);
+    expect(isValidIgnorePattern('a\u0000b')).toBe(false);
+    expect(isValidIgnorePattern('x'.repeat(513))).toBe(false);
+    await expect(addIgnorePatterns(data, ['ok/', 'out/\r\n!.env'])).rejects.toThrow(/invalid ignore pattern/);
+    expect(readIgnorePatterns(data)).toEqual([]);
   });
 
   it('never touches the project directory', async () => {

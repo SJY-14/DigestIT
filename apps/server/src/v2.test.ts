@@ -362,6 +362,10 @@ describe('GET/POST /api/projects/:id/ignore (DIG-56)', () => {
     expect((await post(app, `/api/projects/${repoId}/ignore`, { action: 'bogus', patterns: ['x'] })).statusCode).toBe(400);
     expect((await post(app, `/api/projects/${repoId}/ignore`, { action: 'add', patterns: [] })).statusCode).toBe(400);
     expect((await post(app, `/api/projects/${repoId}/ignore`, { action: 'add', patterns: [1] })).statusCode).toBe(400);
+    // A newline would smuggle a second line into the ignore file.
+    expect((await post(app, `/api/projects/${repoId}/ignore`, { action: 'add', patterns: ['out/\n!.env'] })).statusCode).toBe(400);
+    expect((await post(app, `/api/projects/${repoId}/ignore`, { action: 'add', patterns: ['x'.repeat(600)] })).statusCode).toBe(400);
+    expect((await get(app, `/api/projects/${repoId}/ignore`)).json().patterns).toEqual([]);
   });
 
   it('404s an unknown project on both GET and POST', async () => {
