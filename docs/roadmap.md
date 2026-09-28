@@ -17,8 +17,9 @@ language, and a simpler header/picker/progress flow. Contract: [ux-v3.md](ux-v3.
 
 Accepted on 2026-09-28 on real `claude-code` output (demo project, English and Korean, light and
 dark). The acceptance flow runs as a scripted headless-browser pass. DIG-52 and DIG-53 are follow-ups
-from that review. DIG-53 is merged (step bodies: 2–4 sentences, at most 70 words, cut after the
-retry); one real-provider re-run of the acceptance flow after DIG-52 merges checks both.
+from that review. Both are merged: DIG-53 (step bodies: 2–4 sentences, at most 70 words, cut after
+the retry) and DIG-52 (Korean UI chrome, small graphs fill the pane, full L0 in the picker list,
+themed scrollbars). One real-provider re-run of the acceptance flow on main checks both.
 
 ## Direction v2 — standalone project digester (done)
 
