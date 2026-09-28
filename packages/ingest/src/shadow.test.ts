@@ -7,6 +7,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { addIgnorePatterns, removeIgnorePatterns } from './ignore.js';
 import {
   DEFAULT_DENYLIST, EMPTY_TREE_SHA, diff, listTree, matchesDenylist, openShadow, pending, snapshot,
   userGitInfo, type Shadow,
@@ -239,7 +240,9 @@ describe('snapshot', () => {
 
     write('.gitignore', 'secretish.txt\n');
     const r2 = await snapshot(shadow, { parent: r1.treeSha });
-    expect(r2.skipped).toContainEqual({ path: 'secretish.txt', reason: 'denylist' });
+    // Attributed to .gitignore, not the denylist (DIG-56): secretish.txt matches neither the
+    // hardcoded denylist nor a project-ignore pattern, only the project's own .gitignore.
+    expect(r2.skipped).toContainEqual({ path: 'secretish.txt', reason: 'gitignore' });
     expect(await listTree(shadow, r2.treeSha)).toEqual(['.gitignore', 'keep.txt']);
     const files = await diff(shadow, r1.treeSha, r2.treeSha);
     expect(files.find((f) => f.path === 'secretish.txt')?.status).toBe('D');
@@ -415,6 +418,79 @@ describe('git-exclude sources: info/exclude and the global excludes file', () =>
     write('real-change.txt', 'y\n');
     const p = await pending(shadow, r1.treeSha);
     expect(p.files).toBe(1); // only real-change.txt, not local-only.txt
+  });
+});
+
+describe('project-ignore patterns (DIG-56)', () => {
+  it('skips files matched by a project-ignore pattern, reported as project-ignore, with no project git repo at all', async () => {
+    write('keep.txt', 'k\n');
+    for (let i = 0; i < 40; i++) write(`out/job-${i}.txt`, 'generated\n');
+    await addIgnorePatterns(data, ['out/']);
+
+    const shadow = await openShadow(data, proj);
+    const r = await snapshot(shadow);
+    expect(r.skipped).toEqual([{ path: 'out', reason: 'project-ignore' }]); // one collapsed entry, not 40
+    expect(await listTree(shadow, r.treeSha)).toEqual(['keep.txt']);
+  });
+
+  it('matches a bare-name pattern (job logs) and a directory pattern anywhere in the tree', async () => {
+    write('keep.txt', 'k\n');
+    write('run.o1234', 'job stdout\n');
+    write('nested/scratch/notes.txt', 'throwaway\n');
+    await addIgnorePatterns(data, ['*.o[0-9]*', 'scratch/']);
+
+    const shadow = await openShadow(data, proj);
+    const r = await snapshot(shadow);
+    const reasons = r.skipped.map((s) => s.path).sort();
+    expect(reasons).toEqual(['nested/scratch', 'run.o1234']);
+    expect(r.skipped.every((s) => s.reason === 'project-ignore')).toBe(true);
+    expect(await listTree(shadow, r.treeSha)).toEqual(['keep.txt']);
+  });
+
+  it('drops a tracked file from the next snapshot once a project-ignore pattern is added for it', async () => {
+    write('keep.txt', 'k\n');
+    write('big.log', 'noisy\n');
+    const shadow = await openShadow(data, proj);
+    const r1 = await snapshot(shadow);
+    expect(await listTree(shadow, r1.treeSha)).toEqual(['big.log', 'keep.txt']);
+
+    await addIgnorePatterns(data, ['*.log']);
+    const r2 = await snapshot(shadow, { parent: r1.treeSha });
+    expect(r2.skipped).toContainEqual({ path: 'big.log', reason: 'project-ignore' });
+    expect(await listTree(shadow, r2.treeSha)).toEqual(['keep.txt']);
+  });
+
+  it('a removed pattern lets the matching files be tracked again on the next snapshot', async () => {
+    write('keep.txt', 'k\n');
+    write('data.log', 'was ignored\n');
+    await addIgnorePatterns(data, ['*.log']);
+    const shadow = await openShadow(data, proj);
+    const r1 = await snapshot(shadow);
+    expect(await listTree(shadow, r1.treeSha)).toEqual(['keep.txt']);
+
+    await removeIgnorePatterns(data, ['*.log']);
+    const r2 = await snapshot(shadow, { parent: r1.treeSha });
+    expect(await listTree(shadow, r2.treeSha)).toEqual(['data.log', 'keep.txt']);
+  });
+
+  it('excludes project-ignore-matched files from the pending count', async () => {
+    write('a.txt', 'a\n');
+    const shadow = await openShadow(data, proj);
+    const r1 = await snapshot(shadow);
+    await addIgnorePatterns(data, ['*.log']);
+    write('noisy.log', 'x\n');
+    write('real-change.txt', 'y\n');
+    const p = await pending(shadow, r1.treeSha);
+    expect(p.files).toBe(1); // only real-change.txt, not noisy.log
+  });
+
+  it('the denylist still wins attribution over an overlapping project-ignore pattern', async () => {
+    write('keep.txt', 'k\n');
+    write('.env', 'SECRET=1\n');
+    await addIgnorePatterns(data, ['.env*']);
+    const shadow = await openShadow(data, proj);
+    const r = await snapshot(shadow);
+    expect(r.skipped).toEqual([{ path: '.env', reason: 'denylist' }]);
   });
 });
 

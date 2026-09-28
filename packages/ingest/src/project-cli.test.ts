@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openProjectDb } from './datahome.js';
+import { readIgnorePatterns } from './ignore.js';
 import { listProjects } from './project.js';
-import { runConfigCli, runInitCli, runProjectExplainCli, runProjectsCli, runStatusCli } from './project-cli.js';
+import { runConfigCli, runIgnoreCli, runInitCli, runProjectExplainCli, runProjectsCli, runStatusCli } from './project-cli.js';
 
 function listFiles(dir: string, base = dir): string[] {
   const out: string[] = [];
@@ -86,6 +87,33 @@ describe('runInitCli', () => {
     expect(code).toBe(2);
     expect(errs.join('\n')).toContain('unknown language "fr"');
   });
+
+  it('applies --ignore patterns to checkpoint #1', async () => {
+    write('keep.txt', 'k\n');
+    write('out/generated.txt', 'g\n');
+    const code = await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo', '--ignore', 'out/']);
+    expect(code).toBe(0);
+    expect(readIgnorePatterns(join(root, 'home', 'projects', '1'))).toEqual(['out/']);
+    expect(logs.join('\n')).not.toContain('out/generated.txt');
+  });
+
+  it('suggests ignore patterns for a folder with no .gitignore, and prints them without applying them', async () => {
+    for (let i = 0; i < 1200; i++) write(`out/job-${i}.txt`, 'x');
+    write('keep.txt', 'k\n');
+    const code = await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    expect(code).toBe(0);
+    expect(logs.join('\n')).toContain('suggested ignore patterns');
+    expect(logs.join('\n')).toContain('out/');
+    expect(readIgnorePatterns(join(root, 'home', 'projects', '1'))).toEqual([]); // never applied
+  });
+
+  it('does not suggest patterns when the folder already has its own .gitignore', async () => {
+    write('.gitignore', 'node_modules/\n');
+    for (let i = 0; i < 1200; i++) write(`out/job-${i}.txt`, 'x');
+    const code = await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    expect(code).toBe(0);
+    expect(logs.join('\n')).not.toContain('suggested ignore patterns');
+  });
 });
 
 describe('runConfigCli', () => {
@@ -123,6 +151,56 @@ describe('runConfigCli', () => {
     await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
     const code = await runConfigCli(['config', 'demo', '--db', dbPath]);
     expect(code).toBe(2);
+  });
+});
+
+describe('runIgnoreCli', () => {
+  beforeEach(async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    logs = [];
+  });
+
+  it('lists no patterns for a freshly registered project', async () => {
+    const code = await runIgnoreCli(['ignore', 'demo', 'list', '--db', dbPath]);
+    expect(code).toBe(0);
+    expect(logs.join('\n')).toContain('no ignore patterns');
+  });
+
+  it('adds, lists and removes patterns', async () => {
+    expect(await runIgnoreCli(['ignore', 'demo', 'add', 'out/', '*.log', '--db', dbPath])).toBe(0);
+    expect(logs.join('\n')).toContain('out/');
+    expect(logs.join('\n')).toContain('*.log');
+
+    logs = [];
+    expect(await runIgnoreCli(['ignore', 'demo', 'list', '--db', dbPath])).toBe(0);
+    expect(logs.join('\n')).toContain('2 ignore pattern(s)');
+
+    logs = [];
+    expect(await runIgnoreCli(['ignore', 'demo', 'remove', '*.log', '--db', dbPath])).toBe(0);
+    expect(logs.join('\n')).toContain('out/');
+    expect(logs.join('\n')).not.toContain('*.log');
+  });
+
+  it('applies on the next snapshot (via `digest init` re-run, which re-checks pending state)', async () => {
+    write('out/generated.txt', 'g\n');
+    await runIgnoreCli(['ignore', 'demo', 'add', 'out/', '--db', dbPath]);
+    expect(readIgnorePatterns(join(root, 'home', 'projects', '1'))).toEqual(['out/']);
+  });
+
+  it('rejects add/remove with no patterns', async () => {
+    expect(await runIgnoreCli(['ignore', 'demo', 'add', '--db', dbPath])).toBe(2);
+    expect(await runIgnoreCli(['ignore', 'demo', 'remove', '--db', dbPath])).toBe(2);
+  });
+
+  it('rejects an unknown action', async () => {
+    expect(await runIgnoreCli(['ignore', 'demo', 'bogus', 'x', '--db', dbPath])).toBe(2);
+  });
+
+  it('fails for an unknown project', async () => {
+    const code = await runIgnoreCli(['ignore', 'nope', 'list', '--db', dbPath]);
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toContain('no project "nope"');
   });
 });
 

@@ -4,8 +4,13 @@ import type { ChangeStatus, CommitStats, ExplanationStatus, FilteredReason, L0Co
 
 export type RepoMode = 'history' | 'project';
 export type CheckpointReason = 'init' | 'explain' | 'manual';
-/** Why a file was not stored in the shadow store at snapshot time. */
-export type SkipReason = 'denylist' | 'too_large' | 'nested_repo' | 'unreadable' | 'git-exclude';
+/**
+ * Why a file was not stored in the shadow store at snapshot time. `denylist` is DigestIT's own
+ * hardcoded safety net; `gitignore` is the project's own `.gitignore`; `project-ignore` is a
+ * pattern the operator added in DigestIT's data dir (DIG-56); `git-exclude` is the project's
+ * `.git/info/exclude` or its configured global excludes file.
+ */
+export type SkipReason = 'denylist' | 'gitignore' | 'project-ignore' | 'too_large' | 'nested_repo' | 'unreadable' | 'git-exclude';
 
 export interface Checkpoint {
   id: number;
@@ -120,6 +125,33 @@ export interface ProjectDto {
   context: ContextStatusDto;
   lastCheckpointAt: string | null;
   digestCount: number;
+}
+
+/** A suggested ignore pattern (DIG-56): detected on `init` of a folder without its own
+ * `.gitignore`, never applied automatically. */
+export interface IgnoreSuggestionDto {
+  pattern: string;
+  reason: string;
+}
+
+/** POST /api/projects response: the project, plus any detected-but-unapplied ignore suggestions. */
+export interface CreateProjectResponseDto extends ProjectDto {
+  suggestedIgnorePatterns: IgnoreSuggestionDto[];
+}
+
+/** One reason group in `ProjectIgnoreDto.notTracked`, with a couple of example paths. */
+export interface NotTrackedGroupDto {
+  reason: SkipReason;
+  count: number;
+  examples: string[];
+}
+
+/** GET/POST /api/projects/:id/ignore */
+export interface ProjectIgnoreDto {
+  /** This project's own gitignore-syntax patterns, in DigestIT's data dir (never in the project). */
+  patterns: string[];
+  /** Paths not stored in the shadow, from the latest checkpoint, grouped by why. */
+  notTracked: NotTrackedGroupDto[];
 }
 
 /** GET /api/projects/:id/status: cheap, no LLM call. */

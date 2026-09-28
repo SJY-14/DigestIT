@@ -9,13 +9,15 @@ import type { FastifyInstance } from 'fastify';
 import {
   EXPLAIN_LANGUAGES,
   buildProjectGraph,
-  type ChangeStatus, type DigestL2Content, type DigestFileDto, type ExplainLanguage, type ExplanationStatus,
-  type ProjectDto, type ProjectGraphDto, type SkipReason,
+  type ChangeStatus, type CreateProjectResponseDto, type DigestL2Content, type DigestFileDto, type ExplainLanguage,
+  type ExplanationStatus, type NotTrackedGroupDto, type ProjectDto, type ProjectGraphDto, type ProjectIgnoreDto,
+  type SkipReason,
 } from '@digestit/core';
 import {
-  DEFAULT_DAILY_BUDGET, ProjectLockedError, budgetStatus, buildContext, ensureContext, explainProject, initProject,
-  latestCheckpoint, latestContextText as sharedLatestContextText, listProjects, listTree, openShadow, projectDataDir,
-  projectStatus, retryDigest, updateProjectLanguage, type ProjectRow,
+  DEFAULT_DAILY_BUDGET, ProjectLockedError, addIgnorePatterns, budgetStatus, buildContext, ensureContext,
+  explainProject, initProject, latestCheckpoint, latestContextText as sharedLatestContextText, listProjects,
+  listTree, openShadow, projectDataDir, projectStatus, readIgnorePatterns, removeIgnorePatterns, retryDigest,
+  updateProjectLanguage, type ProjectRow,
 } from '@digestit/ingest';
 import {
   AREA_PROMPT_VERSION, createProvider, explainArea,
@@ -172,6 +174,21 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
 
   const latestContextText = (repoId: number) => sharedLatestContextText(db, repoId);
 
+  const NOT_TRACKED_EXAMPLES = 5;
+  /** Paths not stored in the shadow, from the latest checkpoint, grouped by why (DIG-56). */
+  function notTrackedGroups(repoId: number): NotTrackedGroupDto[] {
+    const latest = latestCheckpoint(db, repoId);
+    if (!latest) return [];
+    const groups = new Map<SkipReason, { count: number; examples: string[] }>();
+    for (const s of latest.skipped) {
+      const g = groups.get(s.reason) ?? { count: 0, examples: [] };
+      g.count++;
+      if (g.examples.length < NOT_TRACKED_EXAMPLES) g.examples.push(s.path);
+      groups.set(s.reason, g);
+    }
+    return [...groups.entries()].map(([reason, g]) => ({ reason, count: g.count, examples: g.examples }));
+  }
+
   /** Guarded by `contextInFlight`: throws `InFlightError` instead of racing a concurrent build for the same project. */
   async function withContextGuard<T>(row: ProjectRow, fn: () => Promise<T>): Promise<T> {
     if (contextInFlight.has(row.id)) throw new InFlightError();
@@ -293,6 +310,13 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     const paths = await listTree(shadow, latest.treeSha);
     const result = buildProjectGraph({ paths, files: [] });
     return { digestId: null, ...result } satisfies ProjectGraphDto;
+  });
+
+  app.get<{ Params: { id: string } }>('/api/projects/:id/ignore', async (req, reply) => {
+    const id = parseId(req.params.id);
+    if (id === null || !findProjectRow(id)) return reply.code(404).send({ error: 'not_found' });
+    const dto: ProjectIgnoreDto = { patterns: readIgnorePatterns(projectDataDir(home, id)), notTracked: notTrackedGroups(id) };
+    return dto;
   });
 
   app.get<{ Params: { id: string }; Querystring: { cursor?: string; limit?: string } }>(
@@ -440,10 +464,34 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       }
       try {
         const result = await initProject(db, home, real, { contextPath: realContextPath }, now);
-        return reply.code(201).send(projectRowToDto(findProjectRow(result.repoId)!));
+        const dto: CreateProjectResponseDto = {
+          ...projectRowToDto(findProjectRow(result.repoId)!),
+          suggestedIgnorePatterns: result.suggestedIgnorePatterns,
+        };
+        return reply.code(201).send(dto);
       } catch (e) {
         return reply.code(400).send({ error: e instanceof Error ? e.message : 'init_failed' });
       }
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { action?: unknown; patterns?: unknown } }>(
+    '/api/projects/:id/ignore',
+    { bodyLimit: V2_BODY_LIMIT },
+    async (req, reply) => {
+      const id = parseId(req.params.id);
+      if (id === null || !findProjectRow(id)) return reply.code(404).send({ error: 'not_found' });
+      const body = req.body;
+      if (typeof body !== 'object' || body === null) return reply.code(400).send({ error: 'bad_body' });
+      const { action, patterns } = body as { action?: unknown; patterns?: unknown };
+      if (action !== 'add' && action !== 'remove') return reply.code(400).send({ error: 'bad_action' });
+      if (!Array.isArray(patterns) || patterns.length === 0 || !patterns.every((p) => typeof p === 'string')) {
+        return reply.code(400).send({ error: 'bad_patterns' });
+      }
+      const dataDir = projectDataDir(home, id);
+      const next = action === 'add' ? await addIgnorePatterns(dataDir, patterns) : await removeIgnorePatterns(dataDir, patterns);
+      const dto: ProjectIgnoreDto = { patterns: next, notTracked: notTrackedGroups(id) };
+      return dto;
     },
   );
 
@@ -555,6 +603,7 @@ export const V2_WRITE_PATTERNS: readonly RegExp[] = [
   /^\/api\/projects$/,
   /^\/api\/projects\/\d+\/explain$/,
   /^\/api\/projects\/\d+\/context\/refresh$/,
+  /^\/api\/projects\/\d+\/ignore$/,
   /^\/api\/digests\/\d+\/explain$/,
   /^\/api\/digests\/\d+\/areas\/[^/]+\/explain$/,
 ];

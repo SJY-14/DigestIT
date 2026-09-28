@@ -1,8 +1,8 @@
 // v2 API client (docs/direction-v2.md §5, DIG-39 contract in packages/core/src/v2.ts).
 // Component tests use fixtures (v2Fixtures.ts) instead of a live server.
 import type {
-  AreaDetailDto, ContextStatusDto, DigestDetailDto, DigestPageDto, ExplainLanguage, ExplainResultDto,
-  ProjectDto, ProjectGraphDto, ProjectStatusDto,
+  AreaDetailDto, ContextStatusDto, CreateProjectResponseDto, DigestDetailDto, DigestPageDto, ExplainLanguage,
+  ExplainResultDto, ProjectDto, ProjectGraphDto, ProjectIgnoreDto, ProjectStatusDto,
 } from '@digestit/core';
 
 export class ApiError extends Error {
@@ -51,7 +51,7 @@ export function fetchProjects(signal?: AbortSignal): Promise<ProjectDto[]> {
   return getJson('/api/projects', signal);
 }
 
-export function createProject(rootPath: string, contextPath: string | null, signal?: AbortSignal): Promise<ProjectDto> {
+export function createProject(rootPath: string, contextPath: string | null, signal?: AbortSignal): Promise<CreateProjectResponseDto> {
   return postJson('/api/projects', { rootPath, contextPath }, signal);
 }
 
@@ -61,6 +61,18 @@ export function fetchProjectStatus(id: number, signal?: AbortSignal): Promise<Pr
 
 export function setProjectLanguage(id: number, language: ExplainLanguage, signal?: AbortSignal): Promise<ProjectDto> {
   return patchJson(`/api/projects/${id}`, { language }, signal);
+}
+
+export function fetchProjectIgnore(id: number, signal?: AbortSignal): Promise<ProjectIgnoreDto> {
+  return getJson(`/api/projects/${id}/ignore`, signal);
+}
+
+export function addIgnorePatterns(id: number, patterns: string[], signal?: AbortSignal): Promise<ProjectIgnoreDto> {
+  return postJson(`/api/projects/${id}/ignore`, { action: 'add', patterns }, signal);
+}
+
+export function removeIgnorePattern(id: number, pattern: string, signal?: AbortSignal): Promise<ProjectIgnoreDto> {
+  return postJson(`/api/projects/${id}/ignore`, { action: 'remove', patterns: [pattern] }, signal);
 }
 
 export function refreshContext(id: number, signal?: AbortSignal): Promise<ContextStatusDto> {

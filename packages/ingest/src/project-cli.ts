@@ -1,7 +1,8 @@
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { EXPLAIN_LANGUAGES, type ExplainLanguage } from '@digestit/core';
-import { openProjectDb } from './datahome.js';
+import { openProjectDb, ensureDir0700, projectDataDir } from './datahome.js';
+import { addIgnorePatterns, readIgnorePatterns, removeIgnorePatterns } from './ignore.js';
 import { DEFAULT_DAILY_BUDGET } from './scheduler.js';
 import { intOpt, providerFromArgs } from './watch.js';
 import {
@@ -10,7 +11,8 @@ import {
 } from './project.js';
 import { buildContext, ensureContext, latestContextText } from './project-context.js';
 
-export const INIT_USAGE = 'usage: digest init <path> [--name <name>] [--context <file.md>] [--language <en|ko>] [--db <file>]';
+export const INIT_USAGE =
+  'usage: digest init <path> [--name <name>] [--context <file.md>] [--language <en|ko>] [--ignore <pattern>]... [--db <file>]';
 
 type LanguageResult = { value: ExplainLanguage; error?: undefined } | { value?: undefined; error: string };
 
@@ -33,7 +35,10 @@ export async function runInitCli(argv: string[]): Promise<number> {
     ({ values, positionals } = parseArgs({
       args: argv.slice(1),
       allowPositionals: true,
-      options: { name: { type: 'string' }, context: { type: 'string' }, language: { type: 'string' }, db: { type: 'string' } },
+      options: {
+        name: { type: 'string' }, context: { type: 'string' }, language: { type: 'string' }, db: { type: 'string' },
+        ignore: { type: 'string', multiple: true },
+      },
     }));
   } catch (e) {
     console.error(`${e instanceof Error ? e.message : String(e)}\n${INIT_USAGE}`);
@@ -51,10 +56,13 @@ export async function runInitCli(argv: string[]): Promise<number> {
   }
   const { db, home } = openProjectDb(values.db ?? process.env.DIGESTIT_DB);
   try {
-    const r = await initProject(db, home, path, { name: values.name, contextPath: values.context, language: language?.value });
+    const r = await initProject(db, home, path, {
+      name: values.name, contextPath: values.context, language: language?.value, ignorePatterns: values.ignore,
+    });
     if (!r.created) {
       console.log(`project "${r.name}" (id ${r.repoId}) is already registered at ${r.path}`);
       console.log(`data dir: ${r.dataDir}`);
+      if (values.ignore?.length) console.log(`ignore pattern(s) added: ${values.ignore.join(', ')}`);
       return 0;
     }
     console.log(`registered project "${r.name}" (id ${r.repoId}) at ${r.path}`);
@@ -64,6 +72,11 @@ export async function runInitCli(argv: string[]): Promise<number> {
         (r.skipped.length > 0 ? `; skipped ${summarizeSkipped(r.skipped)}` : ''),
     );
     if (values.context) console.log(`context file: ${resolve(values.context)}`);
+    if (r.suggestedIgnorePatterns.length > 0) {
+      console.log(`this folder has no .gitignore; suggested ignore patterns (not applied):`);
+      for (const s of r.suggestedIgnorePatterns) console.log(`  ${s.pattern}  (${s.reason})`);
+      console.log(`add with: digest ignore ${r.name} add <pattern...>`);
+    }
     return 0;
   } catch (e) {
     console.error(`init failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -306,6 +319,60 @@ export async function runContextCli(argv: string[]): Promise<number> {
   } catch (e) {
     console.error(`context failed: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
+  } finally {
+    db.close();
+  }
+}
+
+export const IGNORE_USAGE = 'usage: digest ignore <project> <add|remove|list> [pattern...] [--db <file>]';
+
+const IGNORE_ACTIONS = ['add', 'remove', 'list'] as const;
+type IgnoreAction = (typeof IGNORE_ACTIONS)[number];
+const isIgnoreAction = (v: string | undefined): v is IgnoreAction => (IGNORE_ACTIONS as readonly string[]).includes(v ?? '');
+
+/** `digest ignore <project> add|remove|list [pattern...]`: manages this project's own ignore
+ * patterns (DIG-56), stored in DigestIT's data dir — gitignore syntax, never written into the project. */
+export async function runIgnoreCli(argv: string[]): Promise<number> {
+  let values, positionals;
+  try {
+    ({ values, positionals } = parseArgs({ args: argv.slice(1), allowPositionals: true, options: { db: { type: 'string' } } }));
+  } catch (e) {
+    console.error(`${e instanceof Error ? e.message : String(e)}\n${IGNORE_USAGE}`);
+    return 2;
+  }
+  const [projectRef, action, ...patterns] = positionals;
+  if (!projectRef || !isIgnoreAction(action)) {
+    console.error(IGNORE_USAGE);
+    return 2;
+  }
+  if (action !== 'list' && patterns.length === 0) {
+    console.error(`${IGNORE_USAGE}\nat least one pattern is required for "${action}"`);
+    return 2;
+  }
+  const { db, home } = openProjectDb(values.db ?? process.env.DIGESTIT_DB);
+  try {
+    const found = findProject(db, projectRef);
+    if ('error' in found) {
+      console.error(found.error);
+      return 1;
+    }
+    const dataDir = projectDataDir(home, found.id);
+    let current: string[];
+    if (action === 'add') {
+      ensureDir0700(dataDir);
+      current = await addIgnorePatterns(dataDir, patterns);
+    } else if (action === 'remove') {
+      current = await removeIgnorePatterns(dataDir, patterns);
+    } else {
+      current = readIgnorePatterns(dataDir);
+    }
+    if (current.length === 0) {
+      console.log(`${found.name}: no ignore patterns`);
+    } else {
+      console.log(`${found.name}: ${current.length} ignore pattern(s)`);
+      for (const p of current) console.log(`  ${p}`);
+    }
+    return 0;
   } finally {
     db.close();
   }

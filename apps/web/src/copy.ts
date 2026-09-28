@@ -195,6 +195,76 @@ export function explainOutcomeMessage(
   return `Explain failed.${detail ? ` ${detail}` : ''} Try again, or check the server log if it keeps failing.`;
 }
 
+// --- Ignore patterns (DIG-56): info popover section + one-click suggestions at setup -------------
+
+const IGNORE_EN = {
+  heading: 'Ignore patterns',
+  hint: 'Gitignore-syntax patterns for this project, stored outside it. Never written into the project.',
+  placeholder: 'e.g. out/ or *.log',
+  add: 'Add',
+  adding: 'Adding…',
+  empty: 'No ignore patterns yet.',
+  remove: (pattern: string) => `Remove ${pattern}`,
+  addError: (msg: string) => `Could not add the pattern: ${msg}`,
+  removeError: (msg: string) => `Could not remove the pattern: ${msg}`,
+  notTrackedHeading: 'Not tracked',
+  notTrackedEmpty: 'Everything in the last checkpoint is tracked.',
+  notTrackedExamples: (examples: string[]) => examples.join(', '),
+  suggestionsHeading: 'This folder has no .gitignore. Suggested ignore patterns:',
+  suggestionsHint: 'Not applied — add the ones you want.',
+  suggestionAdd: (pattern: string) => `Add ${pattern}`,
+  suggestionAdded: 'Added',
+  continueLabel: 'Continue',
+} as const;
+const IGNORE_KO = {
+  heading: '무시 패턴',
+  hint: '이 프로젝트를 위한 gitignore 문법 패턴으로, 프로젝트 밖에 저장됩니다. 프로젝트에는 절대 기록되지 않습니다.',
+  placeholder: '예: out/ 또는 *.log',
+  add: '추가',
+  adding: '추가 중…',
+  empty: '아직 무시 패턴이 없습니다.',
+  remove: (pattern: string) => `${pattern} 제거`,
+  addError: (msg: string) => `패턴을 추가하지 못했습니다: ${msg}`,
+  removeError: (msg: string) => `패턴을 제거하지 못했습니다: ${msg}`,
+  notTrackedHeading: '추적되지 않음',
+  notTrackedEmpty: '마지막 체크포인트의 모든 항목이 추적되고 있습니다.',
+  notTrackedExamples: (examples: string[]) => examples.join(', '),
+  suggestionsHeading: '이 폴더에는 .gitignore가 없습니다. 제안된 무시 패턴:',
+  suggestionsHint: '적용되지 않았습니다 — 원하는 것만 추가하세요.',
+  suggestionAdd: (pattern: string) => `${pattern} 추가`,
+  suggestionAdded: '추가됨',
+  continueLabel: '계속',
+} as const;
+export function ignoreCopy(lang: Lang = 'en') {
+  return lang === 'ko' ? IGNORE_KO : IGNORE_EN;
+}
+
+const NOT_TRACKED_REASON_EN: Record<string, string> = {
+  denylist: "DigestIT's built-in denylist",
+  gitignore: "this project's .gitignore",
+  'project-ignore': 'your project ignore pattern',
+  'git-exclude': 'your git excludes',
+  too_large: 'over the size limit',
+  nested_repo: 'a nested repository',
+  unreadable: 'unreadable',
+};
+const NOT_TRACKED_REASON_KO: Record<string, string> = {
+  denylist: 'DigestIT 기본 제외 목록',
+  gitignore: '이 프로젝트의 .gitignore',
+  'project-ignore': '설정한 프로젝트 무시 패턴',
+  'git-exclude': 'git 제외 설정',
+  too_large: '크기 제한 초과',
+  nested_repo: '중첩된 저장소',
+  unreadable: '읽을 수 없음',
+};
+
+/** Why a "not tracked" group exists, as a short phrase ("this project's .gitignore"), for the
+ * pattern-source distinction DIG-56 asks for (project pattern vs .gitignore vs denylist). */
+export function notTrackedReasonLabel(reason: string, lang: Lang = 'en'): string {
+  const table = lang === 'ko' ? NOT_TRACKED_REASON_KO : NOT_TRACKED_REASON_EN;
+  return table[reason] ?? reason;
+}
+
 // --- Digest picker (DIG-49/52): an overlay list, one row per digest ------------------------------
 
 /** "Today, 17:05 · 15 files · Adds retry to uploads" (or "Not explained yet" with no L0). */
@@ -301,6 +371,8 @@ const API_ERROR_MESSAGE_EN: Record<string, string> = {
   explain_failed: 'The explanation provider returned an error.',
   context_failed: 'Building the project context failed.',
   unauthorized: 'Your session expired. Reload the page and sign in again.',
+  bad_action: 'That is not a valid ignore-pattern action.',
+  bad_patterns: 'Enter at least one pattern.',
 };
 const API_ERROR_MESSAGE_KO: Record<string, string> = {
   bad_root_path: '등록할 프로젝트 폴더를 입력하세요.',
@@ -318,6 +390,8 @@ const API_ERROR_MESSAGE_KO: Record<string, string> = {
   explain_failed: '설명 제공자가 오류를 반환했습니다.',
   context_failed: '프로젝트 컨텍스트 빌드에 실패했습니다.',
   unauthorized: '세션이 만료되었습니다. 페이지를 새로고침한 뒤 다시 로그인하세요.',
+  bad_action: '올바른 무시 패턴 작업이 아닙니다.',
+  bad_patterns: '패턴을 하나 이상 입력하세요.',
 };
 
 /** A server error code (or an arbitrary message, for network/parse failures) as a sentence. */

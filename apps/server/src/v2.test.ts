@@ -162,7 +162,20 @@ describe('POST /api/projects (register)', () => {
     const app = makeApp(db, { projectRoots: [root] });
     const res = await post(app, '/api/projects', { rootPath: other });
     expect(res.statusCode).toBe(201);
-    expect(res.json()).toMatchObject({ name: 'other-project', rootPath: other });
+    expect(res.json()).toMatchObject({ name: 'other-project', rootPath: other, suggestedIgnorePatterns: [] });
+  });
+
+  it('reports suggested ignore patterns for a folder with no .gitignore, without applying them (DIG-56)', async () => {
+    const { db } = await setup();
+    const other = join(root, 'output-heavy-project');
+    mkdirSync(join(other, 'out'), { recursive: true });
+    for (let i = 0; i < 1200; i++) writeFileSync(join(other, 'out', `job-${i}.txt`), '');
+    const app = makeApp(db, { projectRoots: [root] });
+    const res = await post(app, '/api/projects', { rootPath: other });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().suggestedIgnorePatterns).toContainEqual(expect.objectContaining({ pattern: 'out/' }));
+    const ignoreRes = await get(app, `/api/projects/${res.json().id}/ignore`);
+    expect(ignoreRes.json().patterns).toEqual([]); // never applied automatically
   });
 
   it('403s a real path outside every configured root', async () => {
@@ -309,6 +322,64 @@ describe('PATCH /api/projects/:id', () => {
     const explainBody = (await post(app, `/api/projects/${repoId}/explain`)).json();
     const detail = (await get(app, `/api/digests/${explainBody.digestId}`)).json();
     expect(detail.language).toBe('ko');
+  });
+});
+
+describe('GET/POST /api/projects/:id/ignore (DIG-56)', () => {
+  it('lists no patterns and no not-tracked entries for a freshly registered project', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const res = await get(app, `/api/projects/${repoId}/ignore`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ patterns: [], notTracked: [] });
+  });
+
+  it('adds and removes patterns, requiring the write token', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const add = await post(app, `/api/projects/${repoId}/ignore`, { action: 'add', patterns: ['out/', '*.log'] });
+    expect(add.statusCode).toBe(200);
+    expect(add.json().patterns).toEqual(['out/', '*.log']);
+
+    const listed = await get(app, `/api/projects/${repoId}/ignore`);
+    expect(listed.json().patterns).toEqual(['out/', '*.log']);
+
+    const remove = await post(app, `/api/projects/${repoId}/ignore`, { action: 'remove', patterns: ['*.log'] });
+    expect(remove.statusCode).toBe(200);
+    expect(remove.json().patterns).toEqual(['out/']);
+  });
+
+  it('401s without the write token', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const res = await post(app, `/api/projects/${repoId}/ignore`, { action: 'add', patterns: ['out/'] }, good);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('400s a bad action or an empty/non-string pattern list', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    expect((await post(app, `/api/projects/${repoId}/ignore`, { action: 'bogus', patterns: ['x'] })).statusCode).toBe(400);
+    expect((await post(app, `/api/projects/${repoId}/ignore`, { action: 'add', patterns: [] })).statusCode).toBe(400);
+    expect((await post(app, `/api/projects/${repoId}/ignore`, { action: 'add', patterns: [1] })).statusCode).toBe(400);
+  });
+
+  it('404s an unknown project on both GET and POST', async () => {
+    const { db } = await setup();
+    const app = makeApp(db);
+    expect((await get(app, '/api/projects/999/ignore')).statusCode).toBe(404);
+    expect((await post(app, '/api/projects/999/ignore', { action: 'add', patterns: ['x'] })).statusCode).toBe(404);
+  });
+
+  it('shows not-tracked entries grouped by source, after the next checkpoint', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    await post(app, `/api/projects/${repoId}/ignore`, { action: 'add', patterns: ['*.log'] });
+    write('a.log', 'noisy\n');
+    write('src/b.ts', 'export const b = 2;\n');
+    await post(app, `/api/projects/${repoId}/explain`);
+    const res = await get(app, `/api/projects/${repoId}/ignore`);
+    expect(res.json().notTracked).toContainEqual({ reason: 'project-ignore', count: 1, examples: ['a.log'] });
   });
 });
 

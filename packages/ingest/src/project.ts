@@ -6,6 +6,7 @@ import type { BudgetDto, CheckpointReason, CommitStats, ExplainLanguage, SkipRea
 import { type DigestOutcome, type ExplanationProvider, explainDigest, filterReason } from '@digestit/explain';
 import { DEFAULT_DAILY_BUDGET, startOfLocalDay } from './scheduler.js';
 import { ensureDir0700, projectDataDir } from './datahome.js';
+import { addIgnorePatterns, hasOwnGitignore, readIgnorePatterns, suggestIgnorePatterns, type IgnoreSuggestion } from './ignore.js';
 import { diff, listTree, openShadow, pending, snapshot, userGitInfo, type PendingResult } from './shadow.js';
 
 export class ProjectLockedError extends Error {
@@ -188,6 +189,8 @@ export interface InitOptions {
   contextPath?: string;
   /** Explanation language for this project (default `'en'`). */
   language?: ExplainLanguage;
+  /** Extra gitignore-syntax patterns (DIG-56) to add to this project's own ignore file, on top of whatever it already has. */
+  ignorePatterns?: string[];
 }
 
 export interface InitResult {
@@ -199,6 +202,10 @@ export interface InitResult {
   created: boolean;
   tracked: number;
   skipped: { path: string; reason: SkipReason }[];
+  /** Suggested ignore patterns because the project has no `.gitignore` of its own; only populated
+   * the first time a project is registered, and never includes a pattern already added. Never
+   * applied — the caller (CLI or dashboard) decides whether to add any of them. */
+  suggestedIgnorePatterns: IgnoreSuggestion[];
 }
 
 /** `digest init`: registers a project, takes checkpoint #1, and reports what will be sent. Idempotent per path. */
@@ -212,12 +219,24 @@ export async function initProject(
   const existing = db.prepare("SELECT id, name FROM repo WHERE path = ? AND mode = 'project'").get(path) as { id: number; name: string } | undefined;
   if (existing) {
     const dataDir = projectDataDir(home, existing.id);
+    if (opts.ignorePatterns?.length) {
+      ensureDir0700(dataDir);
+      await addIgnorePatterns(dataDir, opts.ignorePatterns);
+    }
     const latest = latestCheckpoint(db, existing.id);
     // No checkpoint means an earlier init failed after registering: finish it now.
-    if (!latest) return { ...(await takeInitCheckpoint(db, dataDir, existing.id, path, now().toISOString())), repoId: existing.id, name: existing.name, path, dataDir, created: true };
+    if (!latest) {
+      return {
+        ...(await takeInitCheckpoint(db, dataDir, existing.id, path, now().toISOString())),
+        repoId: existing.id, name: existing.name, path, dataDir, created: true, suggestedIgnorePatterns: [],
+      };
+    }
     const shadow = await openShadow(dataDir, path);
     const tracked = await listTree(shadow, latest.treeSha);
-    return { repoId: existing.id, name: existing.name, path, dataDir, created: false, tracked: tracked.length, skipped: latest.skipped };
+    return {
+      repoId: existing.id, name: existing.name, path, dataDir, created: false, tracked: tracked.length,
+      skipped: latest.skipped, suggestedIgnorePatterns: [],
+    };
   }
 
   if (opts.name && db.prepare('SELECT 1 FROM repo WHERE name = ?').get(opts.name)) {
@@ -231,7 +250,19 @@ export async function initProject(
   ).run(name, path, contextPath, at, language).lastInsertRowid);
 
   const dataDir = projectDataDir(home, repoId);
-  return { ...(await takeInitCheckpoint(db, dataDir, repoId, path, at)), repoId, name, path, dataDir, created: true };
+  ensureDir0700(dataDir);
+  if (opts.ignorePatterns?.length) await addIgnorePatterns(dataDir, opts.ignorePatterns);
+  // Detected before checkpoint #1, so it reflects the folder as the operator found it. Never
+  // applied on their behalf, and never suggested once the project already has its own .gitignore.
+  let suggestedIgnorePatterns: IgnoreSuggestion[] = [];
+  if (!hasOwnGitignore(path)) {
+    const already = new Set(readIgnorePatterns(dataDir));
+    suggestedIgnorePatterns = (await suggestIgnorePatterns(path)).filter((s) => !already.has(s.pattern));
+  }
+  return {
+    ...(await takeInitCheckpoint(db, dataDir, repoId, path, at)), repoId, name, path, dataDir, created: true,
+    suggestedIgnorePatterns,
+  };
 }
 
 async function takeInitCheckpoint(

@@ -6,6 +6,7 @@ export * from './workunits.js';
 export * from './scheduler.js';
 export * from './rollup.js';
 export * from './datahome.js';
+export * from './ignore.js';
 export * from './project.js';
 export * from './project-cli.js';
 export * from './project-context.js';
