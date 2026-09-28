@@ -64,6 +64,44 @@ export interface AreaL3Content {
   notes: AreaNote[];
 }
 
+// ---- UX v3 (DIG-47, docs/ux-v3.md): L3 walkthrough and explanation language ----
+
+/** Language the explanations (L0–L3, context, step titles) are written in. Code identifiers stay as written. */
+export type ExplainLanguage = 'en' | 'ko';
+export const EXPLAIN_LANGUAGES: readonly ExplainLanguage[] = ['en', 'ko'];
+
+/**
+ * One hunk of one file's patch. `hunk` is 1-based: the n-th `@@` hunk header of that file's
+ * patch, counted the same way in the prompt ("hunk n"), the validator and the UI. The patch is
+ * the one `AreaDetailDto.files[].patch` returns; hunks cut off by the token budget are simply
+ * absent from the prompt and shown by the UI as "not covered by the walkthrough".
+ */
+export interface HunkRef {
+  path: string;
+  hunk: number;
+}
+
+export interface WalkthroughStep {
+  /** Short title, ≤ 8 words, in the explanation language. */
+  title: string;
+  /** Prose: what this code does now, what it did before, and why it was changed this way. */
+  body: string;
+  /** The hunks this step explains, in reading order; at least one. Shown right under `body`. */
+  hunks: HunkRef[];
+  /** True only for the (at most one) step that groups mechanical changes: renames, formatting, moves. */
+  mechanical: boolean;
+}
+
+/** Lazy L3 for one L2 area (replaces `AreaL3Content` in DIG-48). */
+export interface AreaWalkthrough {
+  /** 2–3 sentences on the area's change as a whole. */
+  overview: string;
+  /** Ordered; together they cover every hunk of the area that was in the prompt. */
+  steps: WalkthroughStep[];
+  /** "What to check": risks, edge cases, tests to look at. 1–5 items. */
+  check: string[];
+}
+
 export interface ProjectContextContent {
   purpose: string;
   modules: { path: string; role: string }[];

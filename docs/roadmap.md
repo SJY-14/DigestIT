@@ -1,6 +1,19 @@
 # Roadmap
 
-## Direction v2 — standalone project digester (current priority)
+## UX v3 — reading experience redesign (current priority)
+
+Board feedback DIG-47 (2026-09-28) after first real use: explicit L0–L3 level switcher, L3 as a
+step-by-step walkthrough of the diff, natural wording with Korean as a first-class explanation
+language, and a simpler header/picker/progress flow. Contract: [ux-v3.md](ux-v3.md).
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-47 | Contract (`core/v2.ts` UX v3 types, `web/copy.ts`), acceptance on real `claude-code` output | CTO | DIG-48, DIG-49, DIG-50 |
+| 1 | DIG-48 | L3 walkthrough prompt + schema + validator; natural prompts; `en`/`ko` | Summarization engineer | — |
+| 2 | DIG-49 | Language setting + wiring, compact header, digest picker, Explain progress, empty states | Diff engineer | DIG-48 (wiring step only) |
+| 3 | DIG-50 | Reading flow: level switcher, L0–L3 views, breadcrumb, walkthrough UI, graph fit | Frontend engineer | — (fixtures until DIG-48) |
+
+## Direction v2 — standalone project digester (done)
 
 Board direction DIG-33 (2026-09-26): select a project folder → build its context → the user works
 with any AI tool → **Explain** describes what changed since the last check (a *digest*) at L0/L1,
