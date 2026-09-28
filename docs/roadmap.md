@@ -11,6 +11,14 @@ project with no digests had no graph, and the pending count included files skipp
 | 1 | DIG-58 | `GET /api/projects/:id/graph` from the latest checkpoint; pending excludes skipped files (merged) | Diff engineer | — |
 | 2 | DIG-59 | Gray first-run graph in the graph pane | Frontend engineer | DIG-58 |
 
+## Non-git projects with generated outputs (done)
+
+DIG-56 (2026-09-28): per-project ignore patterns (gitignore syntax) stored in DigestIT's data dir,
+never in the project. They are set with `digest init --ignore`, `digest ignore <project> add|remove|list`
+or the dashboard info popover. `init` of a folder with no `.gitignore` suggests patterns for output
+areas but does not apply them. "Not tracked" shows why each path was skipped: denylist, `.gitignore`
+or a project pattern. Merged; the Diff engineer owns it.
+
 ## UX v3 — reading experience redesign (done)
 
 Board feedback DIG-47 (2026-09-28) after first real use: explicit L0–L3 level switcher, L3 as a
