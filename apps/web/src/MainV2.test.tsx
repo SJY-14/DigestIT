@@ -211,6 +211,9 @@ describe('MainV2: reading flow', () => {
     history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=3&area=graph-pane`);
     await render(<MainV2 />);
     await waitFor(() => host.querySelector('section.step') !== null);
+    // At the overview, p has nowhere earlier to go.
+    await pressKey('p');
+    expect(params().get('step')).toBeNull();
     await pressKey('n');
     expect(params().get('step')).toBe('1');
     await pressKey('n');

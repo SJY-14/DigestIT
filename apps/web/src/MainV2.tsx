@@ -600,7 +600,8 @@ export function MainV2() {
         e.preventDefault();
         k.onLevel(action.level);
         setAnnounce(`${LEVELS[action.level].key} ${LEVELS[action.level].label}`);
-      } else if (k.level === 3 && k.stepCount > 0) {
+      } else if (k.level === 3 && k.stepCount > 0 && !(k.step === null && action.delta < 0)) {
+        // At the overview (no step yet) only `n` moves: `p` has nowhere earlier to go.
         const next = Math.min(k.stepCount, Math.max(1, (k.step ?? 0) + action.delta));
         if (next !== k.step) {
           e.preventDefault();
