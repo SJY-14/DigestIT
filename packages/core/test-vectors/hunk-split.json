@@ -1,0 +1,33 @@
+{
+  "description": "Shared test vector for splitting one file's unified patch into hunks (docs/ux-v3.md section 2). Hunks are numbered from 1 in patch order, walking the patch by the @@ line counts (as in packages/explain/src/difflines.ts), so content lines that look like headers are not hunk boundaries. Used by the web walkthrough UI (DIG-50) and meant for the walkthrough validator (DIG-48).",
+  "cases": [
+    {
+      "name": "git headers, a content line that looks like a file header, omitted counts, no-newline marker",
+      "patch": "diff --git a/src/api.ts b/src/api.ts\nindex 1111111..2222222 100644\n--- a/src/api.ts\n+++ b/src/api.ts\n@@ -1,3 +1,3 @@ import\n a\n--- not a header\n+++ not a header either\n b\n@@ -10 +10 @@\n-old\n+new\n\\ No newline at end of file\n@@ -20,2 +20,3 @@ fn\n x\n+y\n z\n",
+      "hunks": [
+        { "hunk": 1, "header": "@@ -1,3 +1,3 @@ import", "oldStart": 1, "newStart": 1, "lines": [" a", "--- not a header", "+++ not a header either", " b"] },
+        { "hunk": 2, "header": "@@ -10 +10 @@", "oldStart": 10, "newStart": 10, "lines": ["-old", "+new"] },
+        { "hunk": 3, "header": "@@ -20,2 +20,3 @@ fn", "oldStart": 20, "newStart": 20, "lines": [" x", "+y", " z"] }
+      ]
+    },
+    {
+      "name": "new file (zero-count old side)",
+      "patch": "@@ -0,0 +1,2 @@\n+one\n+two\n",
+      "hunks": [
+        { "hunk": 1, "header": "@@ -0,0 +1,2 @@", "oldStart": 0, "newStart": 1, "lines": ["+one", "+two"] }
+      ]
+    },
+    {
+      "name": "a line that looks like a hunk header inside a hunk body is content",
+      "patch": "@@ -1,2 +1,2 @@\n-@@ -5,1 +5,1 @@\n+@@ -6,1 +6,1 @@\n ctx\n",
+      "hunks": [
+        { "hunk": 1, "header": "@@ -1,2 +1,2 @@", "oldStart": 1, "newStart": 1, "lines": ["-@@ -5,1 +5,1 @@", "+@@ -6,1 +6,1 @@", " ctx"] }
+      ]
+    },
+    {
+      "name": "empty or header-only patch has no hunks",
+      "patch": "Binary files a/logo.png and b/logo.png differ\n",
+      "hunks": []
+    }
+  ]
+}

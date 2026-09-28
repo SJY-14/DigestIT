@@ -2,7 +2,7 @@
 // status, budget, Explain button), and the two-pane digest view (change list + project graph).
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import type {
-  AreaDetailDto, DigestDetailDto, DigestL2Item, DigestSummaryDto, GraphNode, ProjectDto, ProjectGraphDto, ProjectStatusDto,
+  AreaDetailDto, DigestDetailDto, DigestSummaryDto, GraphNode, ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 import {
   ApiError, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph, fetchProjectStatus, fetchProjects, refreshContext,
@@ -12,8 +12,12 @@ import { useDigests } from './useDigests.js';
 import { startLive } from './liveClient.js';
 import { formatDate, relativeTime } from './format.js';
 import { ProjectGraph } from './ProjectGraph.js';
-import { AreaView } from './AreaView.js';
-import { useV2Url } from './v2Url.js';
+import { WalkthroughView, walkthroughOf } from './Walkthrough.js';
+import {
+  AreaPicker, Breadcrumb, ImpactView, LEVEL_TAB_ID, LevelSwitcher, READING_PANE_ID, readerKey, StructureView, SummaryView,
+} from './Reader.js';
+import { GRAPH, LEVELS, READER, WALKTHROUGH } from './copy.js';
+import { useV2Url, type ReadingLevel, type V2Url } from './v2Url.js';
 
 // --- setup form (no project registered yet) -----------------------------------------------------
 
@@ -254,7 +258,7 @@ function DigestPicker({
   );
 }
 
-// --- change list: L0/L1, then one row per L2 area -----------------------------------------------
+// --- L2 filter from a graph node ----------------------------------------------------------------
 
 export interface ListFilter {
   path: string;
@@ -282,107 +286,18 @@ export function computeFilter(nodeId: string, graph: ProjectGraphDto | null, dig
   };
 }
 
-function areaStats(item: DigestL2Item, digest: DigestDetailDto): { additions: number; deletions: number } {
-  const files = digest.files.filter((f) => item.paths.includes(f.path));
-  return { additions: files.reduce((s, f) => s + f.additions, 0), deletions: files.reduce((s, f) => s + f.deletions, 0) };
-}
-
-function AreaRow({
-  item, digest, expanded, onToggle, onHover, onOpenCode, onChipClick,
-}: {
-  item: DigestL2Item;
-  digest: DigestDetailDto;
-  expanded: boolean;
-  onToggle: () => void;
-  onHover: (hovering: boolean) => void;
-  onOpenCode: () => void;
-  onChipClick: (path: string) => void;
-}) {
-  const stats = areaStats(item, digest);
-  return (
-    <li className="area-row" onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)}>
-      <button
-        type="button"
-        className="area-row-main"
-        aria-expanded={expanded}
-        onFocus={() => onHover(true)}
-        onBlur={() => onHover(false)}
-        onClick={onToggle}
-      >
-        <span className="area-title">{item.title}</span>
-        <span className="area-effect">{item.effect}</span>
-      </button>
-      <span className="area-chips">
-        {item.paths.map((p) => (
-          <button key={p} type="button" className="chip" onClick={() => onChipClick(p)}>{p}</button>
-        ))}
-      </span>
-      <span className="stats area-stats">
-        <span className="add">+{stats.additions}</span> <span className="del">−{stats.deletions}</span>
-      </span>
-      {expanded && (
-        <div className="area-detail">
-          <p><strong>How:</strong> {item.how}</p>
-          <p><strong>Why:</strong> {item.why}</p>
-          <button type="button" className="btn" onClick={onOpenCode}>Code (L3)</button>
-        </div>
-      )}
-    </li>
-  );
-}
-
-function ChangeList({
-  digest, filter, onClearFilter, expandedIds, onToggleRow, onHoverArea, onOpenCode, onChipClick,
-}: {
-  digest: DigestDetailDto;
-  filter: ListFilter | null;
-  onClearFilter: () => void;
-  expandedIds: ReadonlySet<string>;
-  onToggleRow: (id: string) => void;
-  onHoverArea: (id: string | null) => void;
-  onOpenCode: (item: DigestL2Item) => void;
-  onChipClick: (path: string) => void;
-}) {
-  const items = digest.l2?.items ?? [];
-  const visible = filter ? items.filter((it) => filter.areaIds.has(it.id)) : items;
-  return (
-    <div className="change-list">
-      {filter ? (
-        <div className="filter-header">
-          <code>{filter.path}</code>
-          <span className="stats"><span className="add">+{filter.additions}</span> <span className="del">−{filter.deletions}</span></span>
-          <span className="muted">{visible.length} of {items.length} changes</span>
-          <button type="button" className="btn chip clear-filter" onClick={onClearFilter}>Clear ×</button>
-        </div>
-      ) : (
-        <div className="digest-overview">
-          <h2 className="l0">{digest.l0?.text ?? 'Not explained yet'}</h2>
-          {digest.l1 && <ul className="l1-bullets">{digest.l1.bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>}
-        </div>
-      )}
-      {items.length === 0 && <p className="empty">No areas to show yet.</p>}
-      <ul className="area-rows">
-        {visible.map((it) => (
-          <AreaRow
-            key={it.id}
-            item={it}
-            digest={digest}
-            expanded={expandedIds.has(it.id)}
-            onToggle={() => onToggleRow(it.id)}
-            onHover={(h) => onHoverArea(h ? it.id : null)}
-            onOpenCode={() => onOpenCode(it)}
-            onChipClick={onChipClick}
-          />
-        ))}
-      </ul>
-    </div>
-  );
+/** Where a graph node click leads (docs/ux-v3.md §1): a node in exactly one area opens that area
+ * at L3; a node touching several areas (or none) opens L2 filtered to it. */
+export function nodeTarget(node: Pick<GraphNode, 'id' | 'areaIds'>): Partial<V2Url> {
+  return node.areaIds.length === 1
+    ? { level: 3, area: node.areaIds[0]!, step: null, node: null }
+    : { level: 2, node: node.id, step: null };
 }
 
 // --- resizable divider ---------------------------------------------------------------------------
 
-const MIN_LEFT_PCT = 20;
-const MAX_LEFT_PCT = 70;
+const MIN_LEFT_PCT = 35;
+const MAX_LEFT_PCT = 75;
 
 function Divider({ pct, onChange }: { pct: number; onChange: (pct: number) => void }) {
   const dragging = useRef(false);
@@ -506,13 +421,14 @@ export function MainV2() {
   const [areaError, setAreaError] = useState<string | null>(null);
   const [areaGenerating, setAreaGenerating] = useState(false);
   const [hoverAreaId, setHoverAreaId] = useState<string | null>(null);
-  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [announce, setAnnounce] = useState('');
-  // Left pane (change list) defaults to ~40% of the width; the right pane fills the rest.
-  const [leftPct, setLeftPct] = useState(40);
+  // The reading pane defaults to ~60% of the width; the graph pane fills the rest.
+  const [leftPct, setLeftPct] = useState(60);
   const narrow = useNarrow();
-  const [graphSectionOpen, setGraphSectionOpen] = useState(true);
+  const [graphSectionOpen, setGraphSectionOpen] = useState(false);
+  const paneRef = useRef<HTMLDivElement>(null);
+  const level: ReadingLevel = url.level ?? 0;
 
   useEffect(() => {
     const ac = new AbortController();
@@ -550,10 +466,10 @@ export function MainV2() {
     return () => ac.abort();
   }, [currentDigestId]);
 
-  useEffect(() => { setExpand([]); setExpandedIds(new Set()); }, [currentDigestId]);
-
+  // A new digest starts from its own graph, folded; unfolding a folder refetches but keeps the
+  // current graph on screen (and its view) until the new one arrives.
+  useEffect(() => { setExpand([]); setGraph(null); }, [currentDigestId]);
   useEffect(() => {
-    setGraph(null);
     setGraphError(null);
     if (currentDigestId === null) return;
     const ac = new AbortController();
@@ -573,8 +489,7 @@ export function MainV2() {
     generateRef.current = null;
     if (currentDigestId === null || url.area === null) return;
     const ac = new AbortController();
-    // Cheap GET: never spends the budget. Generating L3 is a separate, explicit user action
-    // (docs/direction-v2.md §4: "clicks to request L3"), wired below as onGenerateArea.
+    // Cheap GET: never spends the budget. Generating L3 is a separate, explicit user action.
     fetchArea(currentDigestId, url.area, ac.signal).then(setAreaDetail, (e: unknown) => { if (!ac.signal.aborted) setAreaError(e instanceof Error ? e.message : String(e)); });
     return () => ac.abort();
   }, [currentDigestId, url.area]);
@@ -592,8 +507,8 @@ export function MainV2() {
         setAreaDetail(d);
         refreshStatus();
       },
-      // Leave areaError alone: the area is already loaded, so AreaView shows its own
-      // error + Retry rather than replacing the pane with the "could not load" message.
+      // The area is already loaded, so the walkthrough shows its own error + Try again rather
+      // than replacing the pane with the "couldn't load" message.
       () => {
         if (ac.signal.aborted) return;
         setAreaGenerating(false);
@@ -609,15 +524,29 @@ export function MainV2() {
   // (when there was never a filter to clear).
   const prevNodeRef = useRef<string | null>(null);
   useEffect(() => {
-    if (filter) setAnnounce(`Filtered to ${filter.path}`);
-    else if (url.node === null && prevNodeRef.current !== null) setAnnounce('Filter cleared');
+    if (filter) setAnnounce(READER.filterAnnounce(filter.path));
+    else if (url.node === null && prevNodeRef.current !== null) setAnnounce(READER.filterCleared);
     prevNodeRef.current = url.node;
   }, [filter, url.node]);
 
+  const openAreaItem = digest?.l2?.items.find((it) => it.id === url.area) ?? null;
+  const walkthrough = areaDetail && areaDetail.areaId === url.area ? walkthroughOf(areaDetail) : null;
+  const stepCount = walkthrough?.steps.length ?? 0;
+
+  // The graph outlines the hovered area's nodes, else (at L2/L3) the selected area's.
+  const outlinedAreaId = hoverAreaId ?? (level >= 2 && openAreaItem ? openAreaItem.id : null);
   const highlightNodeIds = useMemo(() => {
-    if (!hoverAreaId || !graph) return undefined;
-    return new Set(graph.nodes.filter((n) => n.areaIds.includes(hoverAreaId)).map((n) => n.id));
-  }, [hoverAreaId, graph]);
+    if (!outlinedAreaId || !graph) return undefined;
+    return new Set(graph.nodes.filter((n) => n.areaIds.includes(outlinedAreaId)).map((n) => n.id));
+  }, [outlinedAreaId, graph]);
+
+  // The reading pane is the one long scroll: a new digest, level or area starts at its top. A
+  // step in the URL scrolls itself into view (WalkthroughView), so it is left alone here.
+  useEffect(() => {
+    if (url.step !== null) return;
+    paneRef.current?.scrollTo?.({ top: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDigestId, level, url.area]);
 
   const explaining = Boolean(status?.explaining) || explainingLocal;
 
@@ -629,7 +558,8 @@ export function MainV2() {
       .then((r) => {
         if (r.digestId !== null) {
           digests.reload();
-          replace({ digest: r.digestId, node: null, area: null });
+          // A new digest after Explain lands at L0 (docs/ux-v3.md §1).
+          replace({ digest: r.digestId, level: null, node: null, area: null, step: null });
         }
       })
       .catch((e: unknown) => setExplainError(e instanceof Error ? e.message : String(e)))
@@ -645,21 +575,42 @@ export function MainV2() {
     refreshContext(currentProjectId).finally(() => { setRefreshing(false); refreshStatus(); });
   }, [currentProjectId, refreshStatus]);
 
-  const onSwitchProject = useCallback((id: number) => push({ project: id, digest: null, node: null, area: null }), [push]);
-  const onSelectNode = useCallback((node: GraphNode) => push({ node: node.id, area: null }), [push]);
-  const onChipClick = useCallback((path: string) => push({ node: `f:${path}`, area: null }), [push]);
+  const onSwitchProject = useCallback((id: number) => push({ project: id, digest: null, node: null, area: null, step: null }), [push]);
+  const onSelectDigest = useCallback((id: number) => push({ digest: id, node: null, area: null, step: null }), [push]);
+  const onLevel = useCallback((l: ReadingLevel) => push({ level: l === 0 ? null : l, step: null }), [push]);
+  const onOpenArea = useCallback((id: string) => push({ level: 3, area: id, step: null }), [push]);
+  const onStep = useCallback((n: number) => replace({ step: n }), [replace]);
+  const onSelectNode = useCallback((node: GraphNode) => {
+    setGraphSectionOpen(false);
+    push(nodeTarget(node));
+  }, [push]);
   const onClearFilter = useCallback(() => push({ node: null }), [push]);
-  // On narrow screens the right pane sits in a collapsible section; open it so Code (L3) is visible.
-  const onOpenCode = useCallback((item: DigestL2Item) => { setGraphSectionOpen(true); push({ area: item.id }); }, [push]);
-  const onBackToGraph = useCallback(() => push({ area: null }), [push]);
   const onExpandGraphNode = useCallback((path: string) => setExpand((prev) => (prev.includes(path) ? prev : [...prev, path])), []);
-  const onToggleRow = useCallback((id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const toTop = () => paneRef.current?.scrollTo?.({ top: 0 });
+
+  // Global reading keys: 0–3 switch level, n/p move between walkthrough steps.
+  const keyState = useRef({ level, step: url.step, stepCount, onLevel, onStep });
+  keyState.current = { level, step: url.step, stepCount, onLevel, onStep };
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      const action = readerKey(e);
+      if (!action) return;
+      const k = keyState.current;
+      if (action.kind === 'level') {
+        e.preventDefault();
+        k.onLevel(action.level);
+        setAnnounce(`${LEVELS[action.level].key} ${LEVELS[action.level].label}`);
+      } else if (k.level === 3 && k.stepCount > 0) {
+        const next = Math.min(k.stepCount, Math.max(1, (k.step ?? 0) + action.delta));
+        if (next !== k.step) {
+          e.preventDefault();
+          k.onStep(next);
+          setAnnounce(WALKTHROUGH.stepOf(next, k.stepCount));
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   }, []);
 
   const onRetryDigest = useCallback((id: number) => {
@@ -668,7 +619,7 @@ export function MainV2() {
       (d) => {
         digests.reload();
         if (id === currentDigestId) setDigest(d);
-        else push({ digest: id, node: null, area: null });
+        else push({ digest: id, node: null, area: null, step: null });
       },
       () => digests.reload(),
     ).finally(() => {
@@ -692,88 +643,126 @@ export function MainV2() {
     return <SetupForm onCreated={(p) => { setProjects([p]); replace({ project: p.id }); }} />;
   }
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? projects[0]!;
+  const noBudget = (status?.budget.remaining ?? 1) === 0;
 
-  const openAreaItem = digest?.l2?.items.find((it) => it.id === url.area) ?? null;
-  // A file node was selected (not a folder): open the area's L3 scrolled to that file first.
-  const focusPath = url.node?.startsWith('f:') ? url.node.slice(2) : null;
+  const digestNotice = digest && digest.status !== 'ok' && (
+    <div className={digest.status === 'error' ? 'notice error' : 'notice muted'} role={digest.status === 'error' ? 'alert' : 'status'}>
+      <span>{digest.status === 'pending' ? READER.digestPending : digest.status === 'error' ? READER.digestError : READER.digestTruncated}</span>
+      {digest.status !== 'pending' && (
+        <button type="button" className="btn" onClick={() => onRetryDigest(digest.id)} disabled={retryingId !== null || noBudget}>
+          {noBudget ? READER.retryNoBudget : retryingId === digest.id ? READER.retrying : READER.retry}
+        </button>
+      )}
+    </div>
+  );
+
+  const levelView = !digest ? null
+    : level === 0 ? <SummaryView digest={digest} onLevel={onLevel} />
+      : level === 1 ? <ImpactView digest={digest} onLevel={onLevel} />
+        : level === 2 ? (
+          <StructureView
+            digest={digest}
+            filter={filter}
+            selectedAreaId={url.area}
+            onOpenArea={onOpenArea}
+            onClearFilter={onClearFilter}
+            onHoverArea={setHoverAreaId}
+            onLevel={onLevel}
+          />
+        ) : !openAreaItem ? (
+          <AreaPicker digest={digest} onOpenArea={onOpenArea} onHoverArea={setHoverAreaId} />
+        ) : areaError ? (
+          <p role="alert" className="error">{WALKTHROUGH.loadError(areaError)}</p>
+        ) : areaDetail ? (
+          <WalkthroughView
+            area={areaGenerating ? { ...areaDetail, status: 'pending' } : areaDetail}
+            item={openAreaItem}
+            step={url.step}
+            onStep={onStep}
+            onGenerate={onGenerateArea}
+            callsRemaining={status?.budget.remaining ?? null}
+          />
+        ) : (
+          <p className="muted">{WALKTHROUGH.loading}</p>
+        );
+
+  const graphPane = graphError ? (
+    <p role="alert" className="error">{GRAPH.loadError(graphError)}</p>
+  ) : graph ? (
+    <ProjectGraph graph={graph} highlightNodeIds={highlightNodeIds} selectedNodeId={url.node} onSelectNode={onSelectNode} onExpand={onExpandGraphNode} />
+  ) : (
+    <p className="muted">{GRAPH.loading}</p>
+  );
 
   return (
-    <div className="main-v2">
+    <div className={narrow ? 'main-v2 narrow' : 'main-v2'}>
       <div aria-live="polite" className="visually-hidden">{announce}</div>
-      <ProjectBar
-        projects={projects}
-        currentProject={currentProject}
-        onSwitch={onSwitchProject}
-        status={status}
-        statusError={statusError}
-        onRefreshContext={onRefreshContext}
-        refreshing={refreshing}
-        explaining={explaining}
-        onExplain={onExplain}
-      />
-      {explainError && <p role="alert" className="error">Could not explain: {explainError}</p>}
-      {digestError && <p role="alert" className="error">Could not load the digest: {digestError}</p>}
-      {!digestError && currentDigestId === null && digests.done && (
-        <p className="empty">No digests yet. Use <strong>Explain changes since last check</strong> above to create the first one.</p>
-      )}
-      {!digestError && currentDigestId === null && !digests.done && <p className="muted">Loading…</p>}
-      {!digestError && currentDigestId !== null && !digest && <p className="muted">Loading digest…</p>}
-      {digest && (
-        <div className={narrow ? 'split-v2 stacked' : 'split-v2'}>
-          <div className="left-pane" style={narrow ? undefined : { flexBasis: `${leftPct}%` }}>
+      <div className="reader-top">
+        <ProjectBar
+          projects={projects}
+          currentProject={currentProject}
+          onSwitch={onSwitchProject}
+          status={status}
+          statusError={statusError}
+          onRefreshContext={onRefreshContext}
+          refreshing={refreshing}
+          explaining={explaining}
+          onExplain={onExplain}
+        />
+        {explainError && <p role="alert" className="error">Could not explain: {explainError}</p>}
+        {digestError && <p role="alert" className="error">{READER.digestLoadError(digestError)}</p>}
+        {!digestError && currentDigestId === null && digests.done && (
+          <p className="empty">No digests yet. Use <strong>Explain changes since last check</strong> above to create the first one.</p>
+        )}
+        {!digestError && currentDigestId === null && !digests.done && <p className="muted">Loading…</p>}
+        {!digestError && currentDigestId !== null && !digest && <p className="muted">{READER.loadingDigest}</p>}
+        {digest && (
+          <>
             <DigestPicker
               digests={digests}
               current={digests.items.find((d) => d.id === currentDigestId)}
-              onSelect={(id) => push({ digest: id, node: null, area: null })}
+              onSelect={onSelectDigest}
               onRetry={onRetryDigest}
               retryingId={retryingId}
-              retryDisabled={(status?.budget.remaining ?? 1) === 0}
+              retryDisabled={noBudget}
             />
-            <ChangeList
-              digest={digest}
-              filter={filter}
-              onClearFilter={onClearFilter}
-              expandedIds={expandedIds}
-              onToggleRow={onToggleRow}
-              onHoverArea={setHoverAreaId}
-              onOpenCode={onOpenCode}
-              onChipClick={onChipClick}
-            />
+            <div className="reader-nav">
+              <Breadcrumb
+                digest={digest}
+                level={level}
+                area={openAreaItem}
+                onDigest={() => { push({ level: null, area: null, step: null, node: null }); toTop(); }}
+                onArea={() => { replace({ step: null }); toTop(); }}
+                onLevel={() => { if (url.step !== null) replace({ step: null }); toTop(); }}
+              />
+              <LevelSwitcher level={level} onLevel={onLevel} />
+            </div>
+          </>
+        )}
+      </div>
+      {digest && (
+        <div className="reader-split">
+          <div
+            id={READING_PANE_ID}
+            ref={paneRef}
+            role="tabpanel"
+            aria-labelledby={LEVEL_TAB_ID(level)}
+            tabIndex={0}
+            className="reading-pane"
+            style={narrow ? undefined : { flexBasis: `${leftPct}%` }}
+          >
+            {digestNotice}
+            {levelView}
           </div>
           {!narrow && <Divider pct={leftPct} onChange={setLeftPct} />}
-          <div className="right-pane-wrap">
+          <aside className="graph-pane" aria-label={GRAPH.label}>
             {narrow && (
               <button type="button" className="btn graph-toggle" aria-expanded={graphSectionOpen} onClick={() => setGraphSectionOpen((o) => !o)}>
-                {graphSectionOpen ? 'Hide graph' : 'Show graph'}
+                {graphSectionOpen ? GRAPH.hide : GRAPH.show}
               </button>
             )}
-            {(!narrow || graphSectionOpen) && (
-              <div className="right-pane">
-                {url.area && openAreaItem ? (
-                  areaError ? (
-                    <p role="alert" className="error">Could not load this area: {areaError}</p>
-                  ) : areaDetail ? (
-                    <AreaView
-                      area={areaGenerating ? { ...areaDetail, status: 'pending' } : areaDetail}
-                      title={openAreaItem.title}
-                      onBack={onBackToGraph}
-                      focusPath={focusPath}
-                      onGenerate={onGenerateArea}
-                      callsRemaining={status?.budget.remaining ?? null}
-                    />
-                  ) : (
-                    <p className="muted">Loading…</p>
-                  )
-                ) : graphError ? (
-                  <p role="alert" className="error">Could not load the graph: {graphError}</p>
-                ) : graph ? (
-                  <ProjectGraph graph={graph} highlightNodeIds={highlightNodeIds} selectedNodeId={url.node} onSelectNode={onSelectNode} onExpand={onExpandGraphNode} />
-                ) : (
-                  <p className="muted">Loading graph…</p>
-                )}
-              </div>
-            )}
-          </div>
+            {(!narrow || graphSectionOpen) && graphPane}
+          </aside>
         </div>
       )}
     </div>

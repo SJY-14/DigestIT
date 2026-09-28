@@ -1,6 +1,6 @@
 import { buildProjectGraph } from '@digestit/core';
 import { describe, expect, it } from 'vitest';
-import { bounds, fitView, layoutGraph, MAX_FIT_SCALE, nodeRadius, seedPositions } from './graphLayout.js';
+import { bounds, fitPadding, fitView, layoutGraph, MAX_FIT_SCALE, nodeRadius, seedPositions } from './graphLayout.js';
 
 const small = buildProjectGraph({
   paths: ['src/a.ts', 'src/b.ts', 'src/sub/c.ts', 'docs/readme.md'],
@@ -132,5 +132,32 @@ describe('bounds/fitView', () => {
     const huge = { minX: -5000, minY: -5000, maxX: 5000, maxY: 5000 };
     const view = fitView(huge, 640);
     expect(view.scale).toBeLessThan(MAX_FIT_SCALE);
+  });
+
+  it('auto-fit: every changed node (with its radius) lands inside a wide or tall pane, with the padding kept', () => {
+    const pos = layoutGraph(small.nodes, small.edges);
+    const changed = small.nodes.filter((n) => n.changed);
+    expect(changed.length).toBeGreaterThan(1);
+    for (const [w, h] of [[900, 420], [360, 820], [640, 640]] as const) {
+      const view = fitView(bounds(small.nodes, pos, changed.map((n) => n.id)), w, h);
+      const pad = fitPadding(w, h);
+      for (const n of changed) {
+        const p = pos.get(n.id)!;
+        const r = nodeRadius(n) * view.scale;
+        const x = view.x + p.x * view.scale;
+        const y = view.y + p.y * view.scale;
+        expect(x - r).toBeGreaterThanOrEqual(pad.x - 0.5);
+        expect(x + r).toBeLessThanOrEqual(w - pad.x + 0.5);
+        expect(y - r).toBeGreaterThanOrEqual(pad.y - 0.5);
+        expect(y + r).toBeLessThanOrEqual(h - pad.y + 0.5);
+      }
+    }
+  });
+
+  it('auto-fit fills the pane: the changed bounds span the full width or height (less padding) unless capped', () => {
+    const b = { minX: -600, minY: -100, maxX: 600, maxY: 100 };
+    const view = fitView(b, 900, 420);
+    const pad = fitPadding(900, 420);
+    expect((b.maxX - b.minX) * view.scale).toBeCloseTo(900 - 2 * pad.x);
   });
 });
