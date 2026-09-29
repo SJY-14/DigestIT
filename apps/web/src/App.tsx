@@ -3,6 +3,7 @@ import type { OpenedVia } from './api.js';
 import { levelForKey, loadLevel, saveLevel, stepForKey } from './level.js';
 import { Panel } from './Panel.js';
 import { commitLabel, formatDate, relativeTime, shortSha } from './format.js';
+import { renderProse } from './prose.js';
 import { navCopy, plural, type Lang } from './copy.js';
 import { fetchProjects } from './v2Api.js';
 import { Graph } from './Graph.js';
@@ -365,7 +366,7 @@ export function App() {
         <Panel
           changeId={selectedRow.changeId}
           sha={selectedRow.sha}
-          title={commitLabel(selectedRow).text}
+          title={renderProse(commitLabel(selectedRow).text)}
           level={level}
           onLevel={setLevel}
           onClose={() => setSelected(null)}

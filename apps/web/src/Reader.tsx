@@ -4,6 +4,7 @@
 import { useRef, type KeyboardEvent, type MouseEvent } from 'react';
 import type { DigestDetailDto, DigestL2Item } from '@digestit/core';
 import { humanDateTime, levelsCopy, readerCopy, reviewedCopy, type Lang } from './copy.js';
+import { renderProse } from './prose.js';
 import type { ReadingLevel } from './v2Url.js';
 
 export const LEVEL_TAB_ID = (l: ReadingLevel) => `level-tab-${l}`;
@@ -97,7 +98,7 @@ export function Breadcrumb({ digest, level, area, onDigest, onArea, onLevel, lan
     <nav className="breadcrumb" aria-label={T.breadcrumbLabel}>
       <ol>
         <li><button type="button" className="crumb" onClick={onDigest}>{T.digestCrumb(humanDateTime(digest.toAt, Date.now(), lang))}</button></li>
-        {showArea && <li><button type="button" className="crumb" onClick={onArea}>{area.title}</button></li>}
+        {showArea && <li><button type="button" className="crumb" onClick={onArea}>{renderProse(area.title)}</button></li>}
         <li>
           <button type="button" className="crumb current" aria-current="location" onClick={onLevel}>
             {lv.key} {lv.label}
@@ -162,7 +163,7 @@ export function SummaryView({ digest, onLevel, onOpenArea, onHoverArea, lang = '
   const { files, additions, deletions } = digest.stats;
   return (
     <section className="level-view level-0">
-      <h2 className="l0-headline">{digest.l0?.text ?? T.noHeadline}</h2>
+      <h2 className="l0-headline">{digest.l0 ? renderProse(digest.l0.text) : T.noHeadline}</h2>
       <p className="l0-stats">
         {T.fileCount(files)} · <Delta additions={additions} deletions={deletions} />
         <span className="muted"> · {T.period(humanDateTime(digest.fromAt, Date.now(), lang), humanDateTime(digest.toAt, Date.now(), lang))}</span>
@@ -202,7 +203,7 @@ function AreasGlance({ digest, onOpenArea, onHoverArea, lang = 'en' }: {
                 onFocus={() => onHoverArea(it.id)}
                 onBlur={() => onHoverArea(null)}
               >
-                <p className="area-glance-title">{it.title}</p>
+                <p className="area-glance-title">{renderProse(it.title)}</p>
                 <p className="area-glance-meta"><span>{T.fileCount(s.files)}</span> <Delta additions={s.additions} deletions={s.deletions} /></p>
                 <span className="area-glance-open" aria-hidden="true">{T.openAreaCard} →</span>
               </button>
@@ -224,7 +225,7 @@ export function ImpactView({ digest, onLevel, lang = 'en' }: { digest: DigestDet
       ) : (
         <>
           {!l1.userVisible && <p className="muted l1-internal">{T.internalOnly}</p>}
-          <ul className="l1-bullets">{l1.bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>
+          <ul className="l1-bullets">{l1.bullets.map((b, i) => <li key={i}>{renderProse(b)}</li>)}</ul>
         </>
       )}
       <NextLevel level={1} onLevel={onLevel} lang={lang} />
@@ -291,13 +292,13 @@ export function StructureView({
             >
               <h3 className="area-card-title">
                 <button type="button" onClick={() => onOpenArea(it.id)} onFocus={() => onHoverArea(it.id)} onBlur={() => onHoverArea(null)}>
-                  {it.title}
+                  {renderProse(it.title)}
                 </button>
                 {reviewedAreaIds?.has(it.id) && <ReviewedIndicator lang={lang} />}
               </h3>
-              <p className="area-card-effect">{it.effect}</p>
-              <p><span className="area-card-label">{T.areaHow}</span> {it.how}</p>
-              <p><span className="area-card-label">{T.areaWhy}</span> {it.why}</p>
+              <p className="area-card-effect">{renderProse(it.effect)}</p>
+              <p><span className="area-card-label">{T.areaHow}</span> {renderProse(it.how)}</p>
+              <p><span className="area-card-label">{T.areaWhy}</span> {renderProse(it.why)}</p>
               <div className="area-card-foot">
                 <span className="area-card-files">
                   {it.paths.slice(0, 4).map((p) => <code key={p}>{p}</code>)}
@@ -350,9 +351,9 @@ export function AreaPicker({ digest, onOpenArea, onHoverArea, reviewedAreaIds, l
                 onFocus={() => onHoverArea(it.id)}
                 onBlur={() => onHoverArea(null)}
               >
-                <span className="area-pick-title">{it.title}</span>
+                <span className="area-pick-title">{renderProse(it.title)}</span>
                 {reviewedAreaIds?.has(it.id) && <ReviewedIndicator lang={lang} />}
-                <span className="area-pick-effect">{it.effect}</span>
+                <span className="area-pick-effect">{renderProse(it.effect)}</span>
                 <span className="area-pick-meta">
                   <span>{T.fileCount(s.files)}</span> <Delta additions={s.additions} deletions={s.deletions} />
                 </span>

@@ -7,6 +7,7 @@ import type { AreaDetailDto, AreaWalkthrough, DigestL2Item, HunkRef } from '@dig
 import { lineDelta, reviewedCopy, walkthroughCopy, type Lang } from './copy.js';
 import { splitPatch, uncoveredHunks, type PatchHunk } from './hunks.js';
 import type { DiffLine } from './diff.js';
+import { renderProse } from './prose.js';
 
 /** Hunks longer than this fold to their first `FOLD_PREVIEW` lines, with "Show all". */
 export const FOLD_THRESHOLD = 20;
@@ -161,7 +162,7 @@ export function WalkthroughView({
     <article className="walkthrough" aria-label={T.regionLabel(item.title)}>
       <header className="walkthrough-head">
         <div className="walkthrough-head-row">
-          <h2>{item.title}</h2>
+          <h2>{renderProse(item.title)}</h2>
           {onToggleReviewed && (
             <button type="button" className="btn reviewed-toggle" aria-pressed={reviewed} onClick={onToggleReviewed}>
               <span aria-hidden="true">{reviewed ? '✓' : '○'}</span> {reviewed ? TR.reviewed : TR.mark}
@@ -169,7 +170,7 @@ export function WalkthroughView({
           )}
         </div>
         <p className="muted">
-          {item.effect} <span className="stats"><span className="add">+{stats.a}</span> <span className="del">−{stats.d}</span></span>
+          {renderProse(item.effect)} <span className="stats"><span className="add">+{stats.a}</span> <span className="del">−{stats.d}</span></span>
           <span className="visually-hidden"> ({lineDelta(stats.a, stats.d)})</span>
         </p>
       </header>
@@ -189,7 +190,7 @@ export function WalkthroughView({
                         aria-current={step === i + 1 ? 'step' : undefined}
                         onClick={() => onStep(i + 1)}
                       >
-                        <span className="step-toc-n">{i + 1}</span> {s.title}
+                        <span className="step-toc-n">{i + 1}</span> {renderProse(s.title)}
                       </button>
                     </li>
                   ))}
@@ -199,7 +200,7 @@ export function WalkthroughView({
             <div className="walkthrough-main">
               <section className="overview" aria-labelledby="wt-overview">
                 <h3 id="wt-overview">{T.overview}</h3>
-                <p>{walkthrough.overview}</p>
+                <p>{renderProse(walkthrough.overview)}</p>
               </section>
               {steps.map((s, i) => (
                 <section
@@ -209,17 +210,17 @@ export function WalkthroughView({
                   aria-labelledby={`step-${i + 1}-title`}
                 >
                   <h3 id={`step-${i + 1}-title`}>
-                    <span className="step-n">{T.stepLabel(i + 1)}</span> {s.title}
+                    <span className="step-n">{T.stepLabel(i + 1)}</span> {renderProse(s.title)}
                     {s.mechanical && <span className="badge step-mech">{T.mechanical}</span>}
                   </h3>
-                  <p className="step-body">{s.body}</p>
+                  <p className="step-body">{renderProse(s.body)}</p>
                   <StepHunks refs={s.hunks} index={index} lang={lang} />
                 </section>
               ))}
               {walkthrough.check.length > 0 && (
                 <section className="check" aria-labelledby="wt-check">
                   <h3 id="wt-check">{T.check}</h3>
-                  <ul>{walkthrough.check.map((c, i) => <li key={i}>{c}</li>)}</ul>
+                  <ul>{walkthrough.check.map((c, i) => <li key={i}>{renderProse(c)}</li>)}</ul>
                 </section>
               )}
               {leftover.length > 0 && (

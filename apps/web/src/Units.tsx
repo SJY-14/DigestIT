@@ -7,6 +7,7 @@ import { formatDate, relativeTime, shortSha } from './format.js';
 import { plural } from './copy.js';
 import { unitText, type ReviewState } from './feed.js';
 import { Panel } from './Panel.js';
+import { renderProse } from './prose.js';
 
 // All generated text is rendered as React text nodes (escaped), never as HTML.
 
@@ -155,8 +156,8 @@ export function Rollup({ content }: { content: unknown }) {
   if (!isStr(l0)) return null;
   return (
     <div className="rollup">
-      <p className="l0">{l0}</p>
-      {bullets.length > 0 && <ul>{bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>}
+      <p className="l0">{renderProse(l0)}</p>
+      {bullets.length > 0 && <ul>{bullets.map((b, i) => <li key={i}>{renderProse(b)}</li>)}</ul>}
     </div>
   );
 }
@@ -223,7 +224,7 @@ export function UnitPanel({ unit, review, level, onLevel, onClose, onEvent, via 
     <Panel
       changeId={changeId}
       sha={unit.tipSha ?? ''}
-      title={unitText(unit).text}
+      title={renderProse(unitText(unit).text)}
       level={level}
       onLevel={onLevel}
       onClose={onClose}
