@@ -405,7 +405,8 @@ export async function explainArea(
     calls++;
     const at = now();
     try {
-      const res = await provider.explainArea(input, onProgress);
+      // Only the first attempt streams: a retry would restart the steps, and the final result replaces them anyway.
+      const res = await provider.explainArea(input, attempt === 0 ? onProgress : undefined);
       used = { provider: res.provider, model: res.model };
       if (options.job) {
         logJobCall(db, at, 'area', {

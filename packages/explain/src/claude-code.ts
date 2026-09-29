@@ -370,7 +370,8 @@ export class ClaudeCodeProvider implements ExplanationProvider {
     const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', ''];
     if (cfg.model !== 'default') args.push('--model', cfg.model);
     args.push('--effort', cfg.effort);
-    let stdin = `${instructions}\n\n${fullPrompt}`;
+    // Every Fast Explain prompt builder already starts with its instructions.
+    let stdin = fullPrompt;
     if (this.cheapRun.systemPrompt && fullPrompt.startsWith(instructions)) {
       args.push('--system-prompt', instructions);
       stdin = fullPrompt.slice(instructions.length).replace(/^\n+/, '');

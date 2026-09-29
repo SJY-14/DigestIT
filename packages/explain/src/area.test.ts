@@ -673,6 +673,19 @@ class StreamingScripted implements ExplanationProvider {
   }
 }
 
+class FailOnceStreaming implements ExplanationProvider {
+  readonly id = 'scripted';
+  readonly model = 'm';
+  private attempt = 0;
+  constructor(private readonly chunk: AreaStreamChunk, private readonly final: AreaWalkthrough) {}
+  async explain(): Promise<never> { throw new Error('unused'); }
+  async explainArea(_input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult> {
+    onProgress?.(this.chunk);
+    if (this.attempt++ === 0) throw new Error('stream cut off');
+    return { content: this.final, provider: this.id, model: this.model };
+  }
+}
+
 describe('explainArea with a job (DIG-73/74)', () => {
   it('logs against the job instead of checking the per-call budget', async () => {
     const db = openDb(':memory:');
@@ -709,5 +722,17 @@ describe('explainArea with a job (DIG-73/74)', () => {
     for (let i = 1; i < seen.length; i++) {
       expect(seen[i]!.steps.slice(0, seen[i - 1]!.steps.length)).toEqual(seen[i - 1]!.steps);
     }
+  });
+
+  it('streams only the first attempt, so a retry never restarts the steps', async () => {
+    const db = openDb(':memory:');
+    const id = seedArea(db, FILES, { id: 'settings-ui', paths: FILES.map((f) => f.path) });
+    const jobId = startJob(db, 'area', { changeUnitId: id, areaId: 'settings-ui' }, 40)!;
+    const p = new FailOnceStreaming({ overview: 'A new Settings screen.', steps: [validReply.steps[0]!], done: false }, validReply);
+    const seen: AreaProgressEvent[] = [];
+    const r = await explainArea(db, id, 'settings-ui', p, { job: { jobId, budget: 40 }, onProgress: (e) => seen.push(e) });
+    expect(r.outcome).toBe('ok');
+    expect(r.calls).toBe(2);
+    expect(seen).toHaveLength(1);
   });
 });

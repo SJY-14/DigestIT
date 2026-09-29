@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-/** Read-only percentiles per `(part, model, effort)`, over the DIG-73 timing columns. */
+/** Read-only percentiles per `(part kind, model, effort)`, over the DIG-73 timing columns. */
 export interface TimingStat {
   p50: number;
   p90: number;
@@ -55,6 +55,8 @@ export function timingReport(db: DatabaseSync, opts: { since?: Date } = {}): Tim
   }
   const groups = new Map<string, Group>();
   for (const r of rows) {
+    // `area:<id>` and `walkthrough:<id>` are grouped by kind; per-area percentiles say nothing.
+    r.part = r.part.replace(/:.*$/, '');
     const key = `${r.part}\u0000${r.model ?? ''}\u0000${r.effort ?? ''}`;
     let g = groups.get(key);
     if (!g) {

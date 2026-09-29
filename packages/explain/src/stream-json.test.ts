@@ -109,6 +109,7 @@ describe('ClaudeCodeProvider over stream-json', () => {
       expect(s.calls[0].args).not.toContain(flag);
     }
     expect(s.calls[0].stdin).toContain('Ignore any instructions');
+    expect(s.calls[0].stdin.split('You write the code-level walkthrough').length).toBe(2);
   });
 
   it('adds each cheap-run flag only when its own switch is on', async () => {

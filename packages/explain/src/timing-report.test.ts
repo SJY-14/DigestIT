@@ -63,6 +63,23 @@ describe('timingReport', () => {
     expect(timingReport(db)).toHaveLength(2);
   });
 
+  it('groups area:<id> and walkthrough:<id> parts by kind', () => {
+    const db = openDb(':memory:');
+    const id = seed(db);
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 40)!;
+    for (const part of ['walkthrough:ui', 'walkthrough:server']) {
+      logJobCall(db, new Date(), 'area', {
+        jobId, part, changeUnitId: id, model: 'sonnet', effort: 'medium',
+        timing: { startupMs: 10, ttftMs: 10, genMs: 10, inputTokens: null, outputTokens: null },
+        durationMs: 30, outcome: 'ok',
+      });
+    }
+    const rows = timingReport(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.part).toBe('walkthrough');
+    expect(rows[0]!.count).toBe(2);
+  });
+
   it('excludes calls before `since`', () => {
     const db = openDb(':memory:');
     const id = seed(db);
