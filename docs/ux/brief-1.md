@@ -1,9 +1,34 @@
-# UX brief 1 — proposals (DIG-55 cycle 1, step 2)
+# UX brief 1 — proposals (DIG-55 cycle 1, step 2, revised in step 4)
 
 Built on `docs/ux/audit-1.md` (commit 073b48e) plus a direct read of `Reader.tsx`, `MainV2.tsx`,
 `App.tsx`, `copy.ts`, `ProjectHeader.tsx`, `DigestPicker.tsx`, `styles.css`, `api.ts` and
 `uievents.ts`/`insights.ts` on `apps/server`. Every "fix direction" below cites the line(s) it
 touches so the Reviewer and the Frontend Engineer can check it against real code, not intent.
+
+## 0. Round-1 revisions (per `docs/ux/critique-1.md`)
+
+Every citation the Reviewer re-checked came back accurate, so this round is fixes, not
+re-litigation. Responses below; full detail is inline in each proposal.
+
+| # | Critique point | Response |
+|---|---|---|
+| P6 | "See all 3 ↓" CTA promises an in-page scroll but nothing below is those 3 digests | **Change.** CTA now opens the existing `DigestPicker` overlay; label and mockup updated. |
+| P6 | No stated purpose for the CTA once the newest digest is already showing | **Change.** Made explicit: the strip is reassurance-first ("you're caught up"); the CTA is optional, for someone who also wants to open the older digests, not a required step. |
+| P6 | No design for multiple projects with unread digests | **Accept, scoped out.** Added a sentence naming this as an explicit v1 gap, not silently unaddressed. |
+| P6 | `localStorage` is wrong across browsers/devices | **Accept.** Moved from implied-by-"client-only" to a stated limitation next to the cost line. |
+| P5 | Marking a whole digest reviewed erases per-area judgment | **Change.** Both options now mark **per area**, matching where L3's "what to check" callout lives. |
+| P5 | No undo | **Change.** Added an unmark affordance to both options' mockup. |
+| P5 | Option B's "visible in Insights for free" needs a caveat | **Change.** Caveat added: needs either Insights to read v2-shaped events or a second bucket — not zero extra work. |
+| P3 | `title` is hover-only, unreliable for keyboard/screen-reader users | **Accept, mechanism changed.** Swapped for a visible description `<span>` under each item; cost unchanged (S). |
+| P2 | L0→L3 cards skip L1/L2, breaking the app's own level-progression model | **Change.** Cards now land on L2 with the area pre-selected/scrolled-to, not straight on L3. Relabeled accordingly. |
+| P2 | New cards' accessibility (real `<button>`, not `<li>`) wasn't stated | **Accept.** Added as an explicit requirement, citing `AreaPicker`'s existing pattern. |
+| P1 | Cold load of a History page has no language to fall back to | **Change.** Fix direction now has `App` fetch the project's language directly instead of only depending on `MainV2` having mounted. |
+| P1 | History **page content** (not just the menu chrome) stays English | **Accept.** Added to §4 "Not proposed," matching how P3 already scopes out the same pages. |
+| P4 | Step 2 (contrast) is a confirmed fail, not "worth checking" | **Accept the finding as a fact update.** Rewrote as a required fix with two named options, not a QA pass. |
+| P4 | Step 1 (manual Tab-through) has no in-sandbox owner | **Accept.** Named the operator as the owner of that one step; everything else stays with the Reviewer/Engineer. |
+
+No point was rejected — the critique's citations were all correct and every finding held up under
+a second look, so this round is entirely "change" or "accept."
 
 ## 1. The problem, before the UI
 
@@ -57,6 +82,16 @@ switches). `MainV2` reports its `lang` up via a new `onLanguage` callback prop w
 active. Add a `NAV` table to `copy.ts` (6 strings: Home, History, Units, Timeline, Briefing,
 Insights) following the existing `_EN`/`_KO` convention.
 
+**Cold-load fix (added in revision).** A `useRef` alone is empty the first time a browser opens a
+History page directly (bookmark, shared link, or `App.tsx`'s existing old-style-deep-link path)
+without visiting Home first in that session — the critique is right that this regresses to the
+exact bug P1 exists to fix, just via a different entry path. Fix: `App` already knows which
+project a History page belongs to (it has the id to render the page at all), so on a cold load it
+should fetch that project's `language` directly from the v2 projects list rather than waiting for
+`MainV2` to mount and report it. The ref becomes the fast path (no extra request once `MainV2` has
+run this session); the fetch is the correctness fallback for cold loads. No new endpoint — v2's
+existing project list already carries `language` per `ProjectDto`.
+
 **Mockup.**
 ```
 Before (dark-ko-header-idle.png):   DigestIT | Home | History        ← stays English
@@ -90,8 +125,18 @@ are short by nature and stretch anyway, with nothing to fill the space.
 1. **Give L0 a reason to use the space** (this is the actual content fix, not a layout hack):
    add a compact area grid below the existing headline/stats/Next button, reusing the *data*
    `StructureView` already renders (`digest.l2.items` + `areaStats()`, `Reader.tsx:200-254`) but a
-   trimmed card — title, file/± stats, "Walk through →" — no `effect`/`how`/`why` body, so L0 stays
+   trimmed card — title, file/± stats, "Open area →" — no `effect`/`how`/`why` body, so L0 stays
    a one-line summary with a map attached, not a second L2. See prototype below.
+   **Revised per critique**: the card now lands on **L2 with that area pre-selected/scrolled to**,
+   not straight on L3. The audit and the app's own level tabs/keyboard shortcuts (`0`/`n`/`p`)
+   teach a strict progression, and jumping L0→L3 skips the "what changed structurally" framing L3's
+   area cards assume you've already seen — the critique is right that this is a real risk for
+   persona (c), not just a labeling nit. Landing on L2 keeps the shortcut (skip past L1's prose)
+   without skipping the structural framing; the card's label changed from "Walk through →" to
+   "Open area →" to match (no promise of L3). **Accessibility requirement (added):** these cards
+   must be real `<button>` elements with the same focus/hover/blur handling as `Reader.tsx`'s
+   existing `AreaPicker` cards — the mockup's bare `<li>` is prototype-only shorthand and must not
+   be copied into the real component.
 2. **For the L3 picker specifically**, adding cards doesn't apply — it already shows all of
    `digest.l2.items` in `.area-picker` (`Reader.tsx:269`, grid defined at `styles.css:546`), so a
    3-area digest will never fill 700px no matter the grid. Scope a CSS override to the two
@@ -107,38 +152,48 @@ below (they share a screen but are independent proposals — see §3 on shipping
 
 **Expected effect.** L0 goes from "headline, then nothing" to "headline + a map of what's inside,"
 which is a genuine second win for persona (a): they can jump straight to the one area they care
-about without detouring through L1/L2. The L3-picker fix is pure visual cleanup (Finding 6 folds
-into it) — no behavior change.
+about, landing on L2 already scoped to it, without detouring through L1's prose or hunting for it
+again in L2's full list. The L3-picker fix is pure visual cleanup (Finding 6 folds into it) — no
+behavior change.
 
 **Cost.** L0 module: M (new small component + a few lines of copy, no new data — the digest
 response already includes everything it needs). L3-picker height fix: S (one CSS rule).
 
 **Measure.** If P6's `postUiEvent`-style instrumentation direction (§4) is later added to v2,
-watch whether "walk through" clicks from L0's new module become a meaningful fraction of L3
-entries — that would confirm people use it as a shortcut rather than ignoring it. Until then, a
-simple before/after screenshot at the same viewport is enough to confirm the whitespace is gone.
+watch whether "open area" clicks from L0's new module become a meaningful fraction of L2 entries —
+that would confirm people use it as a shortcut rather than ignoring it. Until then, a simple
+before/after screenshot at the same viewport is enough to confirm the whitespace is gone.
 
 ### P3 — History menu: name what these are [S] — answers Finding 4
 
 **Problem.** `history-open.png`: "Units / Timeline / Briefing / Insights" are undefined
 pre-v2 nouns, one click from the main flow, with zero explanation (`App.tsx:210-220`).
 
-**Fix direction.** Add a one-line `title` attribute (native tooltip, no new component) per item —
-short capsule descriptions like "Units — group changes by ticket/issue" — and a small
+**Fix direction (mechanism changed per critique).** A native `title` attribute is hover-only in
+most browsers and inconsistently announced by screen readers — exactly the wrong mechanism for a
+first-time keyboard or screen-reader user, who is the person "recognition rather than recall"
+(Nielsen #6) is meant to help. Swap it for a visible one-line description under each item — short
+capsule text like "Units — group changes by ticket/issue," rendered as a `<span class="menu-item-
+desc">`, same pattern as the digest cards' own description text (not a tooltip) — plus a small
 non-interactive label above the list, "Other views," so the menu visually reads as "a different,
 secondary surface" rather than four peers of Home. `HISTORY_PAGES`/`PAGE_LABEL` already provide the
-structure to hang this off (`App.tsx:19-22`).
+structure to hang this off (`App.tsx:19-22`). Cost is unchanged (S): still static strings and one
+extra element per item, no logic change.
 
 **Mockup.**
 ```
 History ▾
-┌─────────────────────────────┐
-│ Other views                  │   ← new, non-interactive label
-│ Units      (title on hover)  │
-│ Timeline                     │
-│ Briefing                     │
-│ Insights                     │
-└─────────────────────────────┘
+┌─────────────────────────────────────────┐
+│ Other views                              │   ← new, non-interactive label
+│ Units                                    │
+│   group changes by ticket/issue          │   ← visible text, not a title tooltip
+│ Timeline                                 │
+│   changes in chronological order         │
+│ Briefing                                 │
+│   narrative summary over a date range    │
+│ Insights                                 │
+│   charts and trends across digests       │
+└─────────────────────────────────────────┘
 ```
 
 **Expected effect.** Closes the one first-time-user confusion point the audit found; low risk
@@ -165,21 +220,40 @@ traced the CSS to add a second signal:
   pattern), but I can't confirm from a screenshot alone whether that background shift meets
   WCAG AA non-text contrast (3:1) against `--bg`/`--selected` in both themes.
 
-**Fix direction.** Not a redesign — a scoped verification pass: (1) manual, non-headless Tab-through
-of header → level tabs → digest picker → L3 step nav in a real browser, both themes, confirming a
-visible indicator at every stop (ring or the row background); (2) contrast-check
-`styles.css:435`'s hover/focus background against `--bg` (light) and `--bg` dark variant with a
-tool (not eyeballing); (3) icon-only triggers (zoom `−`/`+`, `▾`, `ⓘ`) already have `aria-label`s
-per the audit's code read — worth confirming they also get a *visible* (not just accessible-name)
-affordance on focus, since sighted keyboard users rely on the ring alone for those.
+**Fix direction — updated per critique with a real result, not a plan to get one:**
 
-**Expected effect.** Either closes Finding 2 as a non-issue (most likely, given the traced CSS) or
-catches a real regression before it reaches a real user — cheap insurance either way.
+1. **Confirmed fail, not "worth checking."** The Reviewer ran the actual WCAG contrast math on
+   `styles.css:5-47`'s real hex values: `--hover` vs `--bg` is 1.10:1 (light) / 1.09:1 (dark),
+   `--selected` vs `--bg` is 1.14:1 (light) / 1.31:1 (dark) — all far under the 3:1 WCAG 1.4.11
+   non-text threshold, not a borderline case. `styles.css:435`'s
+   `.digest-row-main:hover, :focus-visible { background: var(--hover); outline: none; }` fails
+   confirmed, in both themes. This is now a required fix, not a QA pass, and not color-only (since
+   `--hover`/`--selected` are shared tokens used elsewhere, so nudging their values changes more
+   than this one component). Two fix options for the Frontend Engineer to pick between: (a) drop
+   `outline: none` on `.digest-row-main` so the same global focus-visible ring every other
+   focusable element gets applies here too — simplest, most consistent; (b) keep the background
+   pattern but add a stronger focus-only visual (e.g. a left border) that independently clears 3:1
+   against `--bg`, if the row background is meant to stay distinct from a plain ring. My
+   recommendation is (a) — one less bespoke pattern, no new token — but either closes the finding.
+2. **Step (1), manual real-browser Tab-through, needs the operator.** This sandbox's browser
+   automation is headless BiDi Firefox with no real, OS-focused browser window — the same
+   constraint that already blocked real-provider screenshots this cycle
+   (`.cache/dig47-acceptance/README.md`). This step has no agent-side owner; it should be assigned
+   to the operator explicitly, not left as an implicit QA task, when this brief reaches the CTO.
+3. **Step (3), icon-only triggers** (zoom `−`/`+`, `▾`, `ⓘ`) still needs the same per-element
+   contrast check as step (1) received — not done yet, flagged as open, not silently dropped.
 
-**Cost.** S. This is a QA task, not a build task; if (2) fails the contrast check, the fix is a
-one-line color change.
+**Expected effect.** Fixes a real, confirmed WCAG failure on a frequently-used element (every
+digest-picker row) rather than a hypothetical one — this is no longer "cheap insurance," it's a
+known bug.
 
-**Measure.** N/A — pass/fail verification, not a metric.
+**Cost.** S. One CSS change for the confirmed fail (fix option (a) is a single property removal);
+step (3)'s check is the same small effort as step (2) already spent.
+
+**Measure.** N/A — pass/fail verification. The Reviewer's cross-cutting note (§3) is worth
+repeating here: v2 has no visual-regression check, so nothing will catch this failing again later
+without a screenshot-diff test on the focused state — not proposed for this cycle, but named as
+the reason to consider one.
 
 ### P5 — A lightweight "reviewed" affordance for persona (b) — needs a product decision — answers Finding 5
 
@@ -195,30 +269,48 @@ aggregation (`insights.ts:186`), a `DrillBucket` of `'reviewed'` already in the 
 `workUnitId`-keyed Units surface (`Units.tsx:216`), which is a different entity than a v2
 digest/area. Extending it to v2 is a genuine schema question, not a reuse-as-is.
 
-- **Option A — client-only "seen" mark [M].** A toggle button ("Mark as reviewed") next to the
-  digest picker or in the L3 walkthrough header, backed by `localStorage` keyed by
-  `projectId:digestId`. No server change. Ships fast; state doesn't survive a different browser/
-  device, and doesn't show up in Insights. Good enough if "reviewed" only needs to mean "don't
-  make *me* re-read this."
-- **Option B — real, shared "reviewed" state [L].** New event kind on v2 digests (not areas —
-  match the granularity persona (b) actually judges at, per the audit), following the existing
-  `unit_event`/insights pattern. Persists across devices, becomes visible in Insights next to the
-  existing `'reviewed'` bucket. Real schema + API + insights wiring.
+**Granularity changed per critique: per area, not per digest.** Both options below now mark a
+single **area** reviewed, not the whole digest. The audit's own persona-(b) note points at L3's
+"what to check" callout as the thing a reviewer actually acts on, and a digest can hold several
+areas each with its own callout — marking the whole digest reviewed after reading one area
+carefully and skimming another would erase that distinction, turning "reviewed" into "I clicked
+through it" instead of "I looked carefully." Per-area also matches the level L3 already
+structurally supports (`Reader.tsx`'s per-area callout, one per `digest.l2.items` entry).
 
-**Mockup (either option, same UI).**
+- **Option A — client-only "seen" mark [M].** A toggle button ("Mark as reviewed") in the L3
+  walkthrough header for the current area, backed by `localStorage` keyed by
+  `projectId:digestId:areaId`. No server change. Ships fast; state doesn't survive a different
+  browser/device, and doesn't show up in Insights. Good enough if "reviewed" only needs to mean
+  "don't make *me* re-read this area."
+- **Option B — real, shared "reviewed" state [L].** New event kind on v2 digest **areas**
+  (`digestId` + `areaId`, not just `digestId`), following the existing `unit_event`/insights
+  pattern. Persists across devices. **Caveat added per critique**: "becomes visible in Insights for
+  free" overstates it — there's no existing mapping from a v2 `digestId`/`areaId` pair to anything
+  the legacy `workUnitId`-keyed Insights view aggregates by today, so this is "extends the existing
+  pipeline" (real, load-bearing reuse), not "zero extra work." Insights would need to either learn
+  to read v2-shaped events or gain a second bucket.
+
+**Undo (added per critique, both options).** Clicking the toggle again while reviewed unmarks it —
+the mockup below now shows both directions, not just the on-state, since a mis-click next to a
+frequently-clicked control (the digest picker trigger area) is plausible and there was previously
+no stated way back.
+
+**Mockup (either option, same UI, per-area, with undo).**
 ```
-Digest · Today, 17:05 › README.md › L3 Code              [ ○ Mark as reviewed ]
-                                                              ↓ click
-Digest · Today, 17:05 › README.md › L3 Code              [ ✓ Reviewed ]
+Digest · Today, 17:05 › README.md · Area 1/3 › L3 Code    [ ○ Mark as reviewed ]
+                                                               ↓ click
+Digest · Today, 17:05 › README.md · Area 1/3 › L3 Code    [ ✓ Reviewed ]  ← click again to unmark
 ```
 
-**Expected effect.** Closes persona (b)'s "read and leave" gap named in the audit — but only if the
-CTO decides this is in scope; it's the one proposal here that could be a straight reject.
+**Expected effect.** Closes persona (b)'s "read and leave" gap named in the audit, at the
+granularity they actually judge at — but only if the CTO decides this is in scope; it's the one
+proposal here that could be a straight reject.
 
-**Cost.** A: M. B: L.
+**Cost.** A: M. B: L (unchanged by the granularity change — an `areaId` column is not a bigger
+schema change than a `digestId`-only one).
 
-**Measure.** % of digests marked reviewed within a session (either option); Option B additionally
-surfaces in the existing Insights `reviewed` bucket for free.
+**Measure.** % of areas marked reviewed within a session (either option); Option B additionally
+extends into the existing Insights `reviewed` bucket, with the mapping caveat above.
 
 ### P6 (bolder) — A "welcome back" recap for the first 30 seconds [M] — not triggered by a specific finding
 
@@ -234,9 +326,39 @@ for `unread`/`lastViewed`/`seen` and found nothing — this is genuinely unbuilt
 project in `localStorage` (the same pattern P5 Option A would use, so if the CTO builds both,
 they share one small storage helper). On landing, if the current digest isn't the last one this
 browser saw, show a compact one-line strip above the L0 headline: "3 digests since you last
-looked, 2h ago · 18 files total," with a link to expand the digest picker. It disappears once the
-newest digest has been opened. First-time projects (no digests yet) are unaffected — the existing
-empty state (`project2-first-run.png`) already handles that well and shouldn't be touched.
+looked, 2h ago · 18 files total." It disappears once the newest digest has been opened. First-time
+projects (no digests yet) are unaffected — the existing empty state (`project2-first-run.png`)
+already handles that well and shouldn't be touched.
+
+**Purpose, stated explicitly (added per critique).** The strip is **reassurance-first**: landing
+already shows the newest digest's L0 (the audit confirms this already answers "what did the
+current digest do"), so the strip's job is only to answer "did anything else happen while I was
+away" in one glance — it does not expect or require the owner to go open the older digests too.
+That's why the CTA is optional, not a call to action the owner needs to complete before feeling
+caught up.
+
+**CTA fixed per critique.** The mockup's original "See all 3 ↓" with a down-arrow promised an
+in-page scroll to a list of 3 digests that doesn't exist there (the areas grid below it, from P2,
+is the *current* digest's areas, not the other 2 digests) — a real "match between system and real
+world" break on the one element meant to build first-glance trust. The button now opens the
+existing `DigestPicker` overlay (the only real place a list of digests lives) instead: label
+changed to "Open digest list," icon changed from `↓` to the picker trigger's own `▾` caret, so the
+affordance reads as "open a panel," not "scroll down."
+
+**Scope gaps named explicitly, not left implicit (added per critique).**
+- **Multiple projects.** This strip is per-project — it only appears once you've landed on a
+  project that has unread digests. A busy owner with 3+ projects running unattended still has to
+  visit each one to discover which have anything new; there's no cross-project "N projects have
+  unread digests" signal in this proposal. That's a real, second instance of the same "manually
+  check" problem this proposal is trying to remove, just moved up one level — out of scope for v1
+  (it would need a projects-list landing view this app doesn't currently have), but should be read
+  by the CTO as a known gap, not an oversight.
+- **Cross-device.** `localStorage` is per-browser, unkeyed by device. Opening the same project from
+  a different browser or an incognito window (plausible — checking from a phone) shows either a
+  stale count or no strip at all, not a wrong-but-harmless state, but it can under- or over-claim
+  "you missed N." Acceptable for a v1 reassurance feature, not acceptable if this ever needs to be
+  authoritative (e.g. feeding a metric) — noted next to cost below rather than left to be inferred
+  from "client-only."
 
 I placed this inside the reading pane, not the sticky header — `ProjectHeader.tsx:1-4` states the
 header is deliberately kept to one line ("every pixel it takes comes out of the reading pane
@@ -249,6 +371,9 @@ costs nothing extra: P2 already adds content to that exact spot.
 reading a single word of content — the actual "first 30 seconds" moment the issue asked about.
 
 **Cost.** M. New `localStorage` helper + one small strip component + copy; no server change for v1.
+Known limitation (stated here, not just implied): per-browser/device, so a different browser or an
+incognito window shows a stale or missing count — acceptable for a v1 reassurance feature, see
+"Scope gaps" above.
 
 **Measure.** This is the one proposal with a clean, testable prediction: time from page load to
 first L3 open (or first meaningful scroll) should drop for returning sessions with >1 unread
@@ -270,15 +395,27 @@ cost, since it's genuinely cross-cutting.
 ## 4. Not proposed
 
 - A redesign of the Units/Timeline/Briefing/Insights pages themselves — audit and this brief both
-  treat them as out of scope this cycle (P3 only touches the menu that links to them).
-- Changing `.digest-row-main`'s background-only focus pattern (`styles.css:435`) — flagged in P4
-  as needing a contrast check, not proposing a change until that check runs.
+  treat them as out of scope this cycle (P3 only touches the menu that links to them). **Added per
+  critique**: this includes their *content* staying English even after P1 — P1 only localizes the
+  top-level chrome (nav labels, History dropdown), not what's rendered inside those pages. A
+  Korean-speaking user still hits English content one click past the (now-localized) menu; worth
+  saying explicitly here so nobody reads P1 as "History is now localized," the same way P3 already
+  scopes out a page redesign for the same surfaces.
 - Graph accessibility (`ProjectGraph.tsx`'s `aria-hidden="true"`) — the audit names this as a
   documented, accepted tradeoff (all graph content is reachable via text), not a finding to design
   against this cycle.
 
+(The `styles.css:435` background-only focus pattern is no longer in this list — the Reviewer's
+contrast check confirmed it fails WCAG, so it moved from "not proposed" into P4 as a required fix.)
+
 ## 5. Handoff
 
-Reassigning to the UX Reviewer to critique this brief per the DIG-55 loop: for each of P1–P6, what
-works, what will fail and why, and what's missing. P5 in particular needs the Reviewer's read on
-whether *either* option is worth building before it goes to the CTO as a two-position question.
+This is the round-1 revision (§0 above answers every point in `critique-1.md`; nothing was
+rejected). Reassigning to the UX Reviewer for a focused round-2 pass per the DIG-55 loop
+("revise at most twice"): please confirm the two previously-blocking items are actually resolved —
+P6's CTA now opens `DigestPicker` instead of implying an in-page scroll, and P5 now marks
+per-area with undo — and flag anything in §0 that only looks fixed on the page. If those hold up,
+this brief should go straight to the CTO rather than consuming a second full revision round; P5
+still needs the CTO's read on Option A vs. B vs. reject (that's a product call, not something
+another critique round resolves), and P4's operator-owned step should be routed to the operator
+alongside the CTO's decision on the rest.
