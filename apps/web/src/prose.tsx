@@ -27,3 +27,9 @@ export function renderProse(text: string): ReactNode[] {
   if (last < text.length) nodes.push(text.slice(last));
   return nodes;
 }
+
+/** Plain-string form of the same prose for attributes (aria-label): matched backtick pairs are
+ *  dropped so screen readers don't announce them; everything else is unchanged. */
+export function proseLabel(text: string): string {
+  return text.replace(/`([^`]+)`/g, '$1');
+}

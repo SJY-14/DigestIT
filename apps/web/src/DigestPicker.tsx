@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import type { DigestSummaryDto } from '@digestit/core';
 import { digestRowLabel, lineDelta, pickerCopy, type Lang } from './copy.js';
-import { renderProse } from './prose.js';
+import { proseLabel, renderProse } from './prose.js';
 import type { useDigests } from './useDigests.js';
 
 function DigestRow({ d, current, onSelect, onRetry, retrying, retryDisabled, lang }: {
@@ -128,7 +128,7 @@ export function DigestPicker({ digests, currentId, onSelect, onRetry, retryingId
         aria-haspopup="true"
         aria-expanded={open}
         aria-controls={panelId}
-        aria-label={`${T.label}: ${current ? digestRowLabel(current.toAt, current.stats.files, current.l0?.text ?? null, Date.now(), lang) : T.choose}`}
+        aria-label={`${T.label}: ${current ? digestRowLabel(current.toAt, current.stats.files, current.l0 ? proseLabel(current.l0.text) : null, Date.now(), lang) : T.choose}`}
         onClick={() => setOpen((o) => !o)}
       >
         <span className="digest-picker-current">

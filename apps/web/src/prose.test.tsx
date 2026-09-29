@@ -1,6 +1,6 @@
 import { isValidElement } from 'react';
 import { describe, expect, it } from 'vitest';
-import { renderProse } from './prose.js';
+import { proseLabel, renderProse } from './prose.js';
 
 // Flattens the returned node array back to a plain string, tagging each element's text with its
 // tag so tests can assert on structure without rendering to a real DOM.
@@ -69,5 +69,12 @@ describe('renderProse', () => {
   it('does not wrap a flag with an uppercase letter after the dashes', () => {
     const nodes = renderProse('a --Foo flag');
     expect(nodes).toEqual(['a --Foo flag']);
+  });
+});
+
+describe('proseLabel', () => {
+  it('drops matched backtick pairs for attribute text and keeps an unmatched one', () => {
+    expect(proseLabel('설정이 `--retries` 값을 검증합니다')).toBe('설정이 --retries 값을 검증합니다');
+    expect(proseLabel('a ` b')).toBe('a ` b');
   });
 });

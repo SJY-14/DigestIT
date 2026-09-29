@@ -7,7 +7,7 @@ import type { AreaDetailDto, AreaWalkthrough, DigestL2Item, HunkRef } from '@dig
 import { lineDelta, reviewedCopy, walkthroughCopy, type Lang } from './copy.js';
 import { splitPatch, uncoveredHunks, type PatchHunk } from './hunks.js';
 import type { DiffLine } from './diff.js';
-import { renderProse } from './prose.js';
+import { proseLabel, renderProse } from './prose.js';
 
 /** Hunks longer than this fold to their first `FOLD_PREVIEW` lines, with "Show all". */
 export const FOLD_THRESHOLD = 20;
@@ -159,7 +159,7 @@ export function WalkthroughView({
   })();
 
   return (
-    <article className="walkthrough" aria-label={T.regionLabel(item.title)}>
+    <article className="walkthrough" aria-label={T.regionLabel(proseLabel(item.title))}>
       <header className="walkthrough-head">
         <div className="walkthrough-head-row">
           <h2>{renderProse(item.title)}</h2>
