@@ -209,3 +209,47 @@ point above, max two rounds). The blocking items to resolve before this brief is
 P6's CTA target and P5's granularity — both are one/two-sentence fixes, not redesigns. Everything
 else here is either already "accept with a caveat" or, for P4's step (1), an operational note
 rather than a design change.
+
+## Round 2 — confirmation (against `brief-1.md` @ cfe5e62)
+
+Per the designer's handoff, this is the focused round-2 pass, not a second full critique: does
+the round-1 revision actually hold up on the page/in the mockups, not just in prose.
+
+**P6's CTA — confirmed fixed, on the page.** Rendered `docs/ux/proto/l0-recap.html` in headless
+Firefox at 1440×900 (fresh screenshot, not reused from the designer's own pass —
+`docs/ux/screens/proto-l0-recap-round2.png`). The strip's
+button reads "Open digest list ▾" with the digest-picker's own caret glyph, not "See all 3 ↓" —
+the down-arrow that implied a broken in-page scroll is gone, and the label now matches what the
+button actually does (opens `DigestPicker`, the one place a digest list exists). The "reassurance,
+not a required step" framing is stated in the callout text directly under it. This item is closed.
+
+**P5's granularity — confirmed fixed, in text.** No interactive prototype exists for this one (it
+was always an ASCII mockup), but the mockup breadcrumb — `Digest · Today, 17:05 › README.md ·
+Area 1/3 › L3 Code [ ○ Mark as reviewed ]` — correctly targets the area level: `README.md` and
+`Area 1/3` are in the breadcrumb, matching `Reader.tsx:97`'s real `<nav className="breadcrumb">`
+and the per-area `.area-pick` structure at `Reader.tsx:269-285`. Both directions of the toggle
+(mark / unmark) are shown, closing the undo gap. This item is closed.
+
+**Spot-checked the brief's other claims rather than taking them on trust**, since a citation that
+was accurate in round 1 could have drifted after the revision edits:
+- Re-grepped `styles.css` for every line the brief cites in P1/P2/P4 (`:focus-visible` at line 96,
+  `.digest-picker-trigger:focus-visible` at 424, `.digest-row-main:hover, :focus-visible` at 435,
+  `.reader-split`/`.reading-pane` at 469–470) — all still point at exactly what the brief says.
+- Independently recomputed the WCAG contrast numbers from the real hex values at `styles.css:5-47`
+  (`--hover`/`--selected` vs `--bg`, both themes) using the relative-luminance formula, not by
+  trusting the brief's numbers: light 1.10:1 / 1.14:1, dark 1.09:1 / 1.31:1 — matches the brief
+  exactly. P4's "confirmed fail" is a fact, not an optimistic rounding.
+
+**Nothing else needs a second full revision round.** Every other §0 response in `brief-1.md` was
+already "accept" or "change" with a concrete, checkable fix (P1's cold-load fetch, P2's land-on-L2
++ real-`<button>` requirement, P3's visible description span) — none of those needed re-verifying
+against running code the way the two blocking items did, since they're either copy/label changes
+or already-cited real components (`AreaPicker`, `copy.ts`'s `_EN`/`_KO` pattern) that this brief
+doesn't change the shape of.
+
+**Handoff.** `brief-1.md` (cfe5e62) is CTO-ready. Recommend the CTO: (1) pick a track for P5
+(Option A / B / reject — product call, not a design gap); (2) route P4 step (1) and step (3)
+(manual real-browser Tab-through; icon-only-trigger contrast) to the operator, since this sandbox
+has no non-headless browser to run them in; (3) create Frontend issues for P1–P4 and P6, and
+whichever of P5's options gets picked, with acceptance criteria drawn from each proposal's
+"Fix direction" and "Expected effect" sections above.
