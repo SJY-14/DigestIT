@@ -274,6 +274,35 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE area_explanation ADD COLUMN style_warnings INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE project_context ADD COLUMN style_warnings INTEGER NOT NULL DEFAULT 0;
   `,
+  // DIG-73 (fast Explain, docs/explain-speed.md): one explain_job per user action (Explain, area
+  // L3, context refresh, digest retry) so the daily budget counts actions, not calls; per-call
+  // timing split (CLI start-up, time to first token, generation) and token counts; the digest's
+  // deterministic areas, stored so they stay stable if the grouping rules change later.
+  `
+  CREATE TABLE explain_job (
+    id             INTEGER PRIMARY KEY,
+    repo_id        INTEGER REFERENCES repo(id),
+    change_unit_id INTEGER REFERENCES change_unit(id),
+    kind           TEXT NOT NULL CHECK (kind IN ('explain','retry','area','context')),
+    area_id        TEXT,
+    started_at     TEXT NOT NULL,
+    finished_at    TEXT,
+    prep_ms        INTEGER
+  );
+  CREATE INDEX explain_job_started ON explain_job(started_at);
+  CREATE INDEX explain_job_unit ON explain_job(change_unit_id, started_at);
+  ALTER TABLE explain_call ADD COLUMN job_id INTEGER REFERENCES explain_job(id);
+  ALTER TABLE explain_call ADD COLUMN part TEXT;
+  ALTER TABLE explain_call ADD COLUMN model TEXT;
+  ALTER TABLE explain_call ADD COLUMN effort TEXT;
+  ALTER TABLE explain_call ADD COLUMN startup_ms INTEGER;
+  ALTER TABLE explain_call ADD COLUMN ttft_ms INTEGER;
+  ALTER TABLE explain_call ADD COLUMN gen_ms INTEGER;
+  ALTER TABLE explain_call ADD COLUMN input_tokens INTEGER;
+  ALTER TABLE explain_call ADD COLUMN output_tokens INTEGER;
+  CREATE INDEX explain_call_job ON explain_call(job_id);
+  ALTER TABLE digest ADD COLUMN areas TEXT;
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {

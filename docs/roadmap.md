@@ -1,5 +1,19 @@
 # Roadmap
 
+## Fast Explain (current priority)
+
+Board feedback DIG-73 (2026-09-29): Explain shows nothing useful for ~50 s (~100 s on a project's first Explain).
+Targets: deterministic view < 1 s, L0 ≤ 10–15 s, full L2 ≤ 30 s, L3 ≤ 15 s streamed step by step. One Explain stays
+one budget unit. Design and contract: [explain-speed.md](explain-speed.md).
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-73 | Design, `core/v2.ts` contract, migration 10, review, acceptance | CTO | DIG-74–77 |
+| 1 | DIG-74 | Per-call timing, cheaper CLI runs, model/effort per task, split digest prompts, streamed L3, job budget, A/B kit | Summarization engineer | — |
+| 2 | DIG-75 | Deterministic areas, async Explain job runner, per-part status, digest events SSE, async L3 | Diff engineer | DIG-74 (signatures in the doc) |
+| 3 | DIG-76 | Instant digest skeleton, per-part fill-in and retry, SSE client, streamed L3 steps | Frontend engineer | — (fixtures until DIG-75) |
+| 4 | DIG-77 | Real-provider timing and quality acceptance (en and ko) | Board operator | DIG-74, DIG-75, DIG-76 |
+
 ## Removing the AI-made look (done)
 
 DIG-63 (Board, 2026-09-29): the UI and the generated explanations should read as human-crafted. The audit and its

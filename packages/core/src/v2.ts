@@ -199,6 +199,11 @@ export interface DigestDetailDto extends DigestSummaryDto {
   l2: DigestL2Content | null;
   files: DigestFileDto[];
   skipped: { path: string; reason: SkipReason }[];
+  /** Deterministic areas (DIG-73), present from the moment the digest row exists; `l2.items[].id`
+   * matches `areas[].id` once each area's text lands. Optional only until DIG-75 ships. */
+  areas?: DigestAreaSkeleton[];
+  /** Per-part progress of the split Explain (DIG-73). Optional only until DIG-75 ships. */
+  parts?: DigestPartsDto;
 }
 
 /** GET /api/digests/:id/areas/:areaId and POST .../explain (POST generates if not cached). */
@@ -211,7 +216,9 @@ export interface AreaDetailDto {
   files: (DigestFileDto & { patch: string | null })[];
 }
 
-/** POST /api/projects/:id/explain */
+/** POST /api/projects/:id/explain. Since DIG-73 it returns as soon as the snapshot, checkpoint and
+ * digest row exist (target < 1 s) with `status: 'pending'`; the LLM parts run in the background and
+ * report through `GET /api/digests/:id/events`. */
 export interface ExplainResultDto {
   noChanges: boolean;
   digestId: number | null;
@@ -271,4 +278,50 @@ export interface ProjectGraphDto {
   totalFiles: number;
   /** True when changed folders had to be folded to stay under the node cap. */
   truncated: boolean;
+}
+
+// ---- Fast Explain (DIG-73, docs/explain-speed.md) ----
+
+/** One area of a digest, computed without an LLM from the changed files (`groupDigestAreas`). */
+export interface DigestAreaSkeleton {
+  /** Stable within the digest, [a-z0-9-], ≤ 40 chars; also the `DigestL2Item.id` and `area_explanation.area_id`. */
+  id: string;
+  /** Human-readable folder/module label shown until the LLM title lands, e.g. `packages/explain` or `docs`. */
+  label: string;
+  /** Every analysed and not-analysed changed file of the digest is in exactly one area. */
+  paths: string[];
+  additions: number;
+  deletions: number;
+}
+
+/** `budget`: the daily limit was reached before the part could start; `skipped`: not needed. */
+export type PartStatus = 'pending' | 'running' | 'ok' | 'truncated' | 'error' | 'budget' | 'skipped';
+
+export interface DigestPartsDto {
+  /** The L0 + L1 call. */
+  summary: PartStatus;
+  /** The L2 text of each area, keyed by `DigestAreaSkeleton.id`. */
+  areas: Record<string, PartStatus>;
+  /** The project context build when it runs inside this Explain (first Explain of a project); else `skipped`. */
+  context: PartStatus;
+  /** When the whole Explain started and (once every part settled) finished; ISO times. */
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+/**
+ * `GET /api/digests/:id/events` (SSE). The server sends `event: parts` with the full `DigestPartsDto`
+ * on connect and whenever a part changes status; the client refetches `GET /api/digests/:id` to get
+ * the text of a part that turned `ok`/`truncated`. `event: area-progress` carries an L3 walkthrough
+ * as it streams in (steps are appended, never reordered); the final, validated walkthrough is the one
+ * `GET /api/digests/:id/areas/:areaId` returns once `done` is true. `event: done` is sent when every
+ * part of the digest and every running area L3 has settled; the server then closes the stream.
+ */
+export interface AreaProgressEvent {
+  areaId: string;
+  /** Present once the model has written it. */
+  overview: string | null;
+  /** Complete steps so far, in order; a step is sent only after its closing brace arrived. */
+  steps: WalkthroughStep[];
+  done: boolean;
 }
