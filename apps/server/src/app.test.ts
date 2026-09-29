@@ -20,10 +20,10 @@ function seed() {
   }
   db.prepare("INSERT INTO file_change (change_unit_id, path, status, patch) VALUES (5, 'a.ts', 'M', '@@ -1 +1 @@')").run();
   db.prepare(
-    `INSERT INTO explanation VALUES (5, 0, '{"text":"why"}', 'ok', 'stub', 'm', 'v1', 'h', '2026-02-01')`,
+    `INSERT INTO explanation VALUES (5, 0, '{"text":"why"}', 'ok', 'stub', 'm', 'v1', 'h', '2026-02-01', 0)`,
   ).run();
   db.prepare(
-    `INSERT INTO explanation VALUES (5, 3, '{"annotations":[]}', 'ok', 'stub', 'm', 'v1', 'h', '2026-02-01')`,
+    `INSERT INTO explanation VALUES (5, 3, '{"annotations":[]}', 'ok', 'stub', 'm', 'v1', 'h', '2026-02-01', 0)`,
   ).run();
   return db;
 }

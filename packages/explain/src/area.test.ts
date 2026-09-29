@@ -82,7 +82,7 @@ const FILES: ProviderFile[] = [
 ];
 
 const validReply: AreaWalkthrough = {
-  overview: 'This area adds a Settings screen and routes /settings to it from App. The screen is an empty shell for now, so the route can land before the options do.',
+  overview: 'A new Settings screen now renders behind a /settings route registered from App. The screen is an empty shell for now, so the route can land before the options do.',
   steps: [
     {
       title: 'An empty Settings screen',

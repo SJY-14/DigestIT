@@ -12,8 +12,8 @@ import {
   FILE_REF, LIMITS, cleanText, hasUnsafeMarkup, notAnalysedList, stringArray, truncateWords, wordCount,
 } from './validate.js';
 
-/** Bump whenever the instructions or the rendering below change; see PROMPT_VERSION for the commit prompt. */
-export const DIGEST_PROMPT_VERSION = 'd2';
+/** Bump whenever the instructions or the rendering below change; see PROMPT_VERSION for the commit prompt. `d3` (DIG-65) added the AI-tell style rules. */
+export const DIGEST_PROMPT_VERSION = 'd3';
 
 const DIGEST_INSTRUCTIONS = `You explain what changed in a software project during one working period, to a colleague who is about to review it. The code may have been written by an AI coding tool. There are no commit messages: the diff below and (when present) a compact description of the project are all you have. Reply with ONLY one JSON object, no prose, no code fence:
 {"l0":{"text":string},"l1":{"userVisible":boolean,"bullets":string[]},"l2":{"items":[{"id":string,"paths":string[],"title":string,"effect":string,"how":string,"why":string}],"notAnalysed":string[]}}
@@ -83,6 +83,8 @@ export interface DigestCheckResult {
   levels: DigestLevels;
   /** Empty when the provider output was valid as delivered. */
   violations: string[];
+  /** AI-tell hits (DIG-65): soft style signals, never truncated or rewritten on their account. */
+  styleWarnings: string[];
 }
 
 /**
@@ -101,9 +103,10 @@ export function checkDigestLevels(
     return null;
   }
   const v: string[] = [];
+  const sw: string[] = [];
 
   // L0
-  const l0 = checkProse(l0raw.text, 'l0', LIMITS.l0Words, language, v);
+  const l0 = checkProse(l0raw.text, 'l0', LIMITS.l0Words, language, v, sw);
   if (l0 === '') v.push('l0: empty');
   if (sentenceCount(l0) > 1) v.push('l0: more than one sentence');
   if (FILE_REF.test(l0)) v.push('l0: mentions a file name or code identifier');
@@ -112,7 +115,7 @@ export function checkDigestLevels(
   // L1
   const userVisible = l1raw.userVisible;
   let bullets = bulletsIn
-    .map((b, i) => checkProse(b, `l1: bullet ${i}`, LIMITS.l1Words, language, v))
+    .map((b, i) => checkProse(b, `l1: bullet ${i}`, LIMITS.l1Words, language, v, sw))
     .filter((b) => b !== '');
   if (bullets.length === 0) v.push('l1: no bullets');
   if (bullets.length > LIMITS.l1Bullets) {
@@ -175,10 +178,10 @@ export function checkDigestLevels(
       return;
     }
 
-    const title = checkProse(it.title as string, `l2: area ${i} title`, LIMITS.digestTitleWords, language, v);
-    const effect = checkProse(it.effect as string, `l2: area ${i} effect`, LIMITS.digestEffectWords, language, v);
-    const how = checkProse(it.how as string, `l2: area ${i} how`, LIMITS.digestAreaWords, language, v);
-    const why = checkProse(it.why as string, `l2: area ${i} why`, LIMITS.digestAreaWords, language, v);
+    const title = checkProse(it.title as string, `l2: area ${i} title`, LIMITS.digestTitleWords, language, v, sw);
+    const effect = checkProse(it.effect as string, `l2: area ${i} effect`, LIMITS.digestEffectWords, language, v, sw);
+    const how = checkProse(it.how as string, `l2: area ${i} how`, LIMITS.digestAreaWords, language, v, sw);
+    const why = checkProse(it.why as string, `l2: area ${i} why`, LIMITS.digestAreaWords, language, v, sw);
     if (title === '') v.push(`l2: area ${i} title is empty`);
 
     seenIds.add(id);
@@ -198,6 +201,7 @@ export function checkDigestLevels(
   return {
     levels: { l0: { text: l0 }, l1: { userVisible, bullets }, l2: { items, notAnalysed: notAnalysedList(files) } },
     violations: v,
+    styleWarnings: sw,
   };
 }
 
@@ -253,9 +257,9 @@ function isDigestCached(db: DatabaseSync, id: number, promptVersion: string, inp
 
 function storeDigest(
   db: DatabaseSync, id: number, levels: DigestLevels, status: 'ok' | 'truncated' | 'error',
-  provider: { provider: string; model: string }, promptVersion: string, inputHash: string, at: string,
+  provider: { provider: string; model: string }, promptVersion: string, inputHash: string, at: string, styleWarnings = 0,
 ): void {
-  storeLevels(db, id, [[0, levels.l0], [1, levels.l1], [2, levels.l2]], status, provider, promptVersion, inputHash, at);
+  storeLevels(db, id, [[0, levels.l0], [1, levels.l1], [2, levels.l2]], status, provider, promptVersion, inputHash, at, styleWarnings);
 }
 
 /**
@@ -312,14 +316,31 @@ export async function explainDigest(
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
         feedback = [lastError];
-      } else if (checked.violations.length === 0) {
-        storeDigest(db, changeUnitId, checked.levels, 'ok', used, promptVersion, prepared.inputHash, at.toISOString());
-        return { changeUnitId, outcome: 'ok', calls };
-      } else {
-        best = checked;
-        feedback = checked.violations;
-        lastError = checked.violations.join('; ');
+        continue;
       }
+      const clean = checked.violations.length === 0 && checked.styleWarnings.length === 0;
+      if (clean) {
+        storeDigest(db, changeUnitId, checked.levels, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), 0);
+        return { changeUnitId, outcome: 'ok', calls };
+      }
+      if (attempt === 0) {
+        best = checked;
+        feedback = [...checked.violations, ...checked.styleWarnings];
+        lastError = feedback.join('; ');
+        continue;
+      }
+      // Last attempt: accept it per today's hard-violation rules, recording the tells left. If it
+      // is hard-invalid while attempt 1 was hard-valid (only tells), keep attempt 1 instead (DIG-65).
+      if (checked.violations.length === 0) {
+        storeDigest(db, changeUnitId, checked.levels, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), checked.styleWarnings.length);
+        return { changeUnitId, outcome: 'ok', calls };
+      }
+      if (best && best.violations.length === 0) {
+        storeDigest(db, changeUnitId, best.levels, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), best.styleWarnings.length);
+        return { changeUnitId, outcome: 'ok', calls };
+      }
+      best = checked;
+      lastError = checked.violations.join('; ');
     } catch (e) {
       if (e instanceof RepoNotAllowedError) throw e;
       logCall(db, at, changeUnitId, now().getTime() - at.getTime(), 'error');
@@ -330,7 +351,7 @@ export async function explainDigest(
 
   const at = now().toISOString();
   if (best) {
-    storeDigest(db, changeUnitId, best.levels, 'truncated', used, promptVersion, prepared.inputHash, at);
+    storeDigest(db, changeUnitId, best.levels, 'truncated', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
     return { changeUnitId, outcome: 'truncated', calls, detail: lastError };
   }
   storeDigest(db, changeUnitId, EMPTY_LEVELS, 'error', used, promptVersion, prepared.inputHash, at);
