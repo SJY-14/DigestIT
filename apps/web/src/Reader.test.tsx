@@ -96,9 +96,27 @@ describe('Breadcrumb', () => {
 
 describe('level views', () => {
   it('L0: the headline and a stats line', async () => {
-    await render(<SummaryView digest={fixtureDigest} onLevel={vi.fn()} />);
+    await render(<SummaryView digest={fixtureDigest} onLevel={vi.fn()} onOpenArea={vi.fn()} onHoverArea={vi.fn()} />);
     expect(host.querySelector('h2.l0-headline')?.textContent).toBe(fixtureDigest.l0!.text);
     expect(host.querySelector('.l0-stats')?.textContent).toMatch(/^12 files · \+340 −25/);
+  });
+  it('L0: a compact "Areas in this digest" card per area, landing on L2 (not L3) with that area', async () => {
+    const onOpenArea = vi.fn();
+    const onHoverArea = vi.fn();
+    await render(<SummaryView digest={fixtureDigest} onLevel={vi.fn()} onOpenArea={onOpenArea} onHoverArea={onHoverArea} />);
+    expect(host.querySelector('.areas-glance-label')?.textContent).toBe('Areas in this digest');
+    const cards = [...host.querySelectorAll('.area-glance-card')];
+    expect(cards).toHaveLength(2);
+    expect(cards[0]!.textContent).toContain(fixtureDigest.l2!.items[0]!.title);
+    expect(cards[0]!.textContent).toContain('Open area');
+    await click(cards[1]!);
+    expect(onOpenArea).toHaveBeenCalledWith('area-view');
+    await act(async () => (cards[0] as HTMLElement).focus());
+    expect(onHoverArea).toHaveBeenCalledWith('graph-pane');
+  });
+  it('L0: no areas module when the digest has no areas', async () => {
+    await render(<SummaryView digest={{ ...fixtureDigest, l2: null }} onLevel={vi.fn()} onOpenArea={vi.fn()} onHoverArea={vi.fn()} />);
+    expect(host.querySelector('.areas-glance')).toBeNull();
   });
   it('L2: one card per area; clicking the card or its title opens the area', async () => {
     const onOpenArea = vi.fn();
@@ -108,6 +126,7 @@ describe('level views', () => {
     expect(cards[1]!.classList.contains('selected')).toBe(true);
     expect(cards[0]!.textContent).toContain(fixtureDigest.l2!.items[0]!.how);
     expect(cards[0]!.textContent).toContain(fixtureDigest.l2!.items[0]!.why);
+    expect(cards[0]!.getAttribute('data-area-id')).toBe('graph-pane');
     await click(cards[0]!.querySelector('.area-card-effect'));
     expect(onOpenArea).toHaveBeenLastCalledWith('graph-pane');
     await click(cards[1]!.querySelector('.area-card-title button'));
@@ -122,6 +141,17 @@ describe('level views', () => {
     await click(host.querySelector('.clear-filter'));
     expect(onClear).toHaveBeenCalled();
   });
+  it('L2: a reviewed area shows a small, not color-only indicator', async () => {
+    await render(
+      <StructureView
+        digest={fixtureDigest} filter={null} selectedAreaId={null} onOpenArea={vi.fn()} onClearFilter={vi.fn()} onHoverArea={vi.fn()}
+        onLevel={vi.fn()} reviewedAreaIds={new Set(['area-view'])}
+      />,
+    );
+    const cards = [...host.querySelectorAll('.area-card')];
+    expect(cards[0]!.querySelector('.reviewed-indicator')).toBeNull();
+    expect(cards[1]!.querySelector('.reviewed-indicator')?.textContent).toContain('Reviewed');
+  });
   it('L3 without an area: a compact picker, not an empty state', async () => {
     const onOpenArea = vi.fn();
     await render(<AreaPicker digest={fixtureDigest} onOpenArea={onOpenArea} onHoverArea={vi.fn()} />);
@@ -130,5 +160,11 @@ describe('level views', () => {
     expect(picks).toHaveLength(2);
     await click(picks[1]);
     expect(onOpenArea).toHaveBeenCalledWith('area-view');
+  });
+  it('L3 picker: a reviewed area shows the same indicator', async () => {
+    await render(<AreaPicker digest={fixtureDigest} onOpenArea={vi.fn()} onHoverArea={vi.fn()} reviewedAreaIds={new Set(['graph-pane'])} />);
+    const picks = [...host.querySelectorAll('.area-pick')];
+    expect(picks[0]!.querySelector('.reviewed-indicator')?.textContent).toContain('Reviewed');
+    expect(picks[1]!.querySelector('.reviewed-indicator')).toBeNull();
   });
 });

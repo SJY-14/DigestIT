@@ -151,6 +151,29 @@ describe('WalkthroughView', () => {
     await click(host.querySelector('[role="alert"] button'));
     expect(onGenerate).toHaveBeenCalled();
   });
+
+  it('no reviewed toggle when the caller has nothing to mark yet', async () => {
+    await render(view());
+    expect(host.querySelector('.reviewed-toggle')).toBeNull();
+  });
+
+  it('reviewed toggle (DIG-61 P5-A): "Mark as reviewed" / "Reviewed", click again to undo', async () => {
+    const onToggleReviewed = vi.fn();
+    await render(view(fixtureArea, { reviewed: false, onToggleReviewed }));
+    const toggle = host.querySelector('.reviewed-toggle') as HTMLButtonElement;
+    expect(toggle.textContent).toContain('Mark as reviewed');
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    await click(toggle);
+    expect(onToggleReviewed).toHaveBeenCalledTimes(1);
+
+    await render(view(fixtureArea, { reviewed: true, onToggleReviewed }));
+    const toggled = host.querySelector('.reviewed-toggle') as HTMLButtonElement;
+    expect(toggled.textContent).toContain('Reviewed');
+    expect(toggled.textContent).not.toContain('Mark as reviewed');
+    expect(toggled.getAttribute('aria-pressed')).toBe('true');
+    await click(toggled);
+    expect(onToggleReviewed).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('walkthroughOf', () => {

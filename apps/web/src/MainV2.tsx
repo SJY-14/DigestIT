@@ -2,8 +2,8 @@
 // the digest picker (DIG-49, ProjectHeader.tsx / DigestPicker.tsx), and the reading pane + graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import type {
-  AreaDetailDto, CreateProjectResponseDto, DigestDetailDto, ExplainLanguage, GraphNode, ProjectDto, ProjectGraphDto,
-  ProjectStatusDto,
+  AreaDetailDto, CreateProjectResponseDto, DigestDetailDto, DigestSummaryDto, ExplainLanguage, GraphNode, ProjectDto,
+  ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 import {
   ApiError, addIgnorePatterns, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph,
@@ -20,8 +20,10 @@ import {
 } from './Reader.js';
 import {
   apiErrorMessage, emptyCopy, explainOutcomeMessage, graphCopy, ignoreCopy, levelsCopy, readerCopy, resetsLabel,
-  walkthroughCopy,
+  walkthroughCopy, welcomeBackCopy,
 } from './copy.js';
+import { relativeTime } from './format.js';
+import { getLastSeen, getReviewed, setLastSeen, setReviewed, type LastSeen } from './storage.js';
 import { useV2Url, type ReadingLevel, type V2Url } from './v2Url.js';
 
 // --- setup form (no project registered yet) -----------------------------------------------------
@@ -174,6 +176,17 @@ export function nodeTarget(node: Pick<GraphNode, 'id' | 'areaIds'>): Partial<V2U
     : { level: 2, node: node.id, step: null };
 }
 
+// --- welcome-back strip (DIG-61 P6) --------------------------------------------------------------
+
+/** Digests newer than the last-seen one, newest first. `items` is only ever the loaded page(s) of
+ * the digest list; if `lastSeenId` isn't in it, the last-seen digest is further back (older) than
+ * anything loaded, so every loaded digest counts as unseen — an undercount if even more digests
+ * exist past the loaded page, which is an accepted v1 limitation (docs/ux/brief-1.md P6). */
+export function unseenDigests(items: readonly DigestSummaryDto[], lastSeenId: number): DigestSummaryDto[] {
+  const idx = items.findIndex((d) => d.id === lastSeenId);
+  return idx === -1 ? items.slice() : items.slice(0, idx);
+}
+
 // --- resizable divider ---------------------------------------------------------------------------
 
 const MIN_LEFT_PCT = 35;
@@ -309,6 +322,12 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   const [hoverAreaId, setHoverAreaId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [announce, setAnnounce] = useState('');
+  // P6 welcome-back strip: captured once per project landing (before this visit overwrites it),
+  // so the strip's numbers stay stable for the session even once the newest digest is marked seen.
+  const lastSeenOnLandingRef = useRef<LastSeen | null>(null);
+  const [digestPickerOpenSignal, setDigestPickerOpenSignal] = useState(0);
+  // P5-A per-area reviewed mark, keyed project:digest:area; hydrated from storage per digest.
+  const [reviewedAreas, setReviewedAreas] = useState<Record<string, boolean>>({});
   // The reading pane defaults to ~60% of the width; the graph pane fills the rest.
   const [leftPct, setLeftPct] = useState(60);
   const narrow = useNarrow();
@@ -327,6 +346,12 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
 
   const fallbackProjectId = useMemo(() => (projects ? defaultProject(projects, loadLastProject())?.id ?? null : null), [projects]);
   const currentProjectId = url.project ?? fallbackProjectId;
+  // Snapshot the pre-visit last-seen marker before anything below updates it, so the strip's
+  // numbers are fixed for this landing (must run before the "mark newest seen" effect further
+  // down, hence declared here — effects fire in declaration order within one commit).
+  useEffect(() => {
+    lastSeenOnLandingRef.current = currentProjectId === null ? null : getLastSeen(currentProjectId);
+  }, [currentProjectId]);
   // The UI chrome's language follows the current project's setting; 'en' before any project is
   // known (the setup form, or while projects are still loading).
   const lang: ExplainLanguage = projects?.find((p) => p.id === currentProjectId)?.language ?? 'en';
@@ -348,6 +373,13 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     if (url.digest === null && digests.items.length > 0) replace({ digest: digests.items[0]!.id });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [digests.items, url.digest]);
+  // Marks the newest digest seen (P6) once it is actually the one open, not just loaded in the
+  // list — a bookmark to an older digest must not silently clear a real unread strip.
+  useEffect(() => {
+    if (currentProjectId === null || digests.items.length === 0) return;
+    const newestId = digests.items[0]!.id;
+    if (currentDigestId === newestId) setLastSeen(currentProjectId, newestId);
+  }, [currentProjectId, currentDigestId, digests.items]);
 
   useEffect(() => {
     setDigest(null);
@@ -357,6 +389,19 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     fetchDigest(currentDigestId, ac.signal).then(setDigest, (e: unknown) => { if (!ac.signal.aborted) setDigestError(e instanceof Error ? e.message : String(e)); });
     return () => ac.abort();
   }, [currentDigestId]);
+
+  // Hydrates the P5-A reviewed marks for this digest's areas from storage (cheap: a handful of
+  // areas per digest, each one localStorage read).
+  useEffect(() => {
+    if (!digest || currentProjectId === null) {
+      setReviewedAreas({});
+      return;
+    }
+    const items = digest.l2?.items ?? [];
+    const next: Record<string, boolean> = {};
+    for (const it of items) next[it.id] = getReviewed(currentProjectId, digest.id, it.id);
+    setReviewedAreas(next);
+  }, [digest, currentProjectId]);
 
   // A new digest starts from its own graph, folded; unfolding a folder refetches but keeps the
   // current graph on screen (and its view) until the new one arrives.
@@ -450,9 +495,19 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   }, [outlinedAreaId, graph]);
 
   // The reading pane is the one long scroll: a new digest, level or area starts at its top. A
-  // step in the URL scrolls itself into view (WalkthroughView), so it is left alone here.
+  // step in the URL scrolls itself into view (WalkthroughView), so it is left alone here. Landing
+  // on L2 with an area pre-selected (a P2 card from L0) scrolls that card into view instead, so
+  // the shortcut actually lands on the area rather than the top of the full list.
   useEffect(() => {
     if (url.step !== null) return;
+    if (level === 2 && url.area !== null) {
+      const cards = paneRef.current?.querySelectorAll<HTMLElement>('[data-area-id]');
+      const card = cards && Array.from(cards).find((c) => c.dataset.areaId === url.area);
+      if (card) {
+        card.scrollIntoView({ block: 'start' });
+        return;
+      }
+    }
     paneRef.current?.scrollTo?.({ top: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDigestId, level, url.area]);
@@ -511,6 +566,9 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   const onSelectDigest = useCallback((id: number) => push({ digest: id, node: null, area: null, step: null }), [push]);
   const onLevel = useCallback((l: ReadingLevel) => push({ level: l === 0 ? null : l, step: null }), [push]);
   const onOpenArea = useCallback((id: string) => push({ level: 3, area: id, step: null }), [push]);
+  // A P2 "Open area" card on L0 lands on L2 with the area selected, not L3 (docs/ux/brief-1.md
+  // P2): jumping straight to L3 would skip the structural framing L3's callouts assume.
+  const onOpenAreaAtL2 = useCallback((id: string) => push({ level: 2, area: id, step: null, node: null }), [push]);
   const onStep = useCallback((n: number) => replace({ step: n }), [replace]);
   const onSelectNode = useCallback((node: GraphNode) => {
     setGraphSectionOpen(false);
@@ -525,6 +583,22 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   // No areas exist before the first digest, so a first-run graph node never opens anything.
   const onSelectFirstRunGraphNode = useCallback(() => undefined, []);
   const toTop = () => paneRef.current?.scrollTo?.({ top: 0 });
+
+  // P5-A: toggles the reviewed mark for one area of the current digest; undo is the same click.
+  const onToggleReviewed = useCallback((areaId: string) => {
+    if (currentProjectId === null || currentDigestId === null) return;
+    setReviewedAreas((prev) => {
+      const next = !prev[areaId];
+      setReviewed(currentProjectId, currentDigestId, areaId, next);
+      return { ...prev, [areaId]: next };
+    });
+  }, [currentProjectId, currentDigestId]);
+  const reviewedAreaIds = useMemo(
+    () => new Set(Object.keys(reviewedAreas).filter((id) => reviewedAreas[id])),
+    [reviewedAreas],
+  );
+  // P6: opens the existing DigestPicker overlay from the welcome-back strip's CTA.
+  const onOpenDigestList = useCallback(() => setDigestPickerOpenSignal((n) => n + 1), []);
 
   // Global reading keys: 0–3 switch level, n/p move between walkthrough steps.
   const keyState = useRef({ level, step: url.step, stepCount, onLevel, onStep, lang });
@@ -588,6 +662,19 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   const TW = walkthroughCopy(lang);
   const TG = graphCopy(lang);
   const TE = emptyCopy(lang);
+  const TB = welcomeBackCopy(lang);
+
+  // P6: only while actually viewing the newest digest (matches "you're viewing the newest" in the
+  // mockup) and only once storage has been read for this project (a null landing snapshot means
+  // either a first visit or a project with nothing seen yet — never show the strip then).
+  const newestDigestId = digests.items[0]?.id ?? null;
+  const lastSeenOnLanding = lastSeenOnLandingRef.current;
+  const unseen = lastSeenOnLanding !== null ? unseenDigests(digests.items, lastSeenOnLanding.digestId) : [];
+  const showWelcomeBack = level === 0 && currentDigestId !== null && currentDigestId === newestDigestId && unseen.length > 0;
+
+  // P2/P6: L0 and the no-area L3 picker are short by nature and must not stretch to the graph
+  // pane's height (docs/ux/brief-1.md P2); every other reading-pane view keeps the shared stretch.
+  const shortView = level === 0 || (level === 3 && !openAreaItem);
 
   const digestNotice = digest && digest.status !== 'ok' && (
     <div className={digest.status === 'error' ? 'notice error' : 'notice muted'} role={digest.status === 'error' ? 'alert' : 'status'}>
@@ -601,7 +688,7 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   );
 
   const levelView = !digest ? null
-    : level === 0 ? <SummaryView digest={digest} onLevel={onLevel} lang={lang} />
+    : level === 0 ? <SummaryView digest={digest} onLevel={onLevel} onOpenArea={onOpenAreaAtL2} onHoverArea={setHoverAreaId} lang={lang} />
       : level === 1 ? <ImpactView digest={digest} onLevel={onLevel} lang={lang} />
         : level === 2 ? (
           <StructureView
@@ -612,10 +699,11 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
             onClearFilter={onClearFilter}
             onHoverArea={setHoverAreaId}
             onLevel={onLevel}
+            reviewedAreaIds={reviewedAreaIds}
             lang={lang}
           />
         ) : !openAreaItem ? (
-          <AreaPicker digest={digest} onOpenArea={onOpenArea} onHoverArea={setHoverAreaId} lang={lang} />
+          <AreaPicker digest={digest} onOpenArea={onOpenArea} onHoverArea={setHoverAreaId} reviewedAreaIds={reviewedAreaIds} lang={lang} />
         ) : areaError ? (
           <p role="alert" className="error">{TW.loadError(areaError)}</p>
         ) : areaDetail ? (
@@ -626,6 +714,8 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
             onStep={onStep}
             onGenerate={onGenerateArea}
             callsRemaining={status?.budget.remaining ?? null}
+            reviewed={reviewedAreaIds.has(openAreaItem.id)}
+            onToggleReviewed={() => onToggleReviewed(openAreaItem.id)}
             lang={lang}
           />
         ) : (
@@ -677,6 +767,7 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
               onRetry={onRetryDigest}
               retryingId={retryingId}
               retryDisabled={noBudget}
+              openSignal={digestPickerOpenSignal}
               lang={lang}
             />
           )}
@@ -734,10 +825,22 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
             aria-labelledby={LEVEL_TAB_ID(level)}
             tabIndex={0}
             className="reading-pane"
+            data-short-view={shortView ? '' : undefined}
             style={narrow ? undefined : { flexBasis: `${leftPct}%` }}
           >
             {digestNotice}
             {digest.stats.files === 0 && <p className="notice muted" role="status">{TE.digestNoChanges}</p>}
+            {showWelcomeBack && lastSeenOnLanding && (
+              <div className="welcome-back" role="status">
+                <span className="welcome-back-dot" aria-hidden="true" />
+                <span className="welcome-back-text">
+                  {TB.strip(unseen.length, relativeTime(lastSeenOnLanding.at, Date.now(), lang), unseen.reduce((s, d) => s + d.stats.files, 0))}
+                </span>
+                <button type="button" className="btn welcome-back-cta" onClick={onOpenDigestList}>
+                  {TB.openDigestList} <span aria-hidden="true">▾</span>
+                </button>
+              </div>
+            )}
             {levelView}
           </div>
           {!narrow && <Divider pct={leftPct} onChange={setLeftPct} />}

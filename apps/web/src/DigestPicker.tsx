@@ -43,11 +43,14 @@ export interface DigestPickerProps {
   onRetry: (id: number) => void;
   retryingId: number | null;
   retryDisabled: boolean;
+  /** Bump this (e.g. a counter) to open the picker from outside, e.g. the welcome-back strip's
+   * "Open digest list" CTA (DIG-61 P6). Ignored on mount so the picker never force-opens on load. */
+  openSignal?: number;
   /** The UI chrome's language; defaults to English for callers (mostly tests) that don't care. */
   lang?: Lang;
 }
 
-export function DigestPicker({ digests, currentId, onSelect, onRetry, retryingId, retryDisabled, lang = 'en' }: DigestPickerProps) {
+export function DigestPicker({ digests, currentId, onSelect, onRetry, retryingId, retryDisabled, openSignal, lang = 'en' }: DigestPickerProps) {
   const T = pickerCopy(lang);
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -56,6 +59,12 @@ export function DigestPicker({ digests, currentId, onSelect, onRetry, retryingId
   const sentinel = useRef<HTMLDivElement>(null);
   const panelId = useId();
   const current = digests.items.find((d) => d.id === currentId);
+
+  const prevOpenSignal = useRef(openSignal);
+  useEffect(() => {
+    if (openSignal !== undefined && openSignal !== prevOpenSignal.current) setOpen(true);
+    prevOpenSignal.current = openSignal;
+  }, [openSignal]);
 
   const close = useCallback((refocus: boolean) => {
     setOpen(false);

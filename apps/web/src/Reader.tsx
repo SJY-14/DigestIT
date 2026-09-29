@@ -3,7 +3,7 @@
 // area an area picker (the walkthrough itself is in Walkthrough.tsx). MainV2 composes these.
 import { useRef, type KeyboardEvent, type MouseEvent } from 'react';
 import type { DigestDetailDto, DigestL2Item } from '@digestit/core';
-import { humanDateTime, levelsCopy, readerCopy, type Lang } from './copy.js';
+import { humanDateTime, levelsCopy, readerCopy, reviewedCopy, type Lang } from './copy.js';
 import type { ReadingLevel } from './v2Url.js';
 
 export const LEVEL_TAB_ID = (l: ReadingLevel) => `level-tab-${l}`;
@@ -123,6 +123,17 @@ export function areaStats(item: DigestL2Item, digest: DigestDetailDto): { files:
   };
 }
 
+/** Small per-area "reviewed" marker (DIG-61 P5-A) for the L2 area cards and the L3 picker. Not
+ * color-only: a checkmark glyph plus the word, both hidden entirely when not reviewed. */
+function ReviewedIndicator({ lang = 'en' }: { lang?: Lang }) {
+  const T = reviewedCopy(lang);
+  return (
+    <span className="reviewed-indicator">
+      <span aria-hidden="true">✓</span> {T.badge}
+    </span>
+  );
+}
+
 function NextLevel({ level, onLevel, lang = 'en' }: { level: 0 | 1 | 2; onLevel: (l: ReadingLevel) => void; lang?: Lang }) {
   const next = (level + 1) as ReadingLevel;
   const nextLv = levelsCopy(lang)[next];
@@ -137,7 +148,16 @@ function NextLevel({ level, onLevel, lang = 'en' }: { level: 0 | 1 | 2; onLevel:
 
 // --- L0 / L1 -------------------------------------------------------------------------------------
 
-export function SummaryView({ digest, onLevel, lang = 'en' }: { digest: DigestDetailDto; onLevel: (l: ReadingLevel) => void; lang?: Lang }) {
+export interface SummaryViewProps {
+  digest: DigestDetailDto;
+  onLevel: (l: ReadingLevel) => void;
+  /** A P2 area card was picked: opens L2 with that area selected and scrolled into view. */
+  onOpenArea: (id: string) => void;
+  onHoverArea: (id: string | null) => void;
+  lang?: Lang;
+}
+
+export function SummaryView({ digest, onLevel, onOpenArea, onHoverArea, lang = 'en' }: SummaryViewProps) {
   const T = readerCopy(lang);
   const { files, additions, deletions } = digest.stats;
   return (
@@ -148,6 +168,48 @@ export function SummaryView({ digest, onLevel, lang = 'en' }: { digest: DigestDe
         <span className="muted"> · {T.period(humanDateTime(digest.fromAt, Date.now(), lang), humanDateTime(digest.toAt, Date.now(), lang))}</span>
       </p>
       <NextLevel level={0} onLevel={onLevel} lang={lang} />
+      <AreasGlance digest={digest} onOpenArea={onOpenArea} onHoverArea={onHoverArea} lang={lang} />
+    </section>
+  );
+}
+
+/** "Areas in this digest" (DIG-61 P2): a compact map of `digest.l2.items` under L0's headline.
+ * Cards are real buttons (same focus/hover handling as AreaPicker below) and land on L2 with the
+ * area pre-selected, not straight on L3 — L0→L3 would skip the structural framing L3 assumes. */
+function AreasGlance({ digest, onOpenArea, onHoverArea, lang = 'en' }: {
+  digest: DigestDetailDto;
+  onOpenArea: (id: string) => void;
+  onHoverArea: (id: string | null) => void;
+  lang?: Lang;
+}) {
+  const T = readerCopy(lang);
+  const items = digest.l2?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <section className="areas-glance">
+      <h3 className="areas-glance-label">{T.areasGlanceHeading}</h3>
+      <ul className="area-glance-grid">
+        {items.map((it) => {
+          const s = areaStats(it, digest);
+          return (
+            <li key={it.id}>
+              <button
+                type="button"
+                className="area-glance-card"
+                onClick={() => onOpenArea(it.id)}
+                onMouseEnter={() => onHoverArea(it.id)}
+                onMouseLeave={() => onHoverArea(null)}
+                onFocus={() => onHoverArea(it.id)}
+                onBlur={() => onHoverArea(null)}
+              >
+                <p className="area-glance-title">{it.title}</p>
+                <p className="area-glance-meta"><span>{T.fileCount(s.files)}</span> <Delta additions={s.additions} deletions={s.deletions} /></p>
+                <span className="area-glance-open" aria-hidden="true">{T.openAreaCard} →</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }
@@ -194,10 +256,14 @@ export interface StructureViewProps {
   onClearFilter: () => void;
   onHoverArea: (id: string | null) => void;
   onLevel: (l: ReadingLevel) => void;
+  /** Areas marked reviewed (DIG-61 P5-A), for the small non-color-only indicator. */
+  reviewedAreaIds?: ReadonlySet<string>;
   lang?: Lang;
 }
 
-export function StructureView({ digest, filter, selectedAreaId, onOpenArea, onClearFilter, onHoverArea, onLevel, lang = 'en' }: StructureViewProps) {
+export function StructureView({
+  digest, filter, selectedAreaId, onOpenArea, onClearFilter, onHoverArea, onLevel, reviewedAreaIds, lang = 'en',
+}: StructureViewProps) {
   const T = readerCopy(lang);
   const items = digest.l2?.items ?? [];
   const visible = filter ? items.filter((it) => filter.areaIds.has(it.id)) : items;
@@ -217,6 +283,7 @@ export function StructureView({ digest, filter, selectedAreaId, onOpenArea, onCl
           return (
             <li
               key={it.id}
+              data-area-id={it.id}
               className={it.id === selectedAreaId ? 'area-card selected' : 'area-card'}
               onClick={cardClick(() => onOpenArea(it.id))}
               onMouseEnter={() => onHoverArea(it.id)}
@@ -226,6 +293,7 @@ export function StructureView({ digest, filter, selectedAreaId, onOpenArea, onCl
                 <button type="button" onClick={() => onOpenArea(it.id)} onFocus={() => onHoverArea(it.id)} onBlur={() => onHoverArea(null)}>
                   {it.title}
                 </button>
+                {reviewedAreaIds?.has(it.id) && <ReviewedIndicator lang={lang} />}
               </h3>
               <p className="area-card-effect">{it.effect}</p>
               <p><span className="area-card-label">{T.areaHow}</span> {it.how}</p>
@@ -255,10 +323,12 @@ export function StructureView({ digest, filter, selectedAreaId, onOpenArea, onCl
 
 // --- L3 without an area: compact area picker ------------------------------------------------------
 
-export function AreaPicker({ digest, onOpenArea, onHoverArea, lang = 'en' }: {
+export function AreaPicker({ digest, onOpenArea, onHoverArea, reviewedAreaIds, lang = 'en' }: {
   digest: DigestDetailDto;
   onOpenArea: (id: string) => void;
   onHoverArea: (id: string | null) => void;
+  /** Areas marked reviewed (DIG-61 P5-A), for the small non-color-only indicator. */
+  reviewedAreaIds?: ReadonlySet<string>;
   lang?: Lang;
 }) {
   const T = readerCopy(lang);
@@ -281,6 +351,7 @@ export function AreaPicker({ digest, onOpenArea, onHoverArea, lang = 'en' }: {
                 onBlur={() => onHoverArea(null)}
               >
                 <span className="area-pick-title">{it.title}</span>
+                {reviewedAreaIds?.has(it.id) && <ReviewedIndicator lang={lang} />}
                 <span className="area-pick-effect">{it.effect}</span>
                 <span className="area-pick-meta">
                   <span>{T.fileCount(s.files)}</span> <Delta additions={s.additions} deletions={s.deletions} />
