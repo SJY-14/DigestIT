@@ -2,12 +2,12 @@
 // the digest picker (DIG-49, ProjectHeader.tsx / DigestPicker.tsx), and the reading pane + graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import type {
-  AreaDetailDto, CreateProjectResponseDto, DigestDetailDto, DigestSummaryDto, ExplainLanguage, GraphNode, ProjectDto,
-  ProjectGraphDto, ProjectStatusDto,
+  AreaDetailDto, AreaProgressEvent, CreateProjectResponseDto, DigestDetailDto, DigestSummaryDto, ExplainLanguage, GraphNode,
+  ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 import {
   ApiError, addIgnorePatterns, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph,
-  fetchProjectGraph, fetchProjectStatus, fetchProjects, refreshContext, retryDigest, setProjectLanguage,
+  fetchProjectGraph, fetchProjectStatus, fetchProjects, openDigestEvents, refreshContext, retryDigest, setProjectLanguage,
 } from './v2Api.js';
 import { useDigests } from './useDigests.js';
 import { startLive } from './liveClient.js';
@@ -16,7 +16,8 @@ import { ProjectHeader } from './ProjectHeader.js';
 import { DigestPicker } from './DigestPicker.js';
 import { WalkthroughView, walkthroughOf } from './Walkthrough.js';
 import {
-  AreaPicker, Breadcrumb, ImpactView, LEVEL_TAB_ID, LevelSwitcher, READING_PANE_ID, readerKey, StructureView, SummaryView,
+  AreaPicker, Breadcrumb, digestAreaRows, ImpactView, LEVEL_TAB_ID, LevelSwitcher, partsSettled, READING_PANE_ID, readerKey,
+  StructureView, SummaryView,
 } from './Reader.js';
 import {
   apiErrorMessage, emptyCopy, explainOutcomeMessage, graphCopy, headerCopy, ignoreCopy, levelsCopy, readerCopy, resetsLabel,
@@ -158,8 +159,10 @@ export function computeFilter(nodeId: string, graph: ProjectGraphDto | null, dig
   const isFile = nodeId.startsWith('f:');
   const bare = nodeId.slice(2);
   const matches = (p: string) => (isFile ? p === bare : p === bare || p.startsWith(`${bare}/`));
-  const items = digest.l2?.items ?? [];
-  const areaIds = new Set(items.filter((it) => it.paths.some(matches)).map((it) => it.id));
+  // digestAreaRows (not digest.l2?.items): the skeleton's paths are known before any area's text
+  // lands, so filtering keeps working on a digest that just opened (DIG-76 scope 2).
+  const rows = digestAreaRows(digest);
+  const areaIds = new Set(rows.filter((row) => row.paths.some(matches)).map((row) => row.id));
   const files = digest.files.filter((f) => matches(f.path));
   return {
     path: bare || '(root)',
@@ -320,6 +323,10 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   const [areaDetail, setAreaDetail] = useState<AreaDetailDto | null>(null);
   const [areaError, setAreaError] = useState<string | null>(null);
   const [areaGenerating, setAreaGenerating] = useState(false);
+  // Fast Explain (DIG-73/76): `area-progress` events for the digest's currently open SSE stream,
+  // keyed by area id, so a walkthrough being generated in the background keeps its place even if
+  // the reader looks at a different area and comes back.
+  const [areaProgress, setAreaProgress] = useState<Record<string, Pick<AreaProgressEvent, 'overview' | 'steps'>>>({});
   const [hoverAreaId, setHoverAreaId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [announce, setAnnounce] = useState('');
@@ -391,6 +398,40 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     return () => ac.abort();
   }, [currentDigestId]);
 
+  // Fast Explain (DIG-73/76): live progress for the open digest. `onChange`/`onProgress` are read
+  // through a ref so a state update elsewhere (e.g. the digest itself refetching) never tears the
+  // connection down and reopens it — that would drop an area-progress stream mid-walkthrough. The
+  // effect below re-subscribes only when the digest id changes or `digestUnsettled` flips, not on
+  // every `parts` refetch in between (those keep the same boolean and are ignored here); an
+  // old-contract digest (no `areas`/`parts`) never had an events endpoint to poll, and a fully
+  // settled one has nothing left to stream — until a retry flips a part back to `pending`.
+  const digestUnsettled = digest?.parts ? !partsSettled(digest.parts) : false;
+  const digestEvents = useRef({
+    onChange: () => undefined as void,
+    onProgress: (_e: AreaProgressEvent) => undefined as void,
+  });
+  digestEvents.current.onChange = () => {
+    if (currentDigestId === null) return;
+    fetchDigest(currentDigestId).then(setDigest, () => undefined);
+  };
+  digestEvents.current.onProgress = (e: AreaProgressEvent) => {
+    setAreaProgress((prev) => ({ ...prev, [e.areaId]: { overview: e.overview, steps: e.steps } }));
+    if (e.done && currentDigestId !== null) {
+      fetchArea(currentDigestId, e.areaId).then((d) => {
+        setAreaDetail((prev) => (prev && prev.areaId === e.areaId ? d : prev));
+        if (e.areaId === url.area) setAreaGenerating(false);
+      }, () => { if (e.areaId === url.area) setAreaGenerating(false); });
+    }
+  };
+  useEffect(() => {
+    if (!digest || !digestUnsettled) return undefined;
+    return openDigestEvents(digest.id, {
+      onChange: () => digestEvents.current.onChange(),
+      onProgress: (e) => digestEvents.current.onProgress(e),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [digest?.id, digestUnsettled]);
+
   // Hydrates the P5-A reviewed marks for this digest's areas from storage (cheap: a handful of
   // areas per digest, each one localStorage read).
   useEffect(() => {
@@ -398,9 +439,9 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
       setReviewedAreas({});
       return;
     }
-    const items = digest.l2?.items ?? [];
+    const rows = digestAreaRows(digest);
     const next: Record<string, boolean> = {};
-    for (const it of items) next[it.id] = getReviewed(currentProjectId, digest.id, it.id);
+    for (const row of rows) next[row.id] = getReviewed(currentProjectId, digest.id, row.id);
     setReviewedAreas(next);
   }, [digest, currentProjectId]);
 
@@ -453,11 +494,16 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     generateRef.current?.abort();
     generateRef.current = ac;
     setAreaGenerating(true);
+    setAreaProgress((prev) => { const { [url.area!]: _drop, ...rest } = prev; return rest; });
     explainArea(currentDigestId, url.area, ac.signal).then(
       (d) => {
         if (ac.signal.aborted) return;
-        setAreaGenerating(false);
         setAreaDetail(d);
+        // Fast Explain (DIG-75+): the POST answers right away with a `pending` shell; the real
+        // walkthrough streams in as `area-progress` and lands via that stream's `done` handler
+        // below, which clears `areaGenerating`. An old-contract server already returns the final
+        // result here, so this is the only place that finishes in that case.
+        if (d.status !== 'pending') setAreaGenerating(false);
         refreshStatus();
       },
       // The area is already loaded, so the walkthrough shows its own error + Try again rather
@@ -484,7 +530,8 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, url.node]);
 
-  const openAreaItem = digest?.l2?.items.find((it) => it.id === url.area) ?? null;
+  const areaRows = useMemo(() => (digest ? digestAreaRows(digest) : []), [digest]);
+  const openAreaItem = areaRows.find((row) => row.id === url.area) ?? null;
   const walkthrough = areaDetail && areaDetail.areaId === url.area ? walkthroughOf(areaDetail) : null;
   const stepCount = walkthrough?.steps.length ?? 0;
 
@@ -689,9 +736,19 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     </div>
   );
 
+  const onRetryPart = () => { if (digest) onRetryDigest(digest.id); };
+  const retryingPart = digest !== null && retryingId === digest.id;
+
   const levelView = !digest ? null
-    : level === 0 ? <SummaryView digest={digest} onLevel={onLevel} onOpenArea={onOpenAreaAtL2} onHoverArea={setHoverAreaId} lang={lang} />
-      : level === 1 ? <ImpactView digest={digest} onLevel={onLevel} lang={lang} />
+    : level === 0 ? (
+      <SummaryView
+        digest={digest} onLevel={onLevel} onOpenArea={onOpenAreaAtL2} onHoverArea={setHoverAreaId}
+        onRetryPart={onRetryPart} retryingPart={retryingPart} retryDisabled={noBudget} lang={lang}
+      />
+    )
+      : level === 1 ? (
+        <ImpactView digest={digest} onLevel={onLevel} onRetryPart={onRetryPart} retryingPart={retryingPart} retryDisabled={noBudget} lang={lang} />
+      )
         : level === 2 ? (
           <StructureView
             digest={digest}
@@ -702,6 +759,9 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
             onHoverArea={setHoverAreaId}
             onLevel={onLevel}
             reviewedAreaIds={reviewedAreaIds}
+            onRetryPart={onRetryPart}
+            retryingPart={retryingPart}
+            retryDisabled={noBudget}
             lang={lang}
           />
         ) : !openAreaItem ? (
@@ -718,6 +778,7 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
             callsRemaining={status?.budget.remaining ?? null}
             reviewed={reviewedAreaIds.has(openAreaItem.id)}
             onToggleReviewed={() => onToggleReviewed(openAreaItem.id)}
+            streaming={url.area ? areaProgress[url.area] ?? null : null}
             lang={lang}
           />
         ) : (

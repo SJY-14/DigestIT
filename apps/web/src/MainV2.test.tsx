@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeFilter, defaultProject, MainV2, nodeTarget, unseenDigests } from './MainV2.js';
 import { humanDateTime, plural } from './copy.js';
 import {
-  fixtureArea, fixtureDigest, fixtureDigestPage, fixtureGraph, fixtureProject, fixtureProject2, fixtureProjectGraph, fixtureStatus, fixtureStatus2,
+  fixtureArea, fixtureAreaProgressSteps, fixtureDigest, fixtureDigestDone, fixtureDigestPage, fixtureDigestPartial, fixtureDigestPending,
+  fixtureFastDigestSummary, fixtureFastGraph, fixtureGraph, fixtureProject, fixtureProject2, fixtureProjectGraph, fixtureStatus, fixtureStatus2,
+  fixtureStreamingArea, fixtureStreamingAreaFinal,
 } from './v2Fixtures.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -155,7 +157,7 @@ describe('MainV2: project bar', () => {
   it('shows the budget meter and the Explain button with the pending count', async () => {
     await render(<MainV2 />);
     await waitFor(() => host.querySelector('.explain-btn') !== null);
-    expect(host.textContent).toContain('23 calls left today');
+    expect(host.textContent).toContain('23 Explains left today');
     expect(host.querySelector('.explain-btn')?.textContent).toContain('Explain 12 changes');
   });
 
@@ -623,7 +625,7 @@ describe('MainV2: digest retry', () => {
     await click(host.querySelector('.digest-picker-trigger'));
     const retryBtn = [...host.querySelectorAll('.retry')][0] as HTMLButtonElement;
     expect(retryBtn.disabled).toBe(true);
-    expect(retryBtn.textContent).toBe('No calls left today');
+    expect(retryBtn.textContent).toBe('No Explains left today');
   });
 
   it('retries an errored digest via a real POST, not just a re-select', async () => {
@@ -779,5 +781,155 @@ describe('unseenDigests (DIG-61 P6)', () => {
 
   it('is empty for an empty list', () => {
     expect(unseenDigests([], 1)).toEqual([]);
+  });
+});
+
+describe('MainV2: Fast Explain (DIG-76)', () => {
+  class FakeES {
+    static last: FakeES;
+    handlers = new Map<string, (ev: { data: string }) => void>();
+    onerror: (() => void) | null = null;
+    closed = false;
+    constructor(public url: string) { FakeES.last = this; }
+    addEventListener(k: string, f: (ev: { data: string }) => void) { this.handlers.set(k, f); }
+    close() { this.closed = true; }
+    emit(k: string, data: unknown = {}) { this.handlers.get(k)?.({ data: JSON.stringify(data) }); }
+  }
+
+  let fastDigest: typeof fixtureDigestPending;
+  let fastArea: typeof fixtureStreamingArea;
+
+  function mockFastFetch() {
+    vi.stubGlobal('EventSource', FakeES as unknown as typeof EventSource);
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      calls.push({ url, method });
+      const body = ((): unknown => {
+        if (url === '/api/projects') return [fixtureProject];
+        if (url === `/api/projects/${fixtureProject.id}/status`) return fixtureStatus;
+        if (url.startsWith(`/api/projects/${fixtureProject.id}/digests`)) return { items: [fixtureFastDigestSummary], nextCursor: null };
+        if (url === `/api/digests/${fastDigest.id}`) return fastDigest;
+        if (url === `/api/digests/${fastDigest.id}/explain` && method === 'POST') return fastDigest;
+        if (/^\/api\/digests\/\d+\/graph/.test(url)) return fixtureFastGraph;
+        if (url === `/api/digests/${fastDigest.id}/areas/apps-web` && method === 'GET') return fastArea;
+        if (url === `/api/digests/${fastDigest.id}/areas/apps-web/explain` && method === 'POST') return fixtureStreamingArea;
+        throw new Error(`unhandled fetch in test: ${method} ${url}`);
+      })();
+      return { ok: true, status: 200, json: async () => body } as Response;
+    }));
+  }
+
+  beforeEach(() => {
+    fastDigest = fixtureDigestPending;
+    fastArea = fixtureStreamingArea;
+    mockFastFetch();
+  });
+
+  it('opens instantly from the skeleton: files, stats, graph and the area list with labels, no L0/L1/L2 text yet and no page spinner', async () => {
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.l0-headline') !== null);
+    // The stats line (deterministic) is there right away; the headline itself is a placeholder.
+    expect(host.querySelector('.l0-stats')?.textContent).toContain('3 files · +140 −4');
+    expect(host.querySelector('.l0-headline')?.textContent).toContain('Writing the summary');
+    await waitFor(() => host.querySelector('.area-glance-card') !== null);
+    const cards = [...host.querySelectorAll('.area-glance-card')];
+    expect(cards).toHaveLength(2);
+    expect(cards[0]!.textContent).toContain('apps/web'); // the skeleton's label, not an LLM title
+    await waitFor(() => host.querySelector('.graph-canvas') !== null);
+    expect(host.querySelectorAll('.graph-node.changed').length).toBeGreaterThan(0);
+    expect(host.querySelector('.spinner')).toBeNull();
+  });
+
+  it('fills L0/L1 and each area in independently as their part lands, keeping the level switcher and area map working with partial data', async () => {
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.l0-headline')?.textContent?.includes('Writing the summary') ?? false);
+
+    fastDigest = fixtureDigestPartial; // summary + one area ok, the other area failed
+    await act(async () => FakeES.last.emit('parts'));
+    await waitFor(() => host.querySelector('.l0-headline')?.textContent === fixtureDigestPartial.l0!.text);
+
+    await pressKey('2');
+    await waitFor(() => host.querySelectorAll('.area-card').length === 2);
+    const cards = [...host.querySelectorAll('.area-card')];
+    expect(cards[0]!.textContent).toContain(fixtureDigestPartial.l2!.items[0]!.effect);
+    expect(cards[1]!.querySelector('.placeholder')).toBeNull(); // it failed, not pending
+  });
+
+  it('a failed part shows its own message and a retry that POSTs /explain; the rest of the digest stays readable', async () => {
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.l0-headline') !== null);
+    fastDigest = fixtureDigestPartial;
+    await act(async () => FakeES.last.emit('parts'));
+    await pressKey('2');
+    await waitFor(() => host.querySelectorAll('.area-card').length === 2);
+
+    const failedCard = [...host.querySelectorAll('.area-card')][1]!;
+    expect(failedCard.querySelector('.part-failed')).toBeTruthy();
+    // The other area's text is unaffected by the failure.
+    expect(host.querySelectorAll('.area-card')[0]!.textContent).toContain(fixtureDigestPartial.l2!.items[0]!.effect);
+
+    fastDigest = fixtureDigestDone;
+    await click(failedCard.querySelector('.part-failed .retry'));
+    await waitFor(() => calls.some((c) => c.url === `/api/digests/${fixtureDigestPending.id}/explain` && c.method === 'POST'));
+    await waitFor(() => host.querySelectorAll('.area-card')[1]!.textContent?.includes(fixtureDigestDone.l2!.items[1]!.effect) ?? false);
+  });
+
+  it('L3 steps stream in one by one and the final walkthrough replaces them without moving focus off the pane', async () => {
+    fastArea = { ...fixtureStreamingArea, status: 'none', l3: null };
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigestPending.id}&level=3&area=apps-web`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.notice.generate') !== null);
+
+    // The POST answers right away with a `pending` shell (Fast Explain); the real walkthrough
+    // streams in afterwards over the digest's `area-progress` events.
+    fastArea = fixtureStreamingArea;
+    await click(host.querySelector('.notice.generate button'));
+    await waitFor(() => calls.some((c) => c.url.endsWith('/areas/apps-web/explain') && c.method === 'POST'));
+    await waitFor(() => host.querySelector('.walkthrough [role="status"]')?.textContent?.includes('Writing the walkthrough') ?? false);
+
+    // Steps arrive one at a time.
+    for (const step of fixtureAreaProgressSteps.slice(0, 3)) await act(async () => FakeES.last.emit('area-progress', step));
+    await waitFor(() => host.querySelector('.overview p') !== null);
+    expect(host.querySelectorAll('section.step')).toHaveLength(1);
+    expect(host.querySelector('section.step .step-body')?.textContent).toContain(fixtureAreaProgressSteps[2]!.steps[0]!.body);
+
+    // `done` on the stream: the client refetches the authoritative, validated result.
+    fastArea = fixtureStreamingAreaFinal;
+    await act(async () => FakeES.last.emit('area-progress', fixtureAreaProgressSteps[3]));
+    await waitFor(() => host.querySelector('.check') !== null);
+    expect(host.querySelectorAll('section.step')).toHaveLength(1);
+    expect(host.querySelector('.walkthrough')).toBeTruthy(); // still the same reading pane, not re-mounted elsewhere
+  });
+
+  it('falls back to polling GET /api/digests/:id every 2s when the SSE connection errors', async () => {
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.l0-headline') !== null);
+    fastDigest = fixtureDigestDone;
+    await act(async () => FakeES.last.onerror!());
+    // The fallback is a real 2 s interval (DIGEST_EVENTS_POLL_MS): wait past one tick.
+    await act(async () => { await new Promise((r) => setTimeout(r, 2200)); });
+    await waitFor(() => host.querySelector('.l0-headline')?.textContent === fixtureDigestDone.l0!.text);
+  }, 10000);
+
+  it('shows the Korean placeholder and budget strings for a Korean project', async () => {
+    vi.stubGlobal('EventSource', FakeES as unknown as typeof EventSource);
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      calls.push({ url, method });
+      const koProject = { ...fixtureProject, language: 'ko' as const };
+      const body = ((): unknown => {
+        if (url === '/api/projects') return [koProject];
+        if (url === `/api/projects/${fixtureProject.id}/status`) return { ...fixtureStatus, project: koProject };
+        if (url.startsWith(`/api/projects/${fixtureProject.id}/digests`)) return { items: [fixtureFastDigestSummary], nextCursor: null };
+        if (url === `/api/digests/${fastDigest.id}`) return { ...fastDigest, language: 'ko' };
+        if (/^\/api\/digests\/\d+\/graph/.test(url)) return fixtureFastGraph;
+        throw new Error(`unhandled fetch in test: ${method} ${url}`);
+      })();
+      return { ok: true, status: 200, json: async () => body } as Response;
+    }));
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.l0-headline')?.textContent?.includes('요약을 작성하는 중') ?? false);
+    expect(host.textContent).toContain('설명');
+    expect(host.textContent).not.toContain('호출');
   });
 });
