@@ -8,7 +8,7 @@ a guard that keeps them that way.
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-65 | AI-tell lint in the validators (en/ko), one retry, `style_warnings`; prompt style rules | Summarization engineer | — |
+| 0 | DIG-65 | AI-tell lint in the validators (en/ko), one retry, `style_warnings`; prompt style rules (done) | Summarization engineer | — |
 | 0 | DIG-66 | UI-copy lint test over evaluated `copy.ts`; string sweep (done) | Frontend engineer | — |
 | 1 | DIG-67 | Verify: before/after screens, lint counts, blind read; `docs/ux/ai-look-summary.md` | UX reviewer | DIG-65, DIG-66 |
 | 2 | — | Operator real-provider acceptance run (en and ko) | Board operator | DIG-65 |
