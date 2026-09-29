@@ -19,7 +19,7 @@ edge case. All before/after screenshots referenced below are new, in `docs/ux/sc
 | P4 focus ring | `focus-digest-picker.png` | none renderable here, see P4 (operator Tab-through) |
 | P2 areas glance / short view | `light-en-L0.png`, `light-en-L3-picker.png` | `dig62-light-en-L0-areas-glance-after.png`, `dig62-light-en-L0-card-lands-on-L2-after.png`, `dig62-dark-ko-header-idle-after.png` (ko) |
 | P5-A reviewed mark | `light-en-L2.png` | `dig62-light-en-L3-reviewed-after.png`, `dig62-light-en-L2-badge-reviewed-after.png`, `dig62-light-en-L2-after-undo-after.png`, `dig62-dark-ko-L3-walkthrough-after.png` (ko toggle) |
-| P6 welcome back | `light-en-L0.png` | `dig62-light-en-L0-welcome-back-1440-after.png`, `-1280-after.png`, `dig62-light-en-welcome-back-cta-opens-picker-after.png` |
+| P6 welcome back | `light-en-L0.png` | `dig62-light-en-L0-welcome-back-1440-after.png`, `dig62-light-en-L0-welcome-back-1280-after.png`, `dig62-light-en-welcome-back-cta-opens-picker-after.png` |
 
 ## P1 — localize the top nav — holds
 
