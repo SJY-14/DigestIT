@@ -123,6 +123,12 @@ export class ExplainJobRunner {
     return { repoId: row.repoId, areas: JSON.parse(row.areas) as DigestAreaSkeleton[] };
   }
 
+  /** The language a digest was first written in (never the project's current language, which may
+   * have changed since -- one digest never mixes languages). */
+  private digestLanguage(changeUnitId: number): ProjectRow['language'] {
+    return (this.db.prepare('SELECT language FROM digest WHERE change_unit_id = ?').get(changeUnitId) as { language: ProjectRow['language'] }).language;
+  }
+
   /** The compact, deterministic `ProjectMap` rendering (docs/explain-speed.md §4 "Context off the
    * critical path"): grounding for a first Explain's parts, built in parallel with (not blocking
    * on) the LLM project context. */
@@ -168,8 +174,10 @@ export class ExplainJobRunner {
       return { noChanges: false, digestId: changeUnitId };
     }
     setPrepMs(this.db, jobId, prepMs);
+    // A brand-new digest is written in the project's language as of right now (matching
+    // prepareExplainDigest, which already stored it that way on the digest row).
     void this.runJob(changeUnitId, jobId, project, provider, prepared.areas, {
-      context: opts.context, includeContext, dataDir, onlyParts: null,
+      context: opts.context, includeContext, dataDir, onlyParts: null, language: project.language,
     });
     return { noChanges: false, digestId: changeUnitId };
   }
@@ -203,15 +211,17 @@ export class ExplainJobRunner {
     }
     setPrepMs(this.db, jobId, 0);
     const context = latestContextText(this.db, project.id);
+    // Keeps the language the digest was first written in, even if the project's changed since.
     void this.runJob(digestId, jobId, project, provider, loaded.areas, {
-      context, includeContext: false, dataDir, onlyParts: failed,
+      context, includeContext: false, dataDir, onlyParts: failed, language: this.digestLanguage(digestId),
     });
     return { nothingToRetry: false };
   }
 
   private async runJob(
     changeUnitId: number, jobId: number, project: ProjectRow, provider: ExplanationProvider,
-    areas: readonly DigestAreaSkeleton[], opts: { context?: string; includeContext: boolean; dataDir: string; onlyParts: Set<PartKey> | null },
+    areas: readonly DigestAreaSkeleton[],
+    opts: { context?: string; includeContext: boolean; dataDir: string; onlyParts: Set<PartKey> | null; language: ProjectRow['language'] },
   ): Promise<void> {
     const allKeys = this.allPartKeys(areas, opts.includeContext);
     const runKeys = opts.onlyParts ? allKeys.filter((k) => opts.onlyParts!.has(k)) : allKeys;
@@ -224,7 +234,7 @@ export class ExplainJobRunner {
 
     const limiter = new Limiter(this.maxInFlight);
     const job: JobRef = { jobId, budget: this.budget, now: this.now };
-    const { language } = project;
+    const { language } = opts;
 
     const settle = (key: PartKey, outcome: PartOutcome): void => {
       void outcome; // outcome is captured in the DB by the part function itself; only status matters here
@@ -289,11 +299,12 @@ export class ExplainJobRunner {
     if (jobId === null) return { started: false };
     this.areaInFlight.add(key);
     const context = latestContextText(this.db, project.id);
+    const language = this.digestLanguage(digestId); // the digest's own language, not the project's current one
     void (async () => {
       const job: JobRef = { jobId, budget: this.budget, now: this.now };
       try {
         await this.parts.areaWalkthrough(this.db, digestId, areaId, provider, {
-          job, context, language: project.language,
+          job, context, language,
           onProgress: (e) => this.emitAreaProgress(digestId, e),
         });
       } finally {

@@ -63,6 +63,33 @@ const post = (app: App, url: string, body: unknown = {}, headers: Record<string,
 const patch = (app: App, url: string, body: unknown = {}, headers: Record<string, string> = auth) =>
   app.inject({ method: 'PATCH', url, headers, payload: JSON.stringify(body) });
 
+/** DIG-75: POST /explain (and retry) return before the LLM parts finish. Tests that need the
+ * final digest content poll GET /api/digests/:id until every part has a terminal status. */
+async function waitForDigestSettled(app: App, digestId: number, timeoutMs = 2000): Promise<Record<string, unknown>> {
+  const start = Date.now();
+  for (;;) {
+    const body = (await get(app, `/api/digests/${digestId}`)).json();
+    const parts = body.parts as { summary: string; areas: Record<string, string>; context: string } | undefined;
+    const running = !parts || parts.summary === 'pending' || parts.summary === 'running'
+      || parts.context === 'pending' || parts.context === 'running'
+      || Object.values(parts.areas).some((s) => s === 'pending' || s === 'running');
+    if (!running) return body;
+    if (Date.now() - start > timeoutMs) throw new Error(`digest ${digestId} did not settle within ${timeoutMs}ms`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+/** DIG-75: POST .../areas/:areaId/explain also returns before the L3 walkthrough finishes. */
+async function waitForAreaSettled(app: App, digestId: number, areaId: string, timeoutMs = 2000): Promise<Record<string, unknown>> {
+  const start = Date.now();
+  for (;;) {
+    const body = (await get(app, `/api/digests/${digestId}/areas/${areaId}`)).json();
+    if (body.status !== 'none') return body;
+    if (Date.now() - start > timeoutMs) throw new Error(`area ${digestId}/${areaId} did not settle within ${timeoutMs}ms`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 describe('GET /api/projects', () => {
   it('lists a registered project with a "none" context and zero digests', async () => {
     const { db, repoId } = await setup();
@@ -502,24 +529,28 @@ describe('POST /api/projects/:id/explain and the digest/area GETs', () => {
     expect(explainRes.statusCode).toBe(200);
     const explainBody = explainRes.json();
     expect(explainBody.noChanges).toBe(false);
-    expect(explainBody.status).toBe('ok');
+    // Fast Explain (DIG-75): the response comes back before the LLM parts run.
+    expect(explainBody.status).toBe('pending');
     const digestId: number = explainBody.digestId;
-    expect(explainBody.budget.used).toBeGreaterThan(0);
 
-    // First-Explain-ever auto-builds the project context (best-effort).
-    const projects = (await get(app, '/api/projects')).json();
-    expect(projects[0].context.status).toBe('ok');
-    expect(projects[0].context.fromFiles).toBe(3); // built after the new checkpoint: README.md, src/a.ts, src/b.ts
-
-    const detail = (await get(app, `/api/digests/${digestId}`)).json();
+    const detail = await waitForDigestSettled(app, digestId);
     expect(detail.projectId).toBe(repoId);
     expect(detail.status).toBe('ok');
     expect(detail.l0).toBeTruthy();
     expect(detail.language).toBe('en');
+    expect((detail.areas as { id: string }[]).map((a) => a.id)).toEqual(['src']);
+    expect((detail.parts as { summary: string }).summary).toBe('ok');
+
+    expect((await get(app, `/api/budget`)).json().used).toBeGreaterThan(0);
+
+    // First-Explain-ever auto-builds the project context (best-effort, in parallel with the digest).
+    const projects = (await get(app, '/api/projects')).json();
+    expect(projects[0].context.status).toBe('ok');
+    expect(projects[0].context.fromFiles).toBe(3); // built after the new checkpoint: README.md, src/a.ts, src/b.ts
 
     const list = (await get(app, `/api/projects/${repoId}/digests`)).json();
     expect(list.items[0].language).toBe('en');
-    expect(detail.l2.items.map((i: { id: string }) => i.id)).toEqual(['src']);
+    expect((detail.l2 as { items: { id: string }[] }).items.map((i) => i.id)).toEqual(['src']);
     expect(detail.files).toEqual([
       expect.objectContaining({ path: 'src/b.ts', status: 'A' }),
     ]);
@@ -531,10 +562,10 @@ describe('POST /api/projects/:id/explain and the digest/area GETs', () => {
 
     const areaExplain = await post(app, `/api/digests/${digestId}/areas/src/explain`);
     expect(areaExplain.statusCode).toBe(200);
-    const areaAfter = areaExplain.json();
+    const areaAfter = await waitForAreaSettled(app, digestId, 'src');
     expect(areaAfter.status).toBe('ok');
-    expect(areaAfter.l3.overview).toBeTruthy();
-    expect(areaAfter.l3.steps.length).toBeGreaterThan(0);
+    expect((areaAfter.l3 as { overview: string }).overview).toBeTruthy();
+    expect((areaAfter.l3 as { steps: unknown[] }).steps.length).toBeGreaterThan(0);
 
     // A row from the old why/design/risks/notes prompt (a1) is not shown: it reads as 'none' until regenerated.
     db.prepare('DELETE FROM area_explanation').run();
@@ -578,9 +609,11 @@ describe('POST /api/digests/:id/explain (retry)', () => {
     write('src/b.ts', 'b\n');
     const app = makeApp(db);
     const digestId = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId;
+    await waitForDigestSettled(app, digestId); // the lock is held until the first Explain settles
     const res = await post(app, `/api/digests/${digestId}/explain`);
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ id: digestId, status: 'ok' });
+    const detail = await waitForDigestSettled(app, digestId);
+    expect(detail).toMatchObject({ id: digestId, status: 'ok' });
   });
 
   it('404s an unknown digest', async () => {
@@ -630,21 +663,27 @@ describe('explanation language wiring (DIG-49)', () => {
     expect((await patch(app, `/api/projects/${repoId}`, { language: 'ko' })).statusCode).toBe(200);
     write('src/b.ts', 'b\n');
     const first = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId as number;
-    expect(seen).toEqual(['context:ko', 'digest:ko']);
+    await waitForDigestSettled(app, first);
+    // Fast Explain (DIG-75): the first Explain's context build runs in parallel with the digest
+    // parts, not serially before them, so their relative order in `seen` is not guaranteed.
+    expect(new Set(seen)).toEqual(new Set(['context:ko', 'digest:ko']));
     expect((await get(app, `/api/digests/${first}`)).json().language).toBe('ko');
 
     // Back to English: the old digest stays Korean, including its area walkthrough.
     expect((await patch(app, `/api/projects/${repoId}`, { language: 'en' })).statusCode).toBe(200);
     seen.length = 0;
     expect((await post(app, `/api/digests/${first}/areas/src/explain`)).statusCode).toBe(200);
+    await waitForAreaSettled(app, first, 'src');
     expect(seen).toEqual(['area:ko']);
 
-    // The next Explain rebuilds the context in English (the language changed, even though the
-    // last build is minutes old) and writes the new digest in English.
+    // The next Explain writes the new digest in English. Context only runs inline on a project's
+    // first-ever Explain (DIG-75, docs/explain-speed.md §4); a language change no longer rebuilds
+    // it automatically on the next Explain -- POST /api/projects/:id/context/refresh does that.
     seen.length = 0;
     write('src/c.ts', 'c\n');
     const second = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId as number;
-    expect(seen).toEqual(['context:en', 'digest:en']);
+    await waitForDigestSettled(app, second);
+    expect(seen).toEqual(['digest:en']);
     expect((await get(app, `/api/digests/${second}`)).json().language).toBe('en');
     expect((await get(app, `/api/digests/${first}`)).json().language).toBe('ko');
   });
@@ -662,6 +701,7 @@ describe('one-at-a-time in-process guards (area explain, context refresh)', () =
       },
     });
     const digestId = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId;
+    await waitForDigestSettled(app, digestId); // the area must exist in L2 before it can be explained
     const first = post(app, `/api/digests/${digestId}/areas/src/explain`);
     await new Promise((r) => setTimeout(r, 20));
     const second = await post(app, `/api/digests/${digestId}/areas/src/explain`);
@@ -705,10 +745,13 @@ describe('GET /api/projects/:id/digests (pagination)', () => {
     const app = makeApp(db);
     write('src/b.ts', 'b\n');
     const d1 = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId;
+    await waitForDigestSettled(app, d1); // the lock is held until each Explain settles
     write('src/c.ts', 'c\n');
     const d2 = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId;
+    await waitForDigestSettled(app, d2);
     write('src/d.ts', 'd\n');
     const d3 = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId;
+    await waitForDigestSettled(app, d3);
 
     const page1 = (await get(app, `/api/projects/${repoId}/digests?limit=2`)).json();
     expect(page1.items.map((i: { id: number }) => i.id)).toEqual([d3, d2]);
@@ -732,9 +775,11 @@ describe('GET /api/digests/:id/graph', () => {
     write('src/b.ts', 'b\n');
     const app = makeApp(db);
     const d1 = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId;
+    await waitForDigestSettled(app, d1); // the lock is held until each Explain settles
     unlinkSync(join(proj, 'src/a.ts'));
     writeFileSync(join(proj, 'src/b.ts'), 'b2\n');
     const d2 = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId;
+    await waitForDigestSettled(app, d2);
     return { app, d1, d2 };
   }
 
