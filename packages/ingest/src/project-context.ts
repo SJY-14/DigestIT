@@ -35,7 +35,9 @@ export function latestContextText(db: DatabaseSync, repoId: number): string | un
  * snapshotted, never a denylisted file). `buildProjectMap` reads synchronously and chooses which
  * files to read from their paths alone, so one dry pass collects the paths, then they are loaded.
  */
-async function mapOfTree(shadow: Shadow, treeSha: string): Promise<ProjectMap> {
+/** Exported for DIG-75's job runner: the compact `ProjectMap` grounding used for a first Explain's
+ * digest parts, built in parallel with (instead of waiting for) the LLM project context. */
+export async function mapOfTree(shadow: Shadow, treeSha: string): Promise<ProjectMap> {
   const files = await listTree(shadow, treeSha);
   const wanted: string[] = [];
   buildProjectMap(files, (p) => {
