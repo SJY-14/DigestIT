@@ -926,6 +926,39 @@ describe('MainV2: Fast Explain (DIG-76)', () => {
     await waitFor(() => host.querySelector('.check') !== null);
   });
 
+  it('an area L3 that finished while no stream carried its progress still lands on the stream\'s done', async () => {
+    // The walkthrough can finish between the POST and the stream connecting (or during a
+    // reconnect): its `done: true` progress event is not replayed, the server only sends `done`.
+    fastDigest = fixtureDigestDone;
+    fastArea = { ...fixtureStreamingArea, status: 'none', l3: null };
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigestDone.id}&level=3&area=apps-web`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.notice.generate') !== null);
+
+    fastArea = fixtureStreamingArea;
+    await click(host.querySelector('.notice.generate button'));
+    await waitFor(() => FakeES.last !== undefined && !FakeES.last.closed);
+
+    fastArea = fixtureStreamingAreaFinal;
+    await act(async () => FakeES.last.emit('done'));
+    await waitFor(() => host.querySelector('.check') !== null);
+    expect(host.querySelector('.notice .spinner')).toBeNull();
+  });
+
+  it('opening an area whose L3 is already running follows it on the events stream', async () => {
+    // e.g. a reload while the walkthrough was being written: GET /areas/:id answers `pending`.
+    fastDigest = fixtureDigestDone;
+    fastArea = fixtureStreamingArea;
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigestDone.id}&level=3&area=apps-web`);
+    await render(<MainV2 />);
+    await waitFor(() => FakeES.last !== undefined && !FakeES.last.closed);
+
+    await act(async () => FakeES.last.emit('area-progress', fixtureAreaProgressSteps[0]));
+    fastArea = fixtureStreamingAreaFinal;
+    await act(async () => FakeES.last.emit('area-progress', fixtureAreaProgressSteps[3]));
+    await waitFor(() => host.querySelector('.check') !== null);
+  });
+
   it('falls back to polling GET /api/digests/:id every 2s when the SSE connection errors', async () => {
     await render(<MainV2 />);
     await waitFor(() => host.querySelector('.l0-headline') !== null);

@@ -417,25 +417,42 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     onChange: () => undefined as void,
     onProgress: (_e: AreaProgressEvent) => undefined as void,
   });
+  const dropGenerating = (areaId: string) =>
+    setGeneratingAreaIds((prev) => { if (!prev.has(areaId)) return prev; const next = new Set(prev); next.delete(areaId); return next; });
+  // Refetches one in-flight area. `onlyIfSettled`: a check after a reconnect, poll tick or `done`,
+  // where the area may still be running (keep waiting) or may have finished while no stream was
+  // listening (its `done` progress event is not replayed, so this is the only way to see it).
+  const settleArea = (digestId: number, areaId: string, onlyIfSettled: boolean) => {
+    fetchArea(digestId, areaId).then((d) => {
+      if (onlyIfSettled && d.status === 'pending') return;
+      dropGenerating(areaId);
+      setAreaDetail((prev) => (prev && prev.digestId === digestId && prev.areaId === areaId ? d : prev));
+      if (areaId === url.area) setAreaGenerating(false);
+    }, (err: unknown) => {
+      // A 404 means the area is gone for this digest: stop waiting on it. Anything else (a network
+      // blip) stays in flight for the next check.
+      if (onlyIfSettled && !(err instanceof ApiError && err.status === 404)) return;
+      dropGenerating(areaId);
+      if (areaId === url.area) setAreaGenerating(false);
+    });
+  };
   digestEvents.current.onChange = () => {
     if (currentDigestId === null) return;
     fetchDigest(currentDigestId).then(setDigest, () => undefined);
+    for (const areaId of generatingAreaIds) settleArea(currentDigestId, areaId, true);
   };
   digestEvents.current.onProgress = (e: AreaProgressEvent) => {
     setAreaProgress((prev) => ({ ...prev, [e.areaId]: { overview: e.overview, steps: e.steps } }));
-    if (e.done && currentDigestId !== null) {
-      setGeneratingAreaIds((prev) => { if (!prev.has(e.areaId)) return prev; const next = new Set(prev); next.delete(e.areaId); return next; });
-      fetchArea(currentDigestId, e.areaId).then((d) => {
-        setAreaDetail((prev) => (prev && prev.areaId === e.areaId ? d : prev));
-        if (e.areaId === url.area) setAreaGenerating(false);
-      }, () => { if (e.areaId === url.area) setAreaGenerating(false); });
-    }
+    if (e.done && currentDigestId !== null) settleArea(currentDigestId, e.areaId, false);
   };
   useEffect(() => {
     if (!digest || !(digestUnsettled || anyAreaGenerating)) return undefined;
     return openDigestEvents(digest.id, {
       onChange: () => digestEvents.current.onChange(),
       onProgress: (e) => digestEvents.current.onProgress(e),
+      // The server closes the stream after `done`; one last refetch settles anything whose own
+      // event this stream never carried.
+      onDone: () => digestEvents.current.onChange(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [digest?.id, digestUnsettled, anyAreaGenerating]);
@@ -492,7 +509,13 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     if (currentDigestId === null || url.area === null) return;
     const ac = new AbortController();
     // Cheap GET: never spends the budget. Generating L3 is a separate, explicit user action.
-    fetchArea(currentDigestId, url.area, ac.signal).then(setAreaDetail, (e: unknown) => { if (!ac.signal.aborted) setAreaError(e instanceof Error ? e.message : String(e)); });
+    const areaId = url.area;
+    fetchArea(currentDigestId, areaId, ac.signal).then((d) => {
+      setAreaDetail(d);
+      // An L3 already running server-side (started before a reload, or from another tab): follow
+      // it on the events stream like one started here.
+      if (d.status === 'pending') setGeneratingAreaIds((prev) => (prev.has(areaId) ? prev : new Set(prev).add(areaId)));
+    }, (e: unknown) => { if (!ac.signal.aborted) setAreaError(e instanceof Error ? e.message : String(e)); });
     return () => ac.abort();
   }, [currentDigestId, url.area]);
 
