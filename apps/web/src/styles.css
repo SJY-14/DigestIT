@@ -79,6 +79,16 @@
 *::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); line-height: 1.5; }
 code, .mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; font-size: 12px; }
+/* Inline code spans inside explanation prose (DIG-70), e.g. `--retries`. Distinct from the plain
+   `code` above (file paths, shas): the GitHub-style pill marks it as a quoted identifier within a
+   sentence. `display: inline-block` + `overflow-x: auto` lets a span too long for its line scroll
+   instead of forcing the whole line wide; `nowrap` keeps normal-length spans (the common case) intact. */
+.inline-code {
+  display: inline-block; max-width: 100%; overflow-x: auto; vertical-align: bottom;
+  padding: .1em .4em; border-radius: 6px; background: var(--bg-inset); font-size: 85%; white-space: nowrap;
+}
+/* A bare --flag outside backticks: no code styling, just keeps "--" from wrapping away from its name. */
+.flag { white-space: nowrap; }
 h1, h2, h3 { margin: 0; }
 .app { max-width: 1012px; margin: 0 auto; padding: 0 16px 48px; }
 .app.with-panel { max-width: 1600px; }

@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import type { DigestSummaryDto } from '@digestit/core';
 import { digestRowLabel, lineDelta, pickerCopy, type Lang } from './copy.js';
+import { proseLabel, renderProse } from './prose.js';
 import type { useDigests } from './useDigests.js';
 
 function DigestRow({ d, current, onSelect, onRetry, retrying, retryDisabled, lang }: {
@@ -21,7 +22,7 @@ function DigestRow({ d, current, onSelect, onRetry, retrying, retryDisabled, lan
   return (
     <li className="digest-row">
       <button type="button" className="digest-row-main" aria-current={current ? 'true' : undefined} onClick={onSelect}>
-        <span className="digest-row-label">{digestRowLabel(d.toAt, d.stats.files, d.l0?.text ?? null, Date.now(), lang)}</span>
+        <span className="digest-row-label">{renderProse(digestRowLabel(d.toAt, d.stats.files, d.l0?.text ?? null, Date.now(), lang))}</span>
         <span className="meta">
           <span className="stats">{lineDelta(d.stats.additions, d.stats.deletions)}</span>
           {d.status !== 'ok' && <span className={`badge digest-status ${d.status}`}>{T.status[d.status]}</span>}
@@ -127,11 +128,11 @@ export function DigestPicker({ digests, currentId, onSelect, onRetry, retryingId
         aria-haspopup="true"
         aria-expanded={open}
         aria-controls={panelId}
-        aria-label={`${T.label}: ${current ? digestRowLabel(current.toAt, current.stats.files, current.l0?.text ?? null, Date.now(), lang) : T.choose}`}
+        aria-label={`${T.label}: ${current ? digestRowLabel(current.toAt, current.stats.files, current.l0 ? proseLabel(current.l0.text) : null, Date.now(), lang) : T.choose}`}
         onClick={() => setOpen((o) => !o)}
       >
         <span className="digest-picker-current">
-          {current ? digestRowLabel(current.toAt, current.stats.files, current.l0?.text ?? null, Date.now(), lang) : T.choose}
+          {current ? renderProse(digestRowLabel(current.toAt, current.stats.files, current.l0?.text ?? null, Date.now(), lang)) : T.choose}
         </span>
         {current && current.status !== 'ok' && <span className={`badge digest-status ${current.status}`}>{T.status[current.status]}</span>}
         <span className="caret" aria-hidden="true">▾</span>

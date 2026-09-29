@@ -3,6 +3,7 @@ import { fetchChange, fetchExplanation, type ChangeDetail, type Explanation, typ
 import { annotate, keyLineSet, lineRange, parsePatch, type Annotation } from './diff.js';
 import { shortSha } from './format.js';
 import { LEVELS } from './level.js';
+import { renderProse } from './prose.js';
 
 // All generated text below is rendered as React text nodes (escaped); never as HTML.
 
@@ -36,7 +37,7 @@ function StatusNote({ e }: { e: Explanation }) {
 
 function Text({ e }: { e: Explanation }) {
   const c = rec(e.content);
-  return <p className="l0">{isStr(c.text) ? c.text : ''}</p>;
+  return <p className="l0">{isStr(c.text) ? renderProse(c.text) : ''}</p>;
 }
 
 function Behavior({ e }: { e: Explanation }) {
@@ -45,7 +46,7 @@ function Behavior({ e }: { e: Explanation }) {
   return (
     <>
       <p className="muted">{c.userVisible === true ? 'Visible to users.' : 'No user-visible change.'}</p>
-      <ul>{bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>
+      <ul>{bullets.map((b, i) => <li key={i}>{renderProse(b)}</li>)}</ul>
     </>
   );
 }
@@ -60,7 +61,7 @@ function Structure({ e }: { e: Explanation }) {
         {items.map((it, i) => (
           <li key={i}>
             <code>{String(it.path ?? '')}</code> <span className="muted role">{String(it.role ?? '')}</span>
-            <div>{String(it.change ?? '')}</div>
+            <div>{renderProse(String(it.change ?? ''))}</div>
           </li>
         ))}
       </ul>
@@ -136,7 +137,7 @@ function Note({ a }: { a: Annotation }) {
   return (
     <div className="note" role="note">
       <div className="note-head">{lineRange(a)}</div>
-      <p>{a.note}</p>
+      <p>{renderProse(a.note)}</p>
     </div>
   );
 }
@@ -181,7 +182,7 @@ function Body({ changeId, level }: { changeId: number; level: Level }) {
 export function Panel({ changeId, sha, title, level, onLevel, onClose, children, emptyNote }: {
   changeId: number | null;
   sha: string;
-  title: string;
+  title: ReactNode;
   level: Level;
   onLevel: (l: Level) => void;
   onClose: () => void;
