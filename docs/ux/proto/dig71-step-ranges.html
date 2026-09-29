@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<!--
+  Low-fidelity static mockup for docs/ux/dig71-step-code-mapping.md, proposals P1 (range label +
+  position) and P2 (step-number badge, filled/outline). NOT wired to the app; markup and class
+  names echo apps/web/src/Walkthrough.tsx and styles.css so the shapes are easy to compare, but
+  this file hand-copies color values rather than importing styles.css. Open directly in a browser.
+
+  Each row is one theme (light, then dark); each row has a before column (today's
+  Walkthrough.tsx, reproduced) and an after column (P1 + P2 applied). Content is the ASCII
+  example from the brief: a 6-step area, viewing step 2, which touches 2 hunks in 2 files.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DigestIT — DIG-71 proto: step ↔ code range labels + badges</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; margin: 0; padding: 24px; background: #e9edf1; color: #1f2328; }
+  h1.doc-title { font-size: 16px; margin: 0 0 4px; }
+  p.doc-sub { color: #59636e; margin: 0 0 20px; font-size: 13px; max-width: 70em; }
+  .theme-row { margin-bottom: 32px; }
+  .theme-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: #59636e; margin: 0 0 8px; }
+  .compare { display: flex; gap: 20px; align-items: flex-start; }
+  .col { flex: 1 1 0; min-width: 0; }
+  .col-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 8px; color: #59636e; }
+
+  /* ---- themed frame: light ---- */
+  .frame {
+    --bg: #ffffff; --bg-inset: #f6f8fa; --fg: #1f2328; --muted: #59636e;
+    --border: #d1d9e0; --border-muted: #d9dee3; --accent: #0969da; --accent-solid: #0969da;
+    --add-bg: #dafbe1; --del-bg: #ffebe9; --add-no: #ccffd8; --del-no: #ffd7d5;
+    --hunk-bg: #ddf4ff; --hunk-fg: #0550ae;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 18px;
+  }
+  .frame.dark {
+    --bg: #0d1117; --bg-inset: #151b23; --fg: #f0f6fc; --muted: #9198a1;
+    --border: #3d444d; --border-muted: #262c36; --accent: #4493f8; --accent-solid: #1f6feb;
+    --add-bg: rgba(46,160,67,.15); --del-bg: rgba(248,81,73,.15);
+    --add-no: rgba(63,185,80,.3); --del-no: rgba(248,81,73,.3);
+    --hunk-bg: rgba(56,139,253,.15); --hunk-fg: #9ecbff;
+  }
+
+  .step-n { color: var(--muted); font-weight: 600; margin-right: 4px; }
+  h3.step-title { font-size: 15px; margin: 0 0 4px; display: flex; align-items: center; gap: 6px; }
+  p.step-body { margin: 0 0 10px; color: var(--fg); }
+
+  /* ---- P2: step badge, filled = current, outline = not current ---- */
+  .step-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 700;
+    border: 1.5px solid var(--accent); color: var(--accent); background: transparent; flex: none;
+  }
+  .step-badge.current { background: var(--accent-solid); color: #fff; border-color: var(--accent-solid); }
+
+  .hunk-block { margin: 0 0 10px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .hunk-caption {
+    display: flex; align-items: center; gap: 6px; padding: 4px 10px;
+    background: var(--bg-inset); border-bottom: 1px solid var(--border); font-size: 12px;
+  }
+  .hunk-caption code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .hunk-range { color: var(--muted); }
+  .hunk-pos { margin-left: auto; color: var(--muted); font-size: 11px; }
+
+  table.diff { width: 100%; border-collapse: collapse; font: 12px/20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .diff .no { width: 1%; min-width: 34px; padding: 0 8px; text-align: right; color: var(--muted); user-select: none; white-space: nowrap; }
+  .diff .code { white-space: pre; padding: 0 8px; }
+  .dl.add { background: var(--add-bg); }
+  .dl.add .no { background: var(--add-no); }
+  .dl.del { background: var(--del-bg); }
+  .dl.del .no { background: var(--del-no); }
+  .dl.hunk { background: var(--hunk-bg); color: var(--hunk-fg); }
+  .dl.hunk .no { background: var(--hunk-bg); }
+
+  .other-step { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; margin-top: 14px; }
+
+  .callout { margin-top: 16px; font-size: 12px; color: var(--muted); background: var(--bg-inset); border: 1px solid var(--border-muted); border-radius: 6px; padding: 8px 12px; }
+  .sr-note { margin-top: 10px; font-size: 12px; font-style: italic; color: var(--muted); border-left: 3px solid var(--accent); padding-left: 8px; }
+</style>
+</head>
+<body>
+  <h1 class="doc-title">DIG-71 — step ↔ code range labels + step badge (P1 + P2)</h1>
+  <p class="doc-sub">
+    Content: step 2 of 6, touching one hunk in <code>upload.js</code> and one hunk in
+    <code>cli.js</code>. "Before" reproduces today's <code>Walkthrough.tsx</code> output
+    (figcaption = path only, step number only in the section heading). "After" adds the range +
+    position header on each hunk block and a filled/outline step badge repeated on the block
+    itself, so the block still says "step 2" even if the heading above it has scrolled away.
+  </p>
+
+  <div class="theme-row">
+    <p class="theme-label">Light</p>
+    <div class="compare">
+      <div class="col">
+        <p class="col-label">Before</p>
+        <div class="frame">
+          <h3 class="step-title"><span class="step-n">Step 2</span> Add retry to the upload loop</h3>
+          <p class="step-body">Retries a failed PUT up to <code>--retries</code> times with backoff; other errors still stop the run.</p>
+          <figure class="hunk-block">
+            <figcaption class="hunk-caption"><code>upload.js</code></figcaption>
+            <table class="diff"><tbody>
+              <tr class="dl hunk"><td class="no"></td><td class="no"></td><td class="code">@@ -10,6 +10,14 @@</td></tr>
+              <tr class="dl"><td class="no">10</td><td class="no">10</td><td class="code"></td></tr>
+              <tr class="dl"><td class="no">11</td><td class="no">11</td><td class="code">function upload(file) {</td></tr>
+              <tr class="dl add"><td class="no"></td><td class="no">12</td><td class="code">+  for (let i = 0; i &lt;= retries; i++) {</td></tr>
+              <tr class="dl"><td class="no">12</td><td class="no">13</td><td class="code">    const res = put(file);</td></tr>
+              <tr class="dl add"><td class="no"></td><td class="no">14</td><td class="code">+    if (res.ok || i === retries) return res;</td></tr>
+              <tr class="dl"><td class="no">13</td><td class="no">15</td><td class="code">}</td></tr>
+            </tbody></table>
+          </figure>
+          <figure class="hunk-block">
+            <figcaption class="hunk-caption"><code>cli.js</code></figcaption>
+            <table class="diff"><tbody>
+              <tr class="dl hunk"><td class="no"></td><td class="no"></td><td class="code">@@ -40,3 +40,4 @@</td></tr>
+              <tr class="dl"><td class="no">40</td><td class="no">40</td><td class="code">program.option('--folder &lt;path&gt;');</td></tr>
+              <tr class="dl add"><td class="no"></td><td class="no">41</td><td class="code">+program.option('--retries &lt;n&gt;', 'retry count', 3);</td></tr>
+            </tbody></table>
+          </figure>
+          <p class="other-step"><span class="step-n">Step 3</span> Handle the config file</p>
+          <p class="callout">Nothing on the second block ties it back to "step 2" except vertical position — scrolled mid-block, it reads as an orphan.</p>
+        </div>
+      </div>
+      <div class="col">
+        <p class="col-label">After (P1 + P2)</p>
+        <div class="frame">
+          <h3 class="step-title"><span class="step-badge current">2</span> Add retry to the upload loop</h3>
+          <p class="step-body">Retries a failed PUT up to <code>--retries</code> times with backoff; other errors still stop the run.</p>
+          <figure class="hunk-block">
+            <figcaption class="hunk-caption">
+              <span class="step-badge current">2</span> <code>upload.js</code> <span class="hunk-range">· lines 12–14</span>
+              <span class="hunk-pos">1 of 2 ranges</span>
+            </figcaption>
+            <table class="diff"><tbody>
+              <tr class="dl hunk"><td class="no"></td><td class="no"></td><td class="code">@@ -10,6 +10,14 @@</td></tr>
+              <tr class="dl"><td class="no">10</td><td class="no">10</td><td class="code"></td></tr>
+              <tr class="dl"><td class="no">11</td><td class="no">11</td><td class="code">function upload(file) {</td></tr>
+              <tr class="dl add"><td class="no"></td><td class="no">12</td><td class="code">+  for (let i = 0; i &lt;= retries; i++) {</td></tr>
+              <tr class="dl"><td class="no">12</td><td class="no">13</td><td class="code">    const res = put(file);</td></tr>
+              <tr class="dl add"><td class="no"></td><td class="no">14</td><td class="code">+    if (res.ok || i === retries) return res;</td></tr>
+              <tr class="dl"><td class="no">13</td><td class="no">15</td><td class="code">}</td></tr>
+            </tbody></table>
+          </figure>
+          <figure class="hunk-block">
+            <figcaption class="hunk-caption">
+              <span class="step-badge current">2</span> <code>cli.js</code> <span class="hunk-range">· line 41</span>
+              <span class="hunk-pos">2 of 2 ranges</span>
+            </figcaption>
+            <table class="diff"><tbody>
+              <tr class="dl hunk"><td class="no"></td><td class="no"></td><td class="code">@@ -40,3 +40,4 @@</td></tr>
+              <tr class="dl"><td class="no">40</td><td class="no">40</td><td class="code">program.option('--folder &lt;path&gt;');</td></tr>
+              <tr class="dl add"><td class="no"></td><td class="no">41</td><td class="code">+program.option('--retries &lt;n&gt;', 'retry count', 3);</td></tr>
+            </tbody></table>
+          </figure>
+          <p class="other-step"><span class="step-badge">3</span> Handle the config file</p>
+          <p class="sr-note">aria-live (visually hidden), fired once on entering step 2: "Step 2 of 6, upload.js lines 12–14 and 1 more." Focus moves to the step 2 heading.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="theme-row">
+    <p class="theme-label">Dark</p>
+    <div class="compare">
+      <div class="col">
+        <p class="col-label">Before</p>
+        <div class="frame dark">
+          <h3 class="step-title"><span class="step-n">Step 2</span> Add retry to the upload loop</h3>
+          <p class="step-body">Retries a failed PUT up to <code>--retries</code> times with backoff; other errors still stop the run.</p>
+          <figure class="hunk-block">
+            <figcaption class="hunk-caption"><code>upload.js</code></figcaption>
+            <table class="diff"><tbody>
+              <tr class="dl hunk"><td class="no"></td><td class="no"></td><td class="code">@@ -10,6 +10,14 @@</td></tr>
+              <tr class="dl"><td class="no">11</td><td class="no">11</td><td class="code">function upload(file) {</td></tr>
+              <tr class="dl add"><td class="no"></td><td class="no">12</td><td class="code">+  for (let i = 0; i &lt;= retries; i++) {</td></tr>
+              <tr class="dl"><td class="no">12</td><td class="no">13</td><td class="code">    const res = put(file);</td></tr>
+            </tbody></table>
+          </figure>
+          <figure class="hunk-block">
+            <figcaption class="hunk-caption"><code>cli.js</code></figcaption>
+            <table class="diff"><tbody>
+              <tr class="dl hunk"><td class="no"></td><td class="no"></td><td class="code">@@ -40,3 +40,4 @@</td></tr>
+              <tr class="dl add"><td class="no"></td><td class="no">41</td><td class="code">+program.option('--retries &lt;n&gt;', 'retry count', 3);</td></tr>
+            </tbody></table>
+          </figure>
+        </div>
+      </div>
+      <div class="col">
+        <p class="col-label">After (P1 + P2)</p>
+        <div class="frame dark">
+          <h3 class="step-title"><span class="step-badge current">2</span> Add retry to the upload loop</h3>
+          <p class="step-body">Retries a failed PUT up to <code>--retries</code> times with backoff; other errors still stop the run.</p>
+          <figure class="hunk-block">
+            <figcaption class="hunk-caption">
+              <span class="step-badge current">2</span> <code>upload.js</code> <span class="hunk-range">· lines 12–14</span>
+              <span class="hunk-pos">1 of 2 ranges</span>
+            </figcaption>
+            <table class="diff"><tbody>
+              <tr class="dl hunk"><td class="no"></td><td class="no"></td><td class="code">@@ -10,6 +10,14 @@</td></tr>
+              <tr class="dl"><td class="no">11</td><td class="no">11</td><td class="code">function upload(file) {</td></tr>
+              <tr class="dl add"><td class="no"></td><td class="no">12</td><td class="code">+  for (let i = 0; i &lt;= retries; i++) {</td></tr>
+              <tr class="dl"><td class="no">12</td><td class="no">13</td><td class="code">    const res = put(file);</td></tr>
+            </tbody></table>
+          </figure>
+          <figure class="hunk-block">
+            <figcaption class="hunk-caption">
+              <span class="step-badge current">2</span> <code>cli.js</code> <span class="hunk-range">· line 41</span>
+              <span class="hunk-pos">2 of 2 ranges</span>
+            </figcaption>
+            <table class="diff"><tbody>
+              <tr class="dl hunk"><td class="no"></td><td class="no"></td><td class="code">@@ -40,3 +40,4 @@</td></tr>
+              <tr class="dl add"><td class="no"></td><td class="no">41</td><td class="code">+program.option('--retries &lt;n&gt;', 'retry count', 3);</td></tr>
+            </tbody></table>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
