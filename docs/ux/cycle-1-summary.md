@@ -12,6 +12,15 @@ P5's per-area (not per-digest) marking would actually exercise real state, not a
 edge case. All before/after screenshots referenced below are new, in `docs/ux/screens/`
 (prefixed `dig62-`), or the engineer's own `*-after.png` shots already on `main` from DIG-60.
 
+| Proposal | Before (audit-1) | After |
+|---|---|---|
+| P1 nav in ko | `dark-ko-header-idle.png` | `dig62-dark-ko-header-idle-after.png` |
+| P3 History menu | `history-open.png` | `light-en-history-open-after.png`, `dig62-dark-ko-history-menu-after.png` |
+| P4 focus ring | `focus-digest-picker.png` | none renderable here, see P4 (operator Tab-through) |
+| P2 areas glance / short view | `light-en-L0.png`, `light-en-L3-picker.png` | `dig62-light-en-L0-areas-glance-after.png`, `dig62-light-en-L0-card-lands-on-L2-after.png`, `dig62-dark-ko-header-idle-after.png` (ko) |
+| P5-A reviewed mark | `light-en-L2.png` | `dig62-light-en-L3-reviewed-after.png`, `dig62-light-en-L2-badge-reviewed-after.png`, `dig62-light-en-L2-after-undo-after.png`, `dig62-dark-ko-L3-walkthrough-after.png` (ko toggle) |
+| P6 welcome back | `light-en-L0.png` | `dig62-light-en-L0-welcome-back-1440-after.png`, `-1280-after.png`, `dig62-light-en-welcome-back-cta-opens-picker-after.png` |
+
 ## P1 — localize the top nav — holds
 
 `dig62-dark-ko-header-idle-after.png` (matches the already-committed
@@ -32,30 +41,41 @@ a `title` tooltip — confirmed by reading the rendered DOM, not just the screen
 ## P4 — focus visibility and contrast — holds, with a testing-loop limitation noted
 
 - Confirmed in the merged diff: `.digest-row-main:focus-visible` no longer sets `outline: none`,
-  so it now gets the same global ring as everything else. `grep`ing `styles.css` for
-  `outline: none` on main finds nothing else — no new bespoke exception was introduced.
+  so it now gets the same global ring as everything else. The only `outline: none` left in
+  `styles.css` is `.graph-node:focus` (from DIG-50), which draws its own SVG `.graph-focus-ring`
+  in `var(--focus)` instead; no new exception was introduced. (CTO review correction: the
+  first draft said no `outline: none` was left at all.)
 - **Contrast, recomputed from the live page's `getComputedStyle`, not just the source file**:
   `--focus` (`#0969da` light / `#4493f8` dark) against `--bg` is **5.19:1 (light)** and
-  **6.11:1 (dark)** — both comfortably clear of the WCAG 1.4.11 3:1 non-text threshold, and against
-  `--hover`/`--selected` (both very close to `--bg`) the ring's contrast doesn't meaningfully
-  drop. This directly answers the "recheck the contrast numbers" ask: the fix is correct, not
-  just "should be."
+  **6.11:1 (dark)**, both well above the WCAG 1.4.11 3:1 non-text threshold. Against the other
+  surfaces a focused element can sit on it stays above 3:1: light `--hover` 4.72, `--selected`
+  4.56, `--bg-inset` 4.88; dark `--hover` 5.59, `--selected` 4.64. (Recomputed in CTO review.)
 - **Icon-only triggers** (zoom `−`/`+` = `.graph-zoom`, digest-picker `▾`, info `ⓘ`): none of them
   override the global `:focus-visible` rule, so they inherit the same ring and the same passing
   contrast — no separate fix was needed once P4(a) landed globally.
-- **What I could not verify, and why**: I could not get a real `:focus-visible` ring to *render*
-  in a screenshot, even using WebDriver BiDi's `input.performActions` to send a trusted Tab
-  keypress (not just `element.focus()`). Checked directly: `document.hasFocus()` returns `false`
-  for the entire session, always — this headless Firefox's top-level browsing context never gets
-  OS window focus at all, so `:focus` (and therefore `:focus-visible`) cannot match on anything,
-  regardless of how the focus was set. This sharpens brief-1.md's existing caveat ("may lack OS
-  focus") into a confirmed fact rather than a suspicion. To still show what the ring looks like
-  when it does render, I temporarily mirrored the app's own `:focus-visible` CSS rules onto
-  `:focus` (same selectors, same `var(--focus)` token, nothing invented) and screenshotted those:
-  `dig62-light-en-focusring-picker-trigger.png`, `-digest-row.png`, `-graph-zoom.png`. They confirm
-  the ring is visible and well clear of both light and dark backgrounds. This is evidence the CSS
-  is correct, **not** a substitute for the operator's real Tab-through the decision already calls
-  for — that step still stands and should happen once the CTO reads this.
+- **What could not be verified here, and why**: no `:focus-visible` ring could be made to
+  *render* in a screenshot, even using WebDriver BiDi's `input.performActions` to send a trusted
+  Tab keypress (not just `element.focus()`). Checked directly: `document.hasFocus()` returns
+  `false` for the entire session — this headless Firefox's top-level browsing context never gets
+  OS window focus, so `:focus`/`:focus-visible` never match. This turns brief-1.md's caveat
+  ("may lack OS focus") into a confirmed fact. A first attempt to mirror the app's
+  `:focus-visible` rules onto `:focus` for screenshots also rendered no ring (same cause), so
+  those shots were dropped in CTO review rather than kept as evidence. The ring is therefore
+  verified by source and computed contrast only; the operator's real Tab-through is the
+  authoritative check.
+
+## Keyboard-only pass — structure checked here, walk-through goes to the operator
+
+Checked in the DOM and source: every new control is a native, focusable element. Area cards and
+the welcome-back CTA are `<button>`s, the reviewed toggle is a `<button aria-pressed>` with a
+text label, and History menu items are `<a role="menuitem">` links. Escape closes both the History
+menu and the digest picker, so Tab/Enter/Space/Escape reach everything without custom key
+handling. The `0`–`3` level keys and `n`/`p` step keys are still wired (`Reader.tsx` key map),
+and the ko walkthrough shows the localized hint (`dig62-dark-ko-L3-walkthrough-after.png`).
+What this sandbox cannot show is where the ring lands on each Tab stop, so the operator's
+Tab-through covers: nav → History menu (open, Tab through items, Escape) → digest picker →
+welcome-back CTA → area cards (Enter lands on L2) → L3 reviewed toggle (Space/Enter, then undo)
+→ graph zoom buttons, in light and dark.
 
 ## P2 — areas-in-this-digest + short-view CSS — holds
 
@@ -115,9 +135,9 @@ this profile's first load, as expected). Held at 1280×800
    `document.hasFocus()` is `false` for the whole session, confirmed directly, not inferred from a
    missing ring in a screenshot. Worth writing into whatever runs this loop next: don't ask the
    Reviewer to "try harder" at a headless focus screenshot — route it to the operator immediately,
-   the way this cycle's decision already did. The CSS-mirror technique above is a reasonable
-   stand-in for "does this token/rule combination look right," but it is not a substitute for a
-   real Tab-through and shouldn't be reported as one.
+   the way this cycle's decision already did. Mirroring `:focus-visible` onto `:focus` does not help either (`:focus`
+   needs document focus too), and the shots it produced showed no ring. Check a screenshot for the
+   thing it claims to show before citing it as evidence.
 3. **Testing a "returning visit" feature needs a way to advance state without going through the
    UI the feature is trying to fix.** P6 only shows up for a genuinely stale visit; the natural
    way to create a second digest (click Explain) also marks it seen. Calling the project's
@@ -144,3 +164,6 @@ this profile's first load, as expected). Held at 1280×800
 - **A real (non-headless) focus-visible check as a repeatable step**, not a one-off operator ask —
   see the testing-loop note above. Even a manual checklist the operator re-runs every cycle would
   catch a future regression that this sandbox structurally cannot.
+- **Arrow-key support in the History menu**: it uses `role="menu"`/`menuitem`, which tells
+  screen readers to expect Up/Down arrows, but only Tab and Escape are handled. Either add arrow
+  keys or drop the menu roles (plain links in a disclosure). Small; found in CTO review.
