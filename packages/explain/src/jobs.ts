@@ -11,9 +11,9 @@
 // of that same result for one area. Both keep the signature DIG-74 will fill in with real per-area
 // calls; nothing above them (the job runner, SSE, retry, restart recovery) needs to change then.
 import type { DatabaseSync } from 'node:sqlite';
-import type { AreaWalkthrough, DigestL2Content, ExplainLanguage } from '@digestit/core';
+import type { AreaWalkthrough, DigestAreaSkeleton, DigestL2Content, DigestL2Item, ExplainLanguage } from '@digestit/core';
 import { explainArea, type ExplainAreaOptions } from './area.js';
-import { explainDigest, type ExplainDigestOptions } from './digest.js';
+import { DIGEST_PROMPT_VERSION, explainDigest, type ExplainDigestOptions } from './digest.js';
 import type { ExplanationProvider } from './provider.js';
 
 export type ExplainJobKind = 'explain' | 'retry' | 'area' | 'context';
@@ -85,6 +85,35 @@ export interface PartCallOptions {
   job: JobRef;
   context?: string;
   language?: ExplainLanguage;
+  /** The digest's deterministic areas (`groupDigestAreas`). `explainDigestSummary` uses these to
+   * remap the model's own L2 item ids onto the skeleton's ids (by file overlap), so the
+   * `l2.items[].id === areas[].id` invariant (`DigestDetailDto.areas` in v2.ts) holds even though
+   * the model was never told which ids to use; `explainDigestAreaText` needs matching ids to find
+   * an area's text at all. DIG-74's real per-area call makes this remap unnecessary (each call is
+   * already scoped to one skeleton area's own id). */
+  areas?: readonly DigestAreaSkeleton[];
+}
+
+/** Renames each L2 item's id to the skeleton area it shares the most files with (greedy, each
+ * skeleton area used at most once); an item with no overlap at all keeps its own id. */
+function remapToSkeletonIds(l2: DigestL2Content, areas: readonly DigestAreaSkeleton[]): DigestL2Content {
+  const used = new Set<string>();
+  const items: DigestL2Item[] = l2.items.map((item) => {
+    let best: DigestAreaSkeleton | undefined;
+    let bestScore = 0;
+    for (const a of areas) {
+      if (used.has(a.id)) continue;
+      const score = item.paths.filter((p) => a.paths.includes(p)).length;
+      if (score > bestScore) {
+        bestScore = score;
+        best = a;
+      }
+    }
+    if (!best) return item;
+    used.add(best.id);
+    return { ...item, id: best.id };
+  });
+  return { ...l2, items };
 }
 
 /** See the file header: today this is the one combined L0+L1+L2 call; DIG-74 replaces the body
@@ -96,6 +125,16 @@ export async function explainDigestSummary(
     context: opts.context, language: opts.language, budget: Number.MAX_SAFE_INTEGER, now: opts.job.now,
   };
   const r = await explainDigest(db, changeUnitId, provider, digestOpts);
+  if ((r.outcome === 'ok' || r.outcome === 'truncated') && opts.areas && opts.areas.length > 0) {
+    const row = db.prepare(
+      "SELECT content FROM explanation WHERE change_unit_id = ? AND level = 2 AND prompt_version = ?",
+    ).get(changeUnitId, DIGEST_PROMPT_VERSION) as { content: string } | undefined;
+    if (row) {
+      const remapped = remapToSkeletonIds(JSON.parse(row.content) as DigestL2Content, opts.areas);
+      db.prepare("UPDATE explanation SET content = ? WHERE change_unit_id = ? AND level = 2 AND prompt_version = ?")
+        .run(JSON.stringify(remapped), changeUnitId, DIGEST_PROMPT_VERSION);
+    }
+  }
   return { outcome: r.outcome === 'budget' ? 'error' : r.outcome, calls: r.calls, detail: r.detail };
 }
 
