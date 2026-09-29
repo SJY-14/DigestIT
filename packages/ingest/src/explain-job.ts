@@ -285,8 +285,13 @@ export class ExplainJobRunner {
     await Promise.allSettled(promises);
     finishJob(this.db, jobId, this.now);
     releaseProjectLock(opts.dataDir);
+    // Capture the listeners before dropping the live state, so the final notification -- the one
+    // a subscriber (the SSE route) uses to decide `isDone` and send `done` -- is not silently
+    // swallowed by `emitParts` finding no state to read listeners from.
+    const { listeners } = state;
     this.jobs.delete(changeUnitId);
-    this.emitParts(changeUnitId);
+    const finalDto = this.getParts(changeUnitId);
+    if (finalDto) listeners.forEach((cb) => cb(finalDto));
   }
 
   /** `POST /api/digests/:id/areas/:areaId/explain`: the L3 walkthrough is already a genuinely
