@@ -33,20 +33,15 @@ expected — the stub provider returns fixed fixture text regardless of prompt c
 **Duplicate screenshots, explained (not evidence tampering):** `header-running`,
 `header-running-later`, `header-after` and the first level view are pixel-identical within a run,
 in both before and after — the stub explain completes near-instantly, so by the time the script's
-5s/7s sleeps elapse the UI has already landed. Same for `L3-step1`/`L3-step2` in every run: the
-second `n` keypress doesn't advance `step` in the URL (`log.txt` shows the same
-`step=1` after both presses). This is pre-existing in both before and after, so it's not a
-DIG-65/66 regression; flagged here rather than treated as a new bug.
+5s/7s sleeps elapse the UI has already landed. Same for `L3-step1`/`L3-step2`: the
+README.md area the kit opens has one hunk, so the walkthrough is overview + step 1, and the
+second `n` has no further step to move to. That is expected, not a bug.
 
-**Unrelated bug found during this pass (not AI-look, filed separately):** in the dark-Korean
-sequence, after generating a fresh L3 walkthrough for the second digest, the whole page renders
-in the light palette instead of dark — nav, header and breadcrumb included, not just the diff
-block. Reproduces identically on `ac9ff55` and `94851fc`
-(`docs/ux/screens/dig67-dark-ko-L3-walkthrough-{before,after}-BUG-DIG68.png`, contrast with
-`dig67-dark-ko-header-idle-after.png` and `dig67-dark-ko-L2-after.png` from the *same* session,
-which are correctly dark). Filed as **DIG-68** (medium, assigned to the CTO for triage) with the
-repro steps and my working notes; out of scope for DIG-65/66/67 since it's CSS theming, not
-copy or generated text, and predates this work.
+**Dark-mode report withdrawn (DIG-68):** the first draft of this pass reported that the dark-Korean
+L3 walkthrough rendered in the light palette and filed DIG-68. The cited screenshots
+(`docs/ux/screens/dig67-dark-ko-L3-walkthrough-{before,after}.png`) are in fact dark: mean
+luminance 27, the same as `dig67-dark-ko-header-idle-after.png` and `dig67-dark-ko-L2-after.png`
+(light-theme shots measure about 247). DIG-68 was closed as not reproducible.
 
 ## 2. Lint counts
 
@@ -68,7 +63,7 @@ reproduced here, not copied).
   case for the opener rule and the repeated-opener counter. Not a false positive; nothing to file
   against DIG-65.
 - Golden `ko`: read all four area overviews and the L0/L1 text by hand — clean, no missed
-  hedges/marketing/폐사체 patterns that the lint should have caught. Matches the reported 0.
+  hedges/marketing/번역투 patterns that the lint should have caught. Matches the reported 0.
 - The stored real-provider DB (2 digests — en "add `--retries`", ko "add `--dry-run`" — with
   L0/L1/L2, 2 area walkthroughs, 2 project-context rows, all `status='ok'`) genuinely reads
   clean by hand: no boilerplate openers, no hedges, no marketing words, concrete engineering
@@ -86,7 +81,7 @@ this verify. Left as a placeholder above.
 
 ## 3. Blind read
 
-Five explanations from the stored real-provider DB (§2), across levels and both languages. Would
+Five explanations from the stored real-provider DB (§2; a claude-code run over the synthetic `snapback` project), across levels and both languages. Would
 each pass as written by a senior engineer reviewing a teammate's diff?
 
 1. **L0, en** — *"Backups now retry temporary server failures and continue past failed files, so
@@ -126,16 +121,8 @@ positives and no missed cases, the screenshot pass found no visual/copy regressi
 blind read passed 5/5. DIG-66's copy fixes for the project-setup form (`setupCopy`, `T.pagesLabel`)
 couldn't be exercised by this screenshot pass (see §1) but are correct by code/diff reading.
 
-One unrelated bug was found and filed as **DIG-68** (dark-mode L3 walkthrough regression,
-pre-existing, out of scope for DIG-63/65/66/67).
-
 ## 5. What's left
 
 - **DIG-63 step 6** (operator real-provider run): needed to fill the "after" row in §2's
   real-provider table. Not blocking; can run independently of this issue closing.
-- **DIG-68**: dark-mode bug found during this pass, filed separately, needs a frontend engineer
-  to root-cause (my own minimal repro attempt didn't isolate the trigger cleanly — see the issue
-  for what's ruled in/out).
 - No further DIG-65/66 rework requested.
-
-Branch `DIG-67-ai-look-verify`, worktree `.cache/DIG-67-ai-look-verify` (off `main @ 94851fc`).
