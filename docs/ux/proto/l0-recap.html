@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<!--
+  Low-fidelity static mockup for docs/ux/brief-1.md, proposals P2 (areas-at-a-glance) and
+  P6 (welcome-back recap). NOT wired to the app; class names echo apps/web/src/styles.css
+  and Reader.tsx so the shapes are easy to compare, but colors/spacing are hand-copied, not
+  imported. Open directly in a browser. Left column = before (today's light-en-L0.png,
+  reproduced); right column = after (both proposals applied).
+
+  Revised per docs/ux/critique-1.md (round 1): the P6 strip's CTA now reads "Open digest list"
+  with the DigestPicker's own caret glyph (opens the real digest-list overlay), not "See all 3 ↓"
+  (which implied an in-page scroll to content that isn't there). P2's cards are now real <button>
+  elements (matching AreaPicker's pattern) labeled "Open area →" (lands on L2 with the area
+  pre-selected), not "Walk through →" (which implied jumping straight to L3).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DigestIT — L0 proto: recap strip + areas-at-a-glance</title>
+<style>
+  :root {
+    --bg: #ffffff; --bg-inset: #f6f8fa; --fg: #1f2328; --muted: #59636e;
+    --border: #d1d9e0; --border-muted: #d9dee3; --accent: #0969da; --accent-solid: #0969da;
+    --add: #1a7f37; --del: #cf222e; --selected: #ddf4ff;
+  }
+  * { box-sizing: border-box; }
+  body { font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; color: var(--fg); background: #eaeef2; margin: 0; padding: 24px; }
+  h1.doc-title { font-size: 16px; margin: 0 0 4px; }
+  p.doc-sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+  .compare { display: flex; gap: 24px; align-items: flex-start; }
+  .col { flex: 1 1 0; min-width: 0; }
+  .col-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
+  .frame { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 20px; }
+
+  .l0-headline { font-size: 28px; line-height: 1.3; font-weight: 600; max-width: 42em; margin: 0; }
+  .l0-stats { margin: 10px 0 0; font-size: 14px; }
+  .l0-stats .add { color: var(--add); } .l0-stats .del { color: var(--del); }
+  .next-level { margin: 24px 0 0; }
+  .btn { border: 1px solid var(--border); background: var(--bg-inset); border-radius: 6px; padding: 3px 12px; height: 28px; cursor: pointer; font: inherit; color: inherit; }
+  .empty-block { height: 300px; border-top: 1px dashed var(--border-muted); margin-top: 24px; display: flex; align-items: center; justify-content: center; color: var(--border); font-size: 12px; }
+
+  /* --- recap strip (P6) --- */
+  .recap-strip { display: flex; align-items: center; gap: 10px; background: var(--bg-inset); border: 1px solid var(--border-muted); border-radius: 6px; padding: 8px 12px; margin: 0 0 16px; font-size: 13px; }
+  .recap-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-solid); flex: none; }
+  .recap-text strong { font-weight: 600; }
+  .recap-strip .btn { margin-left: auto; height: 24px; padding: 2px 10px; font-size: 12px; }
+
+  /* --- areas-at-a-glance (P2) --- */
+  .areas-glance-label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin: 28px 0 10px; border-top: 1px solid var(--border-muted); padding-top: 16px; }
+  .area-glance-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  /* Real <button> per critique (must match AreaPicker's accessible-card pattern, not a bare <li>). */
+  .area-glance-card { display: block; width: 100%; text-align: left; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; cursor: pointer; }
+  .area-glance-card:hover { border-color: var(--accent); }
+  .area-glance-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .area-glance-title { font-size: 13px; font-weight: 600; margin: 0; }
+  .area-glance-meta { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+  .area-glance-open { color: var(--accent); font-size: 12px; font-weight: 600; margin-top: 6px; display: block; }
+
+  .callout { margin-top: 20px; font-size: 12px; color: var(--muted); background: #fff8e6; border: 1px solid #d4a72c33; border-radius: 6px; padding: 8px 12px; }
+</style>
+</head>
+<body>
+  <h1 class="doc-title">L0 — before / after (P2 areas-at-a-glance + P6 welcome-back recap)</h1>
+  <p class="doc-sub">Reading-pane column only, ~860px, light theme. Graph pane (right column, unchanged by these proposals) omitted here — see docs/ux/screens/light-en-L0.png for the full page.</p>
+  <div class="compare">
+    <div class="col">
+      <p class="col-label">Before — main @ 456f674</p>
+      <div class="frame">
+        <h2 class="l0-headline">Stub summary of work in top-level files, src and test, written without reading the code.</h2>
+        <p class="l0-stats">6 files · <span class="add">+85</span> <span class="del">-16</span> · Today, 09:13 → Today, 09:13</p>
+        <p class="next-level"><button class="btn" type="button">Next: L1 Impact →</button></p>
+        <div class="empty-block">≈420px of unused height at 1440×900<br>(reading pane stretches to match the graph pane)</div>
+      </div>
+    </div>
+    <div class="col">
+      <p class="col-label">After — P6 recap (returning visit) + P2 areas-at-a-glance</p>
+      <div class="frame">
+        <div class="recap-strip">
+          <span class="recap-dot" aria-hidden="true"></span>
+          <span class="recap-text"><strong>3 digests</strong> since you last looked, 2h ago · 18 files total — you're viewing the newest</span>
+          <button class="btn" type="button">Open digest list ▾</button>
+        </div>
+        <h2 class="l0-headline">Stub summary of work in top-level files, src and test, written without reading the code.</h2>
+        <p class="l0-stats">6 files · <span class="add">+85</span> <span class="del">-16</span> · Today, 09:13 → Today, 09:13</p>
+        <p class="next-level"><button class="btn" type="button">Next: L1 Impact →</button></p>
+        <p class="areas-glance-label">Areas in this digest</p>
+        <ul class="area-glance-grid">
+          <li>
+            <button type="button" class="area-glance-card">
+              <p class="area-glance-title">README.md</p>
+              <p class="area-glance-meta">1 file · +5 −1</p>
+              <span class="area-glance-open">Open area →</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="area-glance-card">
+              <p class="area-glance-title">cli.js, config.js +2 more</p>
+              <p class="area-glance-meta">4 files · +60 −14</p>
+              <span class="area-glance-open">Open area →</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="area-glance-card">
+              <p class="area-glance-title">upload.test.js</p>
+              <p class="area-glance-meta">1 file · +20 −1</p>
+              <span class="area-glance-open">Open area →</span>
+            </button>
+          </li>
+        </ul>
+        <p class="callout">Recap strip only renders when a project has more than one unread digest since the browser's last-seen marker (localStorage, per project) — first-time visitors and single-digest returns see just the areas module, no strip. First-time projects (no digests yet) are unaffected — the existing empty state stands. The strip is reassurance-first: you're already viewing the newest digest; "Open digest list" opens the real DigestPicker overlay for anyone who also wants to open the 2 older ones, it isn't a required step. "Open area" cards land on L2 with that area pre-selected, not straight on L3.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
