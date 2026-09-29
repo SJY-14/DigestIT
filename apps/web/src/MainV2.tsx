@@ -20,7 +20,7 @@ import {
   StructureView, SummaryView,
 } from './Reader.js';
 import {
-  apiErrorMessage, emptyCopy, explainOutcomeMessage, graphCopy, headerCopy, ignoreCopy, levelsCopy, readerCopy, resetsLabel,
+  apiErrorMessage, emptyCopy, explainOutcomeMessage, graphCopy, headerCopy, ignoreCopy, levelsCopy, readerCopy,
   setupCopy, walkthroughCopy, welcomeBackCopy,
 } from './copy.js';
 import { relativeTime } from './format.js';
@@ -327,6 +327,10 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   // keyed by area id, so a walkthrough being generated in the background keeps its place even if
   // the reader looks at a different area and comes back.
   const [areaProgress, setAreaProgress] = useState<Record<string, Pick<AreaProgressEvent, 'overview' | 'steps'>>>({});
+  // Area ids with a walkthrough generation in flight server-side, independent of which area is
+  // currently open (navigating away must not stop a background generation, and must not drop the
+  // SSE connection carrying its `area-progress` events — see the events effect below).
+  const [generatingAreaIds, setGeneratingAreaIds] = useState<Set<string>>(new Set());
   const [hoverAreaId, setHoverAreaId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [announce, setAnnounce] = useState('');
@@ -401,11 +405,14 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   // Fast Explain (DIG-73/76): live progress for the open digest. `onChange`/`onProgress` are read
   // through a ref so a state update elsewhere (e.g. the digest itself refetching) never tears the
   // connection down and reopens it — that would drop an area-progress stream mid-walkthrough. The
-  // effect below re-subscribes only when the digest id changes or `digestUnsettled` flips, not on
-  // every `parts` refetch in between (those keep the same boolean and are ignored here); an
-  // old-contract digest (no `areas`/`parts`) never had an events endpoint to poll, and a fully
-  // settled one has nothing left to stream — until a retry flips a part back to `pending`.
+  // effect below re-subscribes only when the digest id changes or `digestUnsettled`/`anyAreaGenerating`
+  // flips, not on every `parts` refetch in between; an old-contract digest (no `areas`/`parts`)
+  // never had an events endpoint to poll. A digest whose own parts are all settled still needs the
+  // stream open while an area's L3 is generating (the common case: L3 is generated on demand, long
+  // after the digest itself landed) — `generatingAreaIds` tracks that independently of which area
+  // is currently open, since navigating away must not stop a background generation.
   const digestUnsettled = digest?.parts ? !partsSettled(digest.parts) : false;
+  const anyAreaGenerating = generatingAreaIds.size > 0;
   const digestEvents = useRef({
     onChange: () => undefined as void,
     onProgress: (_e: AreaProgressEvent) => undefined as void,
@@ -417,6 +424,7 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   digestEvents.current.onProgress = (e: AreaProgressEvent) => {
     setAreaProgress((prev) => ({ ...prev, [e.areaId]: { overview: e.overview, steps: e.steps } }));
     if (e.done && currentDigestId !== null) {
+      setGeneratingAreaIds((prev) => { if (!prev.has(e.areaId)) return prev; const next = new Set(prev); next.delete(e.areaId); return next; });
       fetchArea(currentDigestId, e.areaId).then((d) => {
         setAreaDetail((prev) => (prev && prev.areaId === e.areaId ? d : prev));
         if (e.areaId === url.area) setAreaGenerating(false);
@@ -424,13 +432,13 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     }
   };
   useEffect(() => {
-    if (!digest || !digestUnsettled) return undefined;
+    if (!digest || !(digestUnsettled || anyAreaGenerating)) return undefined;
     return openDigestEvents(digest.id, {
       onChange: () => digestEvents.current.onChange(),
       onProgress: (e) => digestEvents.current.onProgress(e),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [digest?.id, digestUnsettled]);
+  }, [digest?.id, digestUnsettled, anyAreaGenerating]);
 
   // Hydrates the P5-A reviewed marks for this digest's areas from storage (cheap: a handful of
   // areas per digest, each one localStorage read).
@@ -490,20 +498,23 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
 
   const onGenerateArea = useCallback(() => {
     if (currentDigestId === null || url.area === null) return;
+    const areaId = url.area;
     const ac = new AbortController();
     generateRef.current?.abort();
     generateRef.current = ac;
     setAreaGenerating(true);
-    setAreaProgress((prev) => { const { [url.area!]: _drop, ...rest } = prev; return rest; });
-    explainArea(currentDigestId, url.area, ac.signal).then(
+    setAreaProgress((prev) => { const { [areaId]: _drop, ...rest } = prev; return rest; });
+    explainArea(currentDigestId, areaId, ac.signal).then(
       (d) => {
         if (ac.signal.aborted) return;
         setAreaDetail(d);
         // Fast Explain (DIG-75+): the POST answers right away with a `pending` shell; the real
         // walkthrough streams in as `area-progress` and lands via that stream's `done` handler
-        // below, which clears `areaGenerating`. An old-contract server already returns the final
-        // result here, so this is the only place that finishes in that case.
+        // above, which clears `areaGenerating` and `generatingAreaIds`. An old-contract server
+        // already returns the final result here, so this is the only place that finishes in that
+        // case — nothing was added to `generatingAreaIds`, so there is nothing to remove.
         if (d.status !== 'pending') setAreaGenerating(false);
+        else setGeneratingAreaIds((prev) => new Set(prev).add(areaId));
         refreshStatus();
       },
       // The area is already loaded, so the walkthrough shows its own error + Try again rather
@@ -573,11 +584,10 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
           setExplainNotice(explainOutcomeMessage('no_changes', undefined, '', lang));
           return;
         }
-        // The digest exists but the budget ran out before it was explained: it lands anyway, and
-        // the header says when calls come back.
-        if (r.status === 'pending') {
-          setExplainNotice(explainOutcomeMessage('budget', undefined, resetsLabel(r.budget.resetsAt, Date.now(), lang), lang));
-        }
+        // Fast Explain (DIG-75+): the POST always answers with `status: 'pending'` right away —
+        // that is the normal immediate-return outcome now, not a budget signal. A part that
+        // genuinely runs out of budget lands with its own `status: 'budget'` once the digest opens
+        // (Reader.tsx's `PartRetry`), which is where that case is surfaced.
         if (r.digestId !== null) {
           digests.reload();
           // A new digest after Explain lands at L0 (docs/ux-v3.md §1).

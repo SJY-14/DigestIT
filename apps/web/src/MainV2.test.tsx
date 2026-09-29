@@ -720,13 +720,14 @@ describe('MainV2: Explain (DIG-49)', () => {
     expect(host.querySelector('.notice[role="status"]')?.textContent).toContain('Nothing changed since the last check.');
   });
 
-  it('lands on the digest and says the budget ran out when it could not be explained', async () => {
+  it('lands on the digest without a false "budget ran out" banner (Fast Explain, DIG-76: `status: \'pending\'` is the normal immediate-return outcome, not a budget signal)', async () => {
     const other = fixtureDigestPage.items.find((d) => d.id !== fixtureDigest.id)!;
-    explainReplies({ status: 200, body: { noChanges: false, digestId: other.id, status: 'pending', budget: { ...fixtureStatus.budget, remaining: 0 } } });
+    explainReplies({ status: 200, body: { noChanges: false, digestId: other.id, status: 'pending', budget: fixtureStatus.budget } });
     await render(<MainV2 />);
     await pressExplain();
     await waitFor(() => params().get('digest') === String(other.id));
-    expect(host.querySelector('.reader-top .notice[role="status"]')?.textContent).toContain('The daily budget ran out');
+    await waitFor(() => host.querySelector('.l0-headline') !== null);
+    expect(host.querySelector('.reader-top .notice[role="status"]')).toBeNull();
   });
 });
 
@@ -899,6 +900,30 @@ describe('MainV2: Fast Explain (DIG-76)', () => {
     await waitFor(() => host.querySelector('.check') !== null);
     expect(host.querySelectorAll('section.step')).toHaveLength(1);
     expect(host.querySelector('.walkthrough')).toBeTruthy(); // still the same reading pane, not re-mounted elsewhere
+  });
+
+  it('generating an area L3 after the digest itself has already settled still opens an SSE stream for it', async () => {
+    // The common case: the digest's own L0/L1/L2 parts landed (and any earlier SSE connection for
+    // them closed) well before the reader clicks into an area's L3, often on a later visit.
+    fastDigest = fixtureDigestDone;
+    fastArea = { ...fixtureStreamingArea, status: 'none', l3: null };
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigestDone.id}&level=3&area=apps-web`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.notice.generate') !== null);
+
+    fastArea = fixtureStreamingArea;
+    await click(host.querySelector('.notice.generate button'));
+    await waitFor(() => calls.some((c) => c.url.endsWith('/areas/apps-web/explain') && c.method === 'POST'));
+    // No SSE connection existed yet (the digest was already fully settled at render); generating
+    // an area must open one rather than leaving the walkthrough stuck on "Writing…" forever.
+    await waitFor(() => FakeES.last !== undefined && !FakeES.last.closed);
+
+    for (const step of fixtureAreaProgressSteps.slice(0, 3)) await act(async () => FakeES.last.emit('area-progress', step));
+    await waitFor(() => host.querySelector('section.step .step-body') !== null);
+
+    fastArea = fixtureStreamingAreaFinal;
+    await act(async () => FakeES.last.emit('area-progress', fixtureAreaProgressSteps[3]));
+    await waitFor(() => host.querySelector('.check') !== null);
   });
 
   it('falls back to polling GET /api/digests/:id every 2s when the SSE connection errors', async () => {
