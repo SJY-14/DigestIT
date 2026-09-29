@@ -52,7 +52,7 @@ class Recording implements ExplanationProvider {
 type Db = ReturnType<typeof openDb>;
 let db: Db;
 let provider: Recording;
-const calls = () => db.prepare('SELECT * FROM explain_call ORDER BY id').all() as any[];
+const calls = () => db.prepare('SELECT id, at, change_unit_id, reason, duration_ms, outcome FROM explain_call ORDER BY id').all() as any[];
 const sync = async () => { await ingestRepo(db, dir, { landedEvents: true }); await syncWorkUnits(db, dir, { now: () => clock }); };
 const sched = (o: Partial<ConstructorParameters<typeof ExplainScheduler>[2]> = {}) =>
   new ExplainScheduler(db, provider, { repoPath: dir, now: () => clock, ...o });

@@ -13,7 +13,7 @@ const tables = (db: ReturnType<typeof openDb>) =>
 describe('migrate', () => {
   it('creates the architecture tables', () => {
     const db = openDb(':memory:');
-    expect(tables(db)).toEqual(['area_explanation', 'change_unit', 'checkpoint', 'commit_', 'digest', 'explain_call', 'explanation', 'file_change', 'project_context', 'repo', 'rollup', 'unit_commit', 'unit_event', 'work_unit', 'worktree_state']);
+    expect(tables(db)).toEqual(['area_explanation', 'change_unit', 'checkpoint', 'commit_', 'digest', 'explain_call', 'explain_job', 'explanation', 'file_change', 'project_context', 'repo', 'rollup', 'unit_commit', 'unit_event', 'work_unit', 'worktree_state']);
   });
 
   it('is idempotent and records the version', () => {
@@ -110,5 +110,18 @@ describe('migrate', () => {
     expect(() => db.exec("UPDATE digest SET language = 'fr' WHERE change_unit_id = 10")).toThrow();
     db.exec("UPDATE repo SET language = 'ko' WHERE name = 'p'");
     expect(db.prepare('SELECT language FROM repo WHERE name = ?').get('p')).toEqual({ language: 'ko' });
+  });
+
+  it('DIG-73: explain_job, per-call timing columns on explain_call, digest.areas', () => {
+    const db = openDb(':memory:');
+    const cols = (t: string) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name);
+    expect(cols('explain_call')).toEqual(expect.arrayContaining(
+      ['job_id', 'part', 'model', 'effort', 'startup_ms', 'ttft_ms', 'gen_ms', 'input_tokens', 'output_tokens'],
+    ));
+    expect(cols('digest')).toContain('areas');
+    const job = db.prepare("INSERT INTO explain_job (kind, started_at) VALUES ('explain', '2026-09-29T00:00:00Z')").run();
+    db.prepare("INSERT INTO explain_call (at, reason, outcome, job_id, part) VALUES ('2026-09-29T00:00:01Z', 'digest', 'ok', ?, 'summary')")
+      .run(job.lastInsertRowid);
+    expect(() => db.exec("INSERT INTO explain_job (kind, started_at) VALUES ('other', 'x')")).toThrow();
   });
 });
