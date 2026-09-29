@@ -83,6 +83,42 @@ export function levelsCopy(lang: Lang = 'en') {
   return lang === 'ko' ? LEVELS_KO : LEVELS_EN;
 }
 
+// --- Setup form and project-list guards (DIG-40/49): shown before any project is selected, so
+// there is no project language yet — these are always English (see the `lang` comment on MainV2's
+// `lang` const) and the calls below never pass one, matching every other lang-less call site.
+
+const SETUP_EN = {
+  projectFolderLabel: 'Project folder',
+  projectFolderPlaceholder: '/path/to/project',
+  contextFileLabel: 'Context file (optional)',
+  contextFilePlaceholder: '/path/to/context.md',
+  starting: 'Starting…',
+  start: 'Start',
+  projectsLoadError: (msg: string) => `Could not load projects: ${msg}`,
+  noApiHint: {
+    before: "This server doesn't have the v2 project API yet. Use ",
+    historyWord: 'History',
+    after: ' above for the existing commit timeline and insights.',
+  },
+} as const;
+const SETUP_KO = {
+  projectFolderLabel: '프로젝트 폴더',
+  projectFolderPlaceholder: '/path/to/project',
+  contextFileLabel: '컨텍스트 파일 (선택)',
+  contextFilePlaceholder: '/path/to/context.md',
+  starting: '시작하는 중…',
+  start: '시작',
+  projectsLoadError: (msg: string) => `프로젝트를 불러오지 못했습니다: ${msg}`,
+  noApiHint: {
+    before: '이 서버에는 아직 v2 프로젝트 API가 없습니다. 기존 커밋 타임라인과 인사이트는 위의 ',
+    historyWord: '기록',
+    after: '을 이용하세요.',
+  },
+} as const;
+export function setupCopy(lang: Lang = 'en') {
+  return lang === 'ko' ? SETUP_KO : SETUP_EN;
+}
+
 // --- Header (DIG-49/52): project switcher, digest picker, Explain, calls left, info popover ----
 
 const HEADER_EN = {
