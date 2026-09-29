@@ -132,7 +132,7 @@ const HEADER_EN = {
   languageHint: 'New digests use this language. Older digests stay as they were written.',
   languageError: (msg: string) => `Could not change the language: ${msg}`,
   nothingPendingHint: 'Nothing has changed since the last check.',
-  noCallsHint: 'No calls left today. Explain works again after the reset.',
+  noCallsHint: 'No Explains left today. It works again after the reset.',
   resets: (when: string) => `Resets ${when}`,
 } as const;
 const HEADER_KO = {
@@ -146,7 +146,7 @@ const HEADER_KO = {
   languageHint: '새 다이제스트는 이 언어로 작성됩니다. 이전 다이제스트는 작성 당시 언어를 유지합니다.',
   languageError: (msg: string) => `언어를 변경하지 못했습니다: ${msg}`,
   nothingPendingHint: '마지막 확인 이후 변경된 내용이 없습니다.',
-  noCallsHint: '오늘 남은 호출이 없습니다. 초기화 이후 다시 Explain을 사용할 수 있습니다.',
+  noCallsHint: '오늘 남은 설명이 없습니다. 초기화 이후 다시 사용할 수 있습니다.',
   resets: (when: string) => `${when}에 초기화`,
 } as const;
 export function headerCopy(lang: Lang = 'en') {
@@ -215,13 +215,13 @@ export function resetsLabel(iso: string, now: number = Date.now(), lang: Lang = 
   return t > now && t - now <= 86_400_000 ? TIME_FMT[lang].format(t) : humanDateTime(iso, now, lang);
 }
 
-/** The calls-left badge: "35 calls left today", or, when spent, what happens next
- * ("No calls left today · resets 00:00"). */
+/** The Explains-left badge (DIG-73/76: one Explain job is one budget unit, not one LLM call):
+ * "35 Explains left today", or, when spent, what happens next ("No Explains left today · resets 00:00"). */
 export function callsLeftLabel(remaining: number, resetsAt: string, now: number = Date.now(), lang: Lang = 'en'): string {
   if (lang === 'ko') {
-    return remaining === 0 ? `오늘 남은 호출 없음 · ${resetsLabel(resetsAt, now, lang)} 초기화` : `오늘 남은 호출 ${remaining}회`;
+    return remaining === 0 ? `오늘 남은 설명 없음 · ${resetsLabel(resetsAt, now, lang)} 초기화` : `오늘 남은 설명 ${remaining}회`;
   }
-  return remaining === 0 ? `No calls left today · resets ${resetsLabel(resetsAt, now, lang)}` : `${plural(remaining, 'call')} left today`;
+  return remaining === 0 ? `No Explains left today · resets ${resetsLabel(resetsAt, now, lang)}` : `${plural(remaining, 'Explain', 'Explains')} left today`;
 }
 
 /** The info popover's context line: "Built just now, from 42 files, with your notes" /
@@ -352,7 +352,7 @@ const PICKER_EN = {
   startOfHistory: 'Start of history',
   retry: 'Retry',
   retrying: 'Retrying…',
-  retryNoBudget: 'No calls left today',
+  retryNoBudget: 'No Explains left today',
   status: {
     pending: 'Not explained yet',
     error: 'Explain failed',
@@ -368,7 +368,7 @@ const PICKER_KO = {
   startOfHistory: '기록의 시작',
   retry: '재시도',
   retrying: '재시도 중…',
-  retryNoBudget: '오늘 남은 호출 없음',
+  retryNoBudget: '오늘 남은 설명 없음',
   status: {
     pending: '아직 설명되지 않음',
     error: '설명 실패',
@@ -487,7 +487,7 @@ const READER_EN = {
   digestTruncated: 'Part of this digest was cut to fit the size limit, so some areas may be missing.',
   retry: 'Try again',
   retrying: 'Trying again…',
-  retryNoBudget: 'No calls left today',
+  retryNoBudget: 'No Explains left today',
   // L0
   noHeadline: 'This digest has no summary yet.',
   period: (from: string, to: string) => `${from} → ${to}`,
@@ -514,6 +514,17 @@ const READER_EN = {
   // the label is deliberately not "Walk through the code" (openArea above).
   areasGlanceHeading: 'Areas in this digest',
   openAreaCard: 'Open area',
+  // Fast Explain (DIG-73/76): the deterministic files/graph/areas land at once; each part's text
+  // (L0/L1, one per area) fills in on its own as it lands, so these replace `noHeadline`/`noImpact`
+  // while a part is still in flight (as opposed to a digest that genuinely has none).
+  summaryWriting: 'Writing the summary…',
+  impactWriting: 'Writing the impact…',
+  areaWriting: 'Writing this area…',
+  partFailed: "Couldn't write this part.",
+  partBudget: 'The daily budget ran out before this part could run.',
+  // First Explain of a project (DIG-76 scope item 6): the context part runs alongside the digest
+  // parts instead of blocking them.
+  contextBuilding: "Building this project's context alongside this Explain.",
 } as const;
 const READER_KO = {
   switcherLabel: '설명 단계',
@@ -527,7 +538,7 @@ const READER_KO = {
   digestTruncated: '이 다이제스트의 일부가 크기 제한으로 잘려, 일부 영역이 누락되었을 수 있습니다.',
   retry: '다시 시도',
   retrying: '다시 시도하는 중…',
-  retryNoBudget: '오늘 남은 호출 없음',
+  retryNoBudget: '오늘 남은 설명 없음',
   noHeadline: '이 다이제스트에는 아직 요약이 없습니다.',
   period: (from: string, to: string) => `${from} → ${to}`,
   fileCount: (n: number) => `파일 ${n}개`,
@@ -547,6 +558,12 @@ const READER_KO = {
   nextLevel: (key: string, label: string) => `다음: ${key} ${label}`,
   areasGlanceHeading: '이 다이제스트의 영역',
   openAreaCard: '영역 열기',
+  summaryWriting: '요약을 작성하는 중…',
+  impactWriting: '영향을 작성하는 중…',
+  areaWriting: '이 영역을 작성하는 중…',
+  partFailed: '이 부분을 작성하지 못했습니다.',
+  partBudget: '일일 예산이 소진되어 이 부분은 아직 실행되지 않았습니다.',
+  contextBuilding: '이번 설명과 함께 프로젝트 컨텍스트를 빌드하는 중입니다.',
 } as const;
 export function readerCopy(lang: Lang = 'en') {
   return lang === 'ko' ? READER_KO : READER_EN;
@@ -592,8 +609,8 @@ const WALKTHROUGH_EN = {
   loading: 'Loading this area…',
   loadError: (msg: string) => `Couldn't load this area: ${msg}`,
   generate: 'Explain this code',
-  generateCost: (left: number) => `Uses 1 of ${plural(left, 'call')} left today`,
-  noBudget: 'No calls left today. The walkthrough can be generated after the daily limit resets.',
+  generateCost: (left: number) => `Uses 1 of ${plural(left, 'Explain', 'Explains')} left today`,
+  noBudget: 'No Explains left today. The walkthrough can be generated after the daily limit resets.',
   notGenerated: 'This area has no walkthrough yet. The diff is below.',
   generating: 'Writing the walkthrough…',
   generateError: "Couldn't write the walkthrough.",
@@ -616,14 +633,18 @@ const WALKTHROUGH_EN = {
   showLess: 'Show less',
   noTextChange: 'No text changes to show (binary or mode change).',
   notAnalysed: 'Not analysed',
+  // Fast Explain (DIG-73/76): the area's L2 text (this line) and its L3 walkthrough land
+  // separately and on different schedules, so this area's own placeholder is distinct from
+  // `generating` above (which is about the walkthrough itself).
+  areaWriting: 'Writing this area…',
 } as const;
 const WALKTHROUGH_KO = {
   regionLabel: (title: string) => `코드 설명: ${title}`,
   loading: '이 영역을 불러오는 중…',
   loadError: (msg: string) => `이 영역을 불러오지 못했습니다: ${msg}`,
   generate: '이 코드 설명하기',
-  generateCost: (left: number) => `오늘 남은 호출 ${left}회 중 1회 사용`,
-  noBudget: '오늘 남은 호출이 없습니다. 일일 한도가 초기화된 후 설명을 생성할 수 있습니다.',
+  generateCost: (left: number) => `오늘 남은 설명 ${left}회 중 1회 사용`,
+  noBudget: '오늘 남은 설명이 없습니다. 일일 한도가 초기화된 후 설명을 생성할 수 있습니다.',
   notGenerated: '이 영역에는 아직 설명이 없습니다. 아래에 diff가 있습니다.',
   generating: '설명을 작성하는 중…',
   generateError: '설명을 작성하지 못했습니다.',
@@ -646,6 +667,7 @@ const WALKTHROUGH_KO = {
   showLess: '간략히 보기',
   noTextChange: '표시할 텍스트 변경이 없습니다 (바이너리 또는 모드 변경).',
   notAnalysed: '분석되지 않음',
+  areaWriting: '이 영역을 작성하는 중…',
 } as const;
 export function walkthroughCopy(lang: Lang = 'en') {
   return lang === 'ko' ? WALKTHROUGH_KO : WALKTHROUGH_EN;

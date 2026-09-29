@@ -69,11 +69,11 @@ describe('callsLeftLabel / resetsLabel', () => {
   const now = new Date(2026, 8, 28, 17, 5).getTime();
   const midnight = new Date(2026, 8, 29, 0, 0).toISOString();
   it('never writes "(s)"', () => {
-    expect(callsLeftLabel(35, midnight, now)).toBe('35 calls left today');
-    expect(callsLeftLabel(1, midnight, now)).toBe('1 call left today');
+    expect(callsLeftLabel(35, midnight, now)).toBe('35 Explains left today');
+    expect(callsLeftLabel(1, midnight, now)).toBe('1 Explain left today');
   });
   it('says when a spent budget comes back', () => {
-    expect(callsLeftLabel(0, midnight, now)).toBe('No calls left today · resets 00:00');
+    expect(callsLeftLabel(0, midnight, now)).toBe('No Explains left today · resets 00:00');
   });
   it('uses just the clock within a day, a date after that', () => {
     expect(resetsLabel(midnight, now)).toBe('00:00');
@@ -149,8 +149,8 @@ describe('Korean formatters', () => {
   });
 
   it('callsLeftLabel / resetsLabel', () => {
-    expect(callsLeftLabel(35, midnight, now, 'ko')).toBe('오늘 남은 호출 35회');
-    expect(callsLeftLabel(0, midnight, now, 'ko')).toBe('오늘 남은 호출 없음 · 00:00 초기화');
+    expect(callsLeftLabel(35, midnight, now, 'ko')).toBe('오늘 남은 설명 35회');
+    expect(callsLeftLabel(0, midnight, now, 'ko')).toBe('오늘 남은 설명 없음 · 00:00 초기화');
     expect(resetsLabel(midnight, now, 'ko')).toBe('00:00');
   });
 

@@ -25,7 +25,7 @@ const click = async (el: Element | null | undefined) => {
   expect(el).toBeTruthy();
   await act(async () => el!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
 };
-const item = fixtureDigest.l2!.items[0]!;
+const item = { ...fixtureDigest.l2!.items[0]!, label: fixtureDigest.l2!.items[0]!.title };
 const noop = () => undefined;
 const view = (area: AreaDetailDto = fixtureArea, props: Partial<Parameters<typeof WalkthroughView>[0]> = {}) => (
   <WalkthroughView area={area} item={item} step={null} onStep={noop} onGenerate={noop} callsRemaining={23} {...props} />
@@ -131,7 +131,7 @@ describe('WalkthroughView', () => {
     await render(view({ ...fixtureArea, status: 'none', l3: null }, { onGenerate }));
     const btn = host.querySelector('.notice.generate button') as HTMLButtonElement;
     expect(btn.textContent).toBe('Explain this code');
-    expect(host.querySelector('.notice.generate')?.textContent).toContain('Uses 1 of 23 calls left today');
+    expect(host.querySelector('.notice.generate')?.textContent).toContain('Uses 1 of 23 Explains left today');
     await click(btn);
     expect(onGenerate).toHaveBeenCalled();
     expect(host.querySelectorAll('.full-diff .hunk-block')).toHaveLength(5);
