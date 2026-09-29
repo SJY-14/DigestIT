@@ -1,6 +1,6 @@
 # Roadmap
 
-## Removing the AI-made look (in progress)
+## Removing the AI-made look (done)
 
 DIG-63 (Board, 2026-09-29): the UI and the generated explanations should read as human-crafted. The audit and its
 critique (`docs/ux/ai-look-audit.md`, `critique-2.md`) found the UI and the current real output clean. What's missing is
@@ -11,7 +11,8 @@ a guard that keeps them that way.
 | 0 | DIG-65 | AI-tell lint in the validators (en/ko), one retry, `style_warnings`; prompt style rules (done) | Summarization engineer | — |
 | 0 | DIG-66 | UI-copy lint test over evaluated `copy.ts`; string sweep (done) | Frontend engineer | — |
 | 1 | DIG-67 | Verify: before/after screens, lint counts, blind read; `docs/ux/ai-look-summary.md` (done) | UX reviewer | DIG-65, DIG-66 |
-| 2 | — | Operator real-provider acceptance run (en and ko) | Board operator | DIG-65 |
+| 2 | DIG-69 | Operator real-provider acceptance run (en and ko): 0 AI-tell hits (done) | Board operator | DIG-65 |
+| 3 | DIG-70 | Follow-up: render inline code in explanation prose | Frontend engineer | — |
 
 ## UX improvement cycle 1 (done)
 

@@ -52,7 +52,7 @@ Ran `packages/explain/dist/cli.js lint-report` (built from `94851fc`).
 | `walkthrough-snapback.sample.en.json` | 2 | `opener-this-x`: 2 | l3: 2 | 2 |
 | `walkthrough-snapback.sample.ko.json` | 0 | — | — | 0 |
 | Stored real-provider DB (`run-claude-code-WmE2`) — **before** | 0 | — | — | 0 |
-| Stored real-provider DB — **after** (operator step 6) | *not run yet* | — | — | — |
+| Stored real-provider DB — **after** (operator step 6, main `e37ef05`) | 0 | — | — | 0 |
 
 These numbers match DIG-65's own CTO-reviewed hand-off comment exactly (independently
 reproduced here, not copied).
@@ -77,7 +77,21 @@ after their own report run, and no `run-claude-code-*` directory postdates the D
 (`1fd2b0b`/`4ba86e6`, both ~06:00) — the one on disk (`run-claude-code-WmE2`) is from the
 DIG-63 prompt-fix stage, before the lint was wired into the retry loop. Per the issue: this is
 expected, the "after" row needs DIG-63 step 6 (operator real-provider run) and isn't blocking
-this verify. Left as a placeholder above.
+this verify. Filled in after step 6, below.
+
+**Step 6 "after" run (DIG-69, CTO note):** the operator ran `.cache/dig63-acceptance/accept.sh` with
+claude-code against main `e37ef05`: the synthetic `snapback` project, en then ko, light and dark, with no API or
+UI errors. `lint-report` over that run's DB found 0 hits and 0 repeated openers. The DB holds 6 L0–L2 rows, 2 area
+walkthroughs and 2 context rows, all with `style_warnings = 0`. Cost: 9 provider calls where the DIG-47 kit made
+about 6. Three calls were retries (the first digest, and both areas of the second digest). The retry reason is not
+stored, so we can't tell a style retry from a validation retry. Either way, nothing survived the retry as a warning.
+One area walkthrough was saved `truncated` (hard limits still exceeded after its retry). That comes from the DIG-48
+limits, not from the style lint, which never truncates.
+
+The operator flagged one leftover tell: the area title "Config validates and defaults --retries" seemed to contain
+an ASCII double dash. It is the `--retries` flag, wrapped at the line end. The fix is to render code in prose,
+not to rewrite `--`. The same run shows the related problem that raw backticks appear in Korean step text. Both go
+to DIG-70 (inline code rendering).
 
 ## 3. Blind read
 
@@ -123,6 +137,7 @@ couldn't be exercised by this screenshot pass (see §1) but are correct by code/
 
 ## 5. What's left
 
-- **DIG-63 step 6** (operator real-provider run): needed to fill the "after" row in §2's
-  real-provider table. Not blocking; can run independently of this issue closing.
+- DIG-63 step 6 (operator real-provider run): done (DIG-69). The "after" row in §2 is filled: 0 hits.
+- DIG-70: render inline code in explanation prose (backtick spans, `--flags` that never wrap). This is
+  follow-up from the step-6 run.
 - No further DIG-65/66 rework requested.
