@@ -77,6 +77,10 @@ Tab-through covers: nav → History menu (open, Tab through items, Escape) → d
 welcome-back CTA → area cards (Enter lands on L2) → L3 reviewed toggle (Space/Enter, then undo)
 → graph zoom buttons, in light and dark.
 
+**Result (DIG-64, operator, real browser):** Tab moves between controls as expected, and no
+focus stops are missing. The report doesn't say anything specific about how each ring looks, so
+rings stay verified by source and computed contrast, and keyboard reachability by the operator.
+
 ## P2 — areas-in-this-digest + short-view CSS — holds
 
 `dig62-light-en-L0-areas-glance-after.png`: L0's blank space below the headline is now a grid of
