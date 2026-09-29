@@ -89,3 +89,23 @@ export function logJobCall(
     log.timing?.inputTokens ?? null, log.timing?.outputTokens ?? null,
   );
 }
+
+/** Records how long the job's no-LLM prep took (snapshot, checkpoint, digest row, areas). */
+export function setPrepMs(db: DatabaseSync, jobId: number, prepMs: number): void {
+  db.prepare('UPDATE explain_job SET prep_ms = ? WHERE id = ?').run(prepMs, jobId);
+}
+
+/**
+ * Marks parts of a digest as `budget` when `startJob` refused the job: one `explain_call` row per
+ * part (outcome `budget`, never counted by `budgetStatus`), so the part status reads back from the
+ * DB alone, with no live job and after a restart.
+ */
+export function markPartsBudget(
+  db: DatabaseSync, changeUnitId: number, parts: readonly string[], now: () => Date = () => new Date(),
+): void {
+  const at = now().toISOString();
+  const ins = db.prepare(
+    `INSERT INTO explain_call (at, change_unit_id, reason, duration_ms, outcome, part) VALUES (?, ?, ?, 0, 'budget', ?)`,
+  );
+  for (const part of parts) ins.run(at, changeUnitId, part === 'context' ? 'context' : 'digest', part);
+}

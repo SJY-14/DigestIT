@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, linkSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import type { BudgetDto, CheckpointReason, CommitStats, ExplainLanguage, SkipReason } from '@digestit/core';
-import { type DigestOutcome, type ExplanationProvider, explainDigest, filterReason } from '@digestit/explain';
+import type { BudgetDto, CheckpointReason, CommitStats, DigestAreaSkeleton, ExplainLanguage, SkipReason } from '@digestit/core';
+import { groupDigestAreas } from '@digestit/core';
+import { budgetStatus as jobUnitsUsed, filterReason } from '@digestit/explain';
 import { DEFAULT_DAILY_BUDGET, startOfLocalDay } from './scheduler.js';
 import { ensureDir0700, projectDataDir } from './datahome.js';
 import { addIgnorePatterns, hasOwnGitignore, readIgnorePatterns, suggestIgnorePatterns, type IgnoreSuggestion } from './ignore.js';
 import { diff, listTree, openShadow, pending, snapshot, userGitInfo, type PendingResult } from './shadow.js';
+import { loadWorkspacePrefixes } from './workspace.js';
 
 export class ProjectLockedError extends Error {
   constructor() {
@@ -76,8 +78,12 @@ function tryLock(path: string, startedAt: string): boolean {
   }
 }
 
-/** Exclusive, per-project lock file: only one `explain` (fresh or `--retry`) runs at a time. */
-function withProjectLock<T>(dataDir: string, startedAt: string, fn: () => Promise<T>): Promise<T> {
+/**
+ * Acquires the per-project explain lock synchronously; throws `ProjectLockedError` when another
+ * explain (fresh or retry) already holds it. The job runner (`explain-job.ts`) keeps it held across
+ * the backgrounded LLM parts, until the job settles, not just until the HTTP response is sent.
+ */
+export function acquireProjectLock(dataDir: string, startedAt: string): void {
   ensureDir0700(dataDir);
   const path = `${dataDir}/explain.lock`;
   if (!tryLock(path, startedAt)) {
@@ -85,9 +91,10 @@ function withProjectLock<T>(dataDir: string, startedAt: string, fn: () => Promis
     try { unlinkSync(path); } catch { /* removed concurrently */ }
     if (!tryLock(path, startedAt)) throw new ProjectLockedError();
   }
-  return fn().finally(() => {
-    try { unlinkSync(path); } catch { /* already gone */ }
-  });
+}
+
+export function releaseProjectLock(dataDir: string): void {
+  try { unlinkSync(`${dataDir}/explain.lock`); } catch { /* already gone */ }
 }
 
 export function isExplaining(home: string, repoId: number): boolean {
@@ -277,11 +284,11 @@ async function takeInitCheckpoint(
   return { tracked: tracked.length, skipped: result.skipped };
 }
 
-/** Today's shared call budget (every `explain_call` reason counts). `limit` is the configured daily cap. */
+/** Today's budget: one unit per job that made a provider call (docs/explain-speed.md "Budget
+ * decision"), the same count `startJob` checks. `limit` is the configured daily cap. */
 export function budgetStatus(db: DatabaseSync, now: Date = new Date(), limit: number = DEFAULT_DAILY_BUDGET): BudgetDto {
   const start = startOfLocalDay(now);
-  const used = (db.prepare("SELECT count(*) AS n FROM explain_call WHERE at >= ? AND outcome IN ('ok','error')")
-    .get(start.toISOString()) as { n: number }).n;
+  const used = jobUnitsUsed(db, now);
   const resetsAt = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1).toISOString();
   return { limit, used, remaining: Math.max(0, limit - used), resetsAt };
 }
@@ -308,17 +315,9 @@ export async function projectStatus(
   };
 }
 
-export interface ExplainProjectResult {
-  noChanges: boolean;
-  digestId: number | null;
-  outcome: DigestOutcome | null;
-  calls: number;
-  detail?: string;
-}
-
 function insertDigestChangeUnit(
   db: DatabaseSync, repoId: number, fromCheckpoint: CheckpointRow, toCheckpointId: number, toTreeSha: string,
-  files: Awaited<ReturnType<typeof diff>>, at: string, language: ExplainLanguage,
+  files: Awaited<ReturnType<typeof diff>>, at: string, language: ExplainLanguage, areas: DigestAreaSkeleton[],
 ): number {
   const title = `checkpoint ${fromCheckpoint.seq} → ${fromCheckpoint.seq + 1}`;
   const changeUnitId = Number(db.prepare(
@@ -336,76 +335,52 @@ function insertDigestChangeUnit(
   }
   const stats: CommitStats = { files: files.length, additions, deletions };
   db.prepare(
-    `INSERT INTO digest (change_unit_id, repo_id, from_checkpoint_id, to_checkpoint_id, created_at, stats, language)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(changeUnitId, repoId, fromCheckpoint.id, toCheckpointId, at, JSON.stringify(stats), language);
+    `INSERT INTO digest (change_unit_id, repo_id, from_checkpoint_id, to_checkpoint_id, created_at, stats, language, areas)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(changeUnitId, repoId, fromCheckpoint.id, toCheckpointId, at, JSON.stringify(stats), language, JSON.stringify(areas));
   return changeUnitId;
 }
 
-export interface ExplainOptions {
-  /**
-   * Compact project context for grounding. `explainProject` calls a function form after the new
-   * checkpoint is recorded, so an Explain-time context refresh sees the current structure.
-   */
-  context?: string | (() => Promise<string | undefined>);
-  /** Daily call cap shared with every other `explain_call` reason (default `DEFAULT_DAILY_BUDGET`). */
-  budget?: number;
-  now?: () => Date;
+export interface PreparedExplainDigest {
+  noChanges: boolean;
+  changeUnitId: number | null;
+  areas: DigestAreaSkeleton[];
 }
 
 /**
- * `digest explain`: snapshots the project; if the tree changed, records a checkpoint, a `digest`
- * change unit and its files, then explains it (v2-4). Unchanged tree: no checkpoint, no call.
- * Serialized per project by a lock file, and the previous checkpoint is read inside that lock so a
- * second, concurrently queued call never mints a duplicate checkpoint for the same tree.
+ * The snapshot/checkpoint/digest-row half of an Explain, with no LLM call: if the tree changed
+ * since the last checkpoint, records a new checkpoint, a `digest` change unit, its files and its
+ * deterministic areas (`groupDigestAreas`, DIG-75) in one transaction. Must be called with the
+ * project lock already held; the caller reads `from` fresh inside that lock so a second,
+ * concurrently queued call never mints a duplicate checkpoint for the same tree.
+ * The job runner awaits only this before responding (its time is `explain_job.prep_ms`).
  */
-export async function explainProject(
-  db: DatabaseSync, home: string, project: ProjectRow, provider: ExplanationProvider, opts: ExplainOptions = {},
-): Promise<ExplainProjectResult> {
-  const now = opts.now ?? (() => new Date());
-  const budget = opts.budget ?? DEFAULT_DAILY_BUDGET;
+export async function prepareExplainDigest(
+  db: DatabaseSync, home: string, project: ProjectRow, now: () => Date = () => new Date(),
+): Promise<PreparedExplainDigest> {
   const dataDir = projectDataDir(home, project.id);
-  return withProjectLock(dataDir, now().toISOString(), async () => {
-    const shadow = await openShadow(dataDir, project.path);
-    // Read inside the lock: the value passed as `parent` below must never be stale.
-    const from = latestCheckpoint(db, project.id);
-    if (!from) throw new Error(`project ${project.id} has no checkpoints; run \`digest init\` first`);
-    const result = await snapshot(shadow, { parent: from.shadowSha });
-    if (result.unchanged) return { noChanges: true, digestId: null, outcome: null, calls: 0 };
-    const at = now().toISOString();
-    const info = await userGitInfo(project.path);
-    const files = await diff(shadow, from.shadowSha, result.treeSha);
-    // Checkpoint and digest land together, so a failure never leaves a checkpoint whose changes have no digest.
-    let changeUnitId: number;
-    db.exec('BEGIN');
-    try {
-      const toId = insertCheckpoint(db, project.id, from.seq + 1, result.treeSha, 'explain', info?.head ?? null, info?.branch ?? null, result.skipped, at);
-      changeUnitId = insertDigestChangeUnit(db, project.id, from, toId, result.treeSha, files, at, project.language);
-      db.exec('COMMIT');
-    } catch (e) {
-      db.exec('ROLLBACK');
-      throw e;
-    }
-    const context = typeof opts.context === 'function' ? await opts.context() : opts.context;
-    const r = await explainDigest(db, changeUnitId, provider, { context, budget, now, language: project.language });
-    return { noChanges: false, digestId: changeUnitId, outcome: r.outcome, calls: r.calls, detail: r.detail };
-  });
-}
-
-/** `digest explain --retry <digestId>`: re-runs the provider call for an existing digest; no new snapshot.
- * The retry keeps the language the digest was first written in, even if the project's changed since. */
-export async function retryDigest(
-  db: DatabaseSync, home: string, digestId: number, provider: ExplanationProvider, opts: ExplainOptions = {},
-): Promise<ExplainProjectResult> {
-  const row = db.prepare('SELECT repo_id, language FROM digest WHERE change_unit_id = ?').get(digestId) as
-    { repo_id: number; language: ExplainLanguage } | undefined;
-  if (!row) throw new Error(`no digest ${digestId}`);
-  const budget = opts.budget ?? DEFAULT_DAILY_BUDGET;
-  const dataDir = projectDataDir(home, row.repo_id);
-  const startedAt = (opts.now ?? (() => new Date()))().toISOString();
-  return withProjectLock(dataDir, startedAt, async () => {
-    const context = typeof opts.context === 'function' ? await opts.context() : opts.context;
-    const r = await explainDigest(db, digestId, provider, { context, budget, now: opts.now, language: row.language });
-    return { noChanges: false, digestId, outcome: r.outcome, calls: r.calls, detail: r.detail };
-  });
+  const shadow = await openShadow(dataDir, project.path);
+  const from = latestCheckpoint(db, project.id);
+  if (!from) throw new Error(`project ${project.id} has no checkpoints; run \`digest init\` first`);
+  const result = await snapshot(shadow, { parent: from.shadowSha });
+  if (result.unchanged) return { noChanges: true, changeUnitId: null, areas: [] };
+  const at = now().toISOString();
+  const info = await userGitInfo(project.path);
+  const files = await diff(shadow, from.shadowSha, result.treeSha);
+  const areas = groupDigestAreas(
+    files.map((f) => ({ path: f.path, additions: f.additions, deletions: f.deletions })),
+    { workspacePrefixes: loadWorkspacePrefixes(project.path) },
+  );
+  // Checkpoint and digest land together, so a failure never leaves a checkpoint whose changes have no digest.
+  let changeUnitId: number;
+  db.exec('BEGIN');
+  try {
+    const toId = insertCheckpoint(db, project.id, from.seq + 1, result.treeSha, 'explain', info?.head ?? null, info?.branch ?? null, result.skipped, at);
+    changeUnitId = insertDigestChangeUnit(db, project.id, from, toId, result.treeSha, files, at, project.language, areas);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  return { noChanges: false, changeUnitId, areas };
 }

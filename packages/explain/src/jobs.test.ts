@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
-import { budgetStatus, finishJob, logJobCall, startJob } from './jobs.js';
+import { budgetStatus, finishJob, logJobCall, markPartsBudget, setPrepMs, startJob } from './jobs.js';
 
 function seed(db: DatabaseSync): number {
   db.prepare("INSERT INTO repo (id, name, path) VALUES (1, 'DigestIT', '/x')").run();
@@ -80,5 +80,27 @@ describe('startJob/finishJob/budgetStatus', () => {
       job_id: jobId, part: 'walkthrough:ui', model: 'sonnet', effort: 'low',
       startup_ms: 100, ttft_ms: 200, gen_ms: 300, input_tokens: 1000, output_tokens: 50,
     });
+  });
+});
+
+describe('setPrepMs / markPartsBudget', () => {
+  it('stores prep_ms on the job row', () => {
+    const db = openDb(':memory:');
+    const id = seed(db);
+    const jobId = startJob(db, 'explain', { repoId: 1, changeUnitId: id }, 5)!;
+    setPrepMs(db, jobId, 42);
+    expect(db.prepare('SELECT prep_ms FROM explain_job WHERE id = ?').get(jobId)).toEqual({ prep_ms: 42 });
+  });
+
+  it('records a budget outcome per part that does not itself use up the budget', () => {
+    const db = openDb(':memory:');
+    const id = seed(db);
+    markPartsBudget(db, id, ['summary', 'area:a', 'context'], () => new Date());
+    const rows = db.prepare('SELECT part, reason, outcome FROM explain_call WHERE change_unit_id = ? ORDER BY part')
+      .all(id) as unknown as { part: string; reason: string; outcome: string }[];
+    expect(rows.map((r) => [r.part, r.reason, r.outcome])).toEqual([
+      ['area:a', 'digest', 'budget'], ['context', 'context', 'budget'], ['summary', 'digest', 'budget'],
+    ]);
+    expect(budgetStatus(db, new Date())).toBe(0);
   });
 });

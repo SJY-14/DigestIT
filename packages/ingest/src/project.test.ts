@@ -5,9 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
 import { createProvider, type ExplanationProvider } from '@digestit/explain';
 import {
-  ProjectLockedError, budgetStatus, explainProject, explainingSince, findProject, initProject, isExplaining,
-  latestCheckpoint, listProjects, projectStatus, retryDigest, updateProjectLanguage, type ProjectRow,
+  ProjectLockedError, budgetStatus, explainingSince, findProject, initProject, isExplaining,
+  latestCheckpoint, listProjects, projectStatus, updateProjectLanguage, type ProjectRow,
 } from './project.js';
+import { explainProject, retryDigest } from './explain-job.js';
 import type { DatabaseSync } from 'node:sqlite';
 
 let root: string;
@@ -135,7 +136,9 @@ describe('digest explain: init -> edit -> explain -> digest', () => {
     const r = await explainProject(db, home, project, provider(project.name), { budget: 40 });
     expect(r.noChanges).toBe(false);
     expect(r.outcome).toBe('ok');
-    expect(r.calls).toBe(1);
+    // summary + one area (both files are at the root) + the first Explain's project context
+    expect(r.report!.parts.map((x) => x.part).sort()).toEqual(['area:project-root', 'context', 'summary']);
+    expect(r.calls).toBe(3);
 
     const digest = db.prepare('SELECT * FROM digest WHERE change_unit_id = ?').get(r.digestId) as { stats: string; from_checkpoint_id: number; to_checkpoint_id: number };
     const stats = JSON.parse(digest.stats);
@@ -185,7 +188,7 @@ describe('digest explain: init -> edit -> explain -> digest', () => {
     const init = await initProject(db, home, proj);
     const project = findProject(db, String(init.repoId)) as ProjectRow;
     const r = await explainProject(db, home, project, provider(project.name), { budget: 40 });
-    expect(r).toEqual({ noChanges: true, digestId: null, outcome: null, calls: 0 });
+    expect(r).toEqual({ noChanges: true, digestId: null, outcome: null, calls: 0, report: null });
     expect(latestCheckpoint(db, project.id)!.seq).toBe(1);
     expect(db.prepare("SELECT count(*) AS n FROM change_unit WHERE kind = 'digest'").get()).toEqual({ n: 0 });
   });

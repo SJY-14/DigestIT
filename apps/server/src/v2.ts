@@ -9,20 +9,22 @@ import type { FastifyInstance } from 'fastify';
 import {
   EXPLAIN_LANGUAGES,
   buildProjectGraph,
-  type ChangeStatus, type CreateProjectResponseDto, type DigestL2Content, type DigestFileDto, type ExplainLanguage,
+  type AreaProgressEvent, type ChangeStatus, type CreateProjectResponseDto, type DigestAreaSkeleton,
+  type DigestL2Content, type DigestFileDto, type DigestPartsDto, type ExplainLanguage,
   type ExplanationStatus, type NotTrackedGroupDto, type ProjectDto, type ProjectGraphDto, type ProjectIgnoreDto,
   type SkipReason,
 } from '@digestit/core';
 import {
-  DEFAULT_DAILY_BUDGET, ProjectLockedError, addIgnorePatterns, budgetStatus, buildContext, ensureContext,
-  explainProject, initProject, isValidIgnorePattern, latestCheckpoint, latestContextText as sharedLatestContextText,
-  listProjects, listTree, openShadow, projectDataDir, projectStatus, readIgnorePatterns, removeIgnorePatterns,
-  retryDigest, updateProjectLanguage, type ProjectRow,
+  AreaExplainRunningError, DEFAULT_DAILY_BUDGET, ExplainJobRunner, ProjectLockedError, addIgnorePatterns,
+  budgetStatus, initProject, isValidIgnorePattern, latestCheckpoint,
+  listProjects, listTree, openShadow, projectDataDir, projectStatus,
+  readIgnorePatterns, refreshContext, removeIgnorePatterns, updateProjectLanguage, type ProjectRow,
 } from '@digestit/ingest';
 import {
-  AREA_PROMPT_VERSION, createProvider, explainArea,
-  type DigestOutcome, type ExplanationProvider,
+  AREA_PROMPT_VERSION, createProvider,
+  type ExplanationProvider,
 } from '@digestit/explain';
+import { CSP } from './csp.js';
 
 export interface V2Options {
   /** DigestIT's data dir ($DIGESTIT_HOME), for shadow stores and project_data dirs. */
@@ -43,6 +45,8 @@ type Row = Record<string, unknown>;
 
 const V2_BODY_LIMIT = 8192;
 const MAX_EXPAND = 20;
+const DIGEST_EVENTS_MAX_STREAMS = 16;
+const DIGEST_EVENTS_HEARTBEAT_MS = 15_000;
 
 /** The graph `expand` query (one or repeated `expand=<dir>`), or null if it asks for too many. */
 function parseExpand(raw: unknown): string[] | null {
@@ -115,13 +119,6 @@ class Lru<V> {
 /** Thrown by the in-flight guards below; always mapped to 409, never anything the caller retries on its own. */
 class InFlightError extends Error {}
 
-function outcomeToStatus(outcome: DigestOutcome | null): ExplanationStatus | null {
-  if (outcome === null) return null;
-  if (outcome === 'cached' || outcome === 'ok') return 'ok';
-  if (outcome === 'budget') return 'pending';
-  return outcome; // 'truncated' | 'error'
-}
-
 const fileDto = (f: Row): DigestFileDto => ({
   path: f.path as string,
   oldPath: (f.old_path as string | null) ?? null,
@@ -137,12 +134,10 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
   const now = opts.now ?? (() => new Date());
   const graphCache = new Lru<ProjectGraphDto>(opts.graphCacheSize ?? 50);
   const projectRoots = opts.projectRoots ?? [];
-  // In-process one-at-a-time guards (409 `explain_running`): a project's own explain/retry is
-  // already serialized by ingest's file lock, but an area click or a context refresh has no such
-  // lock, and `maybeAutoBuildContext` runs ahead of the explain lock too -- a double click or an
-  // Explain racing a Refresh would otherwise spend two budget calls for one piece of work.
+  // In-process one-at-a-time guard (409 `explain_running`) for a context refresh: it has no file
+  // lock of its own, and a manual refresh racing a first Explain's context part would otherwise
+  // spend two budget calls for one piece of work.
   const contextInFlight = new Set<number>();
-  const areaInFlight = new Set<string>();
   const providerFactory =
     opts.providerFactory ??
     ((allow: string[]): ExplanationProvider | null => {
@@ -155,6 +150,10 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
         claudeModel: process.env.DIGESTIT_CLAUDE_MODEL,
       });
     });
+  // Fast Explain (DIG-75): the async job runner behind POST /explain, POST /digests/:id/explain
+  // (retry) and POST .../areas/:areaId/explain. One instance per server process, holding the
+  // in-memory "still running" state that GET /api/digests/:id and the SSE stream below read from.
+  const jobRunner = new ExplainJobRunner(db, home, { budget: budgetLimit, now, contextBusy: (repoId) => contextInFlight.has(repoId) });
 
   const latestExplanation = db.prepare(
     `SELECT content, status, created_at FROM explanation WHERE change_unit_id = ? AND level = ?
@@ -189,8 +188,6 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     };
   }
 
-  const latestContextText = (repoId: number) => sharedLatestContextText(db, repoId);
-
   const NOT_TRACKED_EXAMPLES = 5;
   const MAX_IGNORE_PATTERNS_PER_REQUEST = 100;
   /** Paths not stored in the shadow, from the latest checkpoint, grouped by why (DIG-56). */
@@ -218,21 +215,10 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     }
   }
 
-  const buildContextFor = (row: ProjectRow, provider: ExplanationProvider) =>
-    withContextGuard(row, () => buildContext(db, home, row, provider, { budget: budgetLimit, now }));
-
-  /**
-   * Explain-time context, called by `explainProject` after the new checkpoint is recorded: builds it
-   * when missing, refreshes it on a structural change (at most daily), then returns the compact text.
-   * Best-effort: Explain still proceeds without grounding, e.g. while a manual refresh holds the guard.
-   */
-  const explainTimeContext = (row: ProjectRow, provider: ExplanationProvider) => async () => {
-    try {
-      await withContextGuard(row, () => ensureContext(db, home, row, provider, { budget: budgetLimit, now }));
-    } catch {
-      /* see above */
-    }
-    return latestContextText(row.id);
+  // Also refused while an Explain's own `context` part is building it (first Explain of a project).
+  const buildContextFor = (row: ProjectRow, provider: ExplanationProvider) => {
+    if (jobRunner.isContextRunning(row.id)) throw new InFlightError();
+    return withContextGuard(row, () => refreshContext(db, home, row, provider, { budget: budgetLimit, now }));
   };
 
   function loadDigestL2(digestId: number): DigestL2Content | null {
@@ -251,19 +237,23 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
 
   function loadDigestDetail(digestId: number): Row | null {
     const d = db.prepare(
-      `SELECT d.repo_id AS repoId, d.created_at AS createdAt, d.stats AS stats, d.language AS language,
+      `SELECT d.repo_id AS repoId, d.created_at AS createdAt, d.stats AS stats, d.language AS language, d.areas AS areas,
               fromCp.seq AS seq, fromCp.taken_at AS fromAt, toCp.taken_at AS toAt, toCp.skipped AS skipped
        FROM digest d
        JOIN checkpoint fromCp ON fromCp.id = d.from_checkpoint_id
        JOIN checkpoint toCp ON toCp.id = d.to_checkpoint_id
        WHERE d.change_unit_id = ?`,
     ).get(digestId) as {
-      repoId: number; createdAt: string; stats: string; language: ExplainLanguage; seq: number; fromAt: string; toAt: string; skipped: string;
+      repoId: number; createdAt: string; stats: string; language: ExplainLanguage; areas: string | null;
+      seq: number; fromAt: string; toAt: string; skipped: string;
     } | undefined;
     if (!d) return null;
     const l0 = latestExplanation.get(digestId, 0) as { content: string; status: ExplanationStatus } | undefined;
     const l1 = latestExplanation.get(digestId, 1) as { content: string } | undefined;
     const l2 = latestExplanation.get(digestId, 2) as { content: string } | undefined;
+    // Absent (not just null) for a digest created before DIG-75, which has no stored areas/parts.
+    const areas: DigestAreaSkeleton[] | undefined = d.areas ? parseJson(d.areas, undefined) : undefined;
+    const parts: DigestPartsDto | undefined = areas ? (jobRunner.getParts(digestId) ?? undefined) : undefined;
     return {
       id: digestId,
       projectId: d.repoId,
@@ -278,6 +268,8 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       files: loadFiles(digestId).map(fileDto),
       skipped: parseJson<{ path: string; reason: SkipReason }[]>(d.skipped, []),
       language: d.language,
+      areas,
+      parts,
     };
   }
 
@@ -293,7 +285,8 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     return {
       digestId,
       areaId,
-      status: row?.status ?? 'none',
+      // While an L3 job runs (DIG-75) the walkthrough streams over GET /api/digests/:id/events.
+      status: jobRunner.isAreaRunning(digestId, areaId) ? 'pending' : (row?.status ?? 'none'),
       l3: row ? parseJson(row.content, null) : null,
       files,
     };
@@ -394,6 +387,72 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     return detail;
   });
 
+  // Fast Explain (DIG-75, docs/explain-speed.md §5): `event: parts` (DigestPartsDto) on connect and
+  // on every part status change, `event: area-progress` while an L3 walkthrough streams under this
+  // digest, `event: done` once nothing is running for it, then the server closes the stream. Events
+  // are not replayed -- a reconnect gets the current `parts` and refetches. Bounded like /api/stream.
+  let digestEventStreams = 0;
+  app.get<{ Params: { id: string } }>('/api/digests/:id/events', (req, reply) => {
+    const id = parseId(req.params.id);
+    if (id === null || !loadDigestDetail(id)) return reply.code(404).send({ error: 'not_found' });
+    if (digestEventStreams >= DIGEST_EVENTS_MAX_STREAMS) {
+      return reply.code(503).header('retry-after', '5').send({ error: 'too_many_streams' });
+    }
+    digestEventStreams++;
+    const raw = reply.raw;
+    reply.hijack();
+    raw.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+      'content-security-policy': CSP,
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+    });
+    let seq = 0;
+    let closed = false;
+    const send = (event: string, data: unknown) => {
+      if (closed) return;
+      raw.write(`id: ${++seq}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const heartbeat = setInterval(() => { if (!closed) raw.write(': heartbeat\n\n'); }, DIGEST_EVENTS_HEARTBEAT_MS);
+    heartbeat.unref();
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(heartbeat);
+      unsubParts();
+      unsubArea();
+      digestEventStreams--;
+      req.raw.off('close', cleanup);
+      raw.off('close', cleanup);
+      raw.off('error', cleanup);
+      raw.end();
+    };
+    const checkDone = () => {
+      if (jobRunner.isDone(id)) {
+        send('done', {});
+        cleanup();
+      }
+    };
+    const unsubParts = jobRunner.subscribeParts(id, (dto: DigestPartsDto) => {
+      send('parts', dto);
+      checkDone();
+    });
+    const unsubArea = jobRunner.subscribeAreaProgress(id, (e: AreaProgressEvent) => {
+      send('area-progress', e);
+      checkDone();
+    });
+    req.raw.on('close', cleanup);
+    raw.on('close', cleanup);
+    raw.on('error', cleanup);
+
+    const initialParts = jobRunner.getParts(id);
+    if (initialParts) send('parts', initialParts);
+    checkDone();
+  });
+
   app.get<{ Params: { id: string; areaId: string } }>('/api/digests/:id/areas/:areaId', async (req, reply) => {
     const id = parseId(req.params.id);
     const l2 = id === null ? null : loadDigestL2(id);
@@ -433,8 +492,13 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       const validDirs = dirsOf([...paths, ...files.map((f) => f.path)]);
       if (expand.some((e) => !validDirs.has(e))) return reply.code(400).send({ error: 'bad_expand' });
 
-      const l2 = loadDigestL2(id!);
-      const areas = l2?.items.map((it) => ({ id: it.id, paths: it.paths }));
+      // The deterministic `digest.areas` (DIG-75) are final when the digest is created, so a graph
+      // cached while its LLM parts still run stays right; older digests only have the level-2 row.
+      const stored = db.prepare('SELECT areas FROM digest WHERE change_unit_id = ?').get(id) as { areas: string | null };
+      const skeleton = stored.areas ? parseJson<DigestAreaSkeleton[] | null>(stored.areas, null) : null;
+      const areas = skeleton
+        ? skeleton.map((a) => ({ id: a.id, paths: a.paths }))
+        : loadDigestL2(id!)?.items.map((it) => ({ id: it.id, paths: it.paths }));
       const result = buildProjectGraph({ paths, files, areas, expand });
       const dto: ProjectGraphDto = { digestId: id!, ...result };
       graphCache.set(cacheKey, dto);
@@ -532,6 +596,9 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     },
   );
 
+  // Fast Explain (DIG-75): each of the next three routes returns as soon as its own no-LLM prep is
+  // done and the LLM parts have started in the background -- it does not wait for them. Progress is
+  // read from GET /api/digests/:id (parts/areas) or streamed from GET /api/digests/:id/events.
   app.post<{ Params: { id: string } }>('/api/projects/:id/explain', { bodyLimit: V2_BODY_LIMIT }, async (req, reply) => {
     const id = parseId(req.params.id);
     const row = id === null ? undefined : findProjectRow(id);
@@ -539,11 +606,11 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     const provider = providerFactory([row.name]);
     if (!provider) return reply.code(500).send({ error: 'no_provider' });
     try {
-      const r = await explainProject(db, home, row, provider, { context: explainTimeContext(row, provider), budget: budgetLimit, now });
+      const r = await jobRunner.start(row, provider);
       const budget = budgetStatus(db, now(), budgetLimit);
       if (r.noChanges) return { noChanges: true, digestId: null, status: null, budget };
       graphCache.deleteDigest(r.digestId!);
-      return { noChanges: false, digestId: r.digestId, status: outcomeToStatus(r.outcome), budget };
+      return { noChanges: false, digestId: r.digestId, status: 'pending', budget };
     } catch (e) {
       if (e instanceof ProjectLockedError) return reply.code(409).send({ error: 'explain_running' });
       return reply.code(500).send({ error: e instanceof Error ? e.message : 'explain_failed' });
@@ -558,8 +625,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     const provider = providerFactory([project.name]);
     if (!provider) return reply.code(500).send({ error: 'no_provider' });
     try {
-      const context = latestContextText(project.id);
-      await retryDigest(db, home, id!, provider, { context, budget: budgetLimit, now });
+      await jobRunner.retry(project, id!, provider);
       graphCache.deleteDigest(id!);
       const detail = loadDigestDetail(id!);
       if (!detail) return reply.code(404).send({ error: 'not_found' });
@@ -584,17 +650,11 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       }
       const provider = providerFactory([project.name]);
       if (!provider) return reply.code(500).send({ error: 'no_provider' });
-      const key = `${id}:${req.params.areaId}`;
-      if (areaInFlight.has(key)) return reply.code(409).send({ error: 'explain_running' });
-      areaInFlight.add(key);
       try {
-        const context = latestContextText(project.id);
-        // The digest's own language, not the project's: one digest never mixes languages.
-        await explainArea(db, id!, req.params.areaId, provider, { context, budget: budgetLimit, now, language: digestRow.language });
+        await jobRunner.startArea(project, id!, req.params.areaId, provider);
       } catch (e) {
+        if (e instanceof AreaExplainRunningError) return reply.code(409).send({ error: 'explain_running' });
         return reply.code(500).send({ error: e instanceof Error ? e.message : 'explain_failed' });
-      } finally {
-        areaInFlight.delete(key);
       }
       const detail = loadAreaDetail(id!, req.params.areaId, l2);
       return 'error' in detail ? reply.code(404).send({ error: detail.error }) : detail;

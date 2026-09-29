@@ -128,6 +128,14 @@ since it only needs enough to name the change. Each `area` call carries only its
 - Pre-computing: `explain_job.prep_ms` records how long the snapshot, diff and row writes took. If it
   is above 700 ms on a real project, the snapshot and diff move ahead of the click (they are already
   partly done for the pending count). If not, nothing is added.
+  Measured (DIG-75, synthetic TypeScript workspace, stub provider, time until the POST can respond):
+  500 files with 50 changed: 133 ms; 3,000 files with 300 changed: 343 ms; 5,000 files with 1,500
+  changed: 716 ms. Only a change of that extreme size crosses 700 ms, so nothing is pre-computed.
+- On a later Explain the parts are grounded on the stored LLM context, and the same job checks
+  `ensureContext`'s refresh rules in the background (a structural change, at most once a day, or a
+  language change). That check is not a part: `parts.context` stays `skipped` unless it builds.
+- Clients should treat `parts.finishedAt` (or the SSE `done`) as the end of an Explain: the project
+  lock is released at that moment, not when the last part status turns terminal.
 
 ### 6. UI (DIG-76)
 
@@ -181,5 +189,5 @@ function ensureContext(..., { job: JobRef }): Promise<...>;   // existing, gains
 type PartOutcome = { outcome: 'ok' | 'truncated' | 'error' | 'cached'; calls: number; detail?: string };
 ```
 
-`explainDigest` (the one-call path) stays for the CLI until DIG-75 moves `digest explain` onto the job
-runner, then it is removed.
+`explainDigest` (the one-call path) is no longer used by the CLI or the server (DIG-75 moved
+`digest explain` onto the job runner). It stays only as the baseline of DIG-74's A/B kit.

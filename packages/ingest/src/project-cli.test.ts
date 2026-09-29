@@ -227,7 +227,7 @@ describe('runProjectsCli / runStatusCli', () => {
 });
 
 describe('runProjectExplainCli', () => {
-  it('explains a changed project with the stub provider, then --retry on it makes no new call (already cached)', async () => {
+  it('explains a changed project with the stub provider, then --retry on it has nothing to re-run', async () => {
     write('a.txt', 'hi\n');
     await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
     write('a.txt', 'hi\nthere\n');
@@ -242,7 +242,7 @@ describe('runProjectExplainCli', () => {
     logs = [];
     const retried = await runProjectExplainCli(['explain', '--retry', digestId, '--db', dbPath]);
     expect(retried).toBe(0);
-    expect(logs.join('\n')).toContain(`digest ${digestId}: cached, 0 provider call(s)`);
+    expect(logs.join('\n')).toContain(`digest ${digestId}: nothing to retry`);
   });
 
   it('prints "No changes since last check" for an unchanged project', async () => {

@@ -14,6 +14,7 @@ export * from './briefing.js';
 export * from './context.js';
 export * from './digest.js';
 export * from './area.js';
+export * from './jobs.js';
 export * from './tells.js';
 export * from './lint-report.js';
 export * from './jobs.js';

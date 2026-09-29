@@ -3,8 +3,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import {
-  buildProjectContext, buildProjectMap, compactContext, contextSourceHash, hashUserMd, needsRefresh,
-  type ExplanationProvider, type ProjectMap,
+  buildProjectContext, buildProjectMap, compactContext, contextSourceHash, finishJob, hashUserMd, needsRefresh, startJob,
+  type ExplanationProvider, type JobRef, type ProjectContextResultOut, type ProjectMap,
 } from '@digestit/explain';
 import { EXPLAIN_LANGUAGES, type ProjectContextContent } from '@digestit/core';
 import { projectDataDir } from './datahome.js';
@@ -12,7 +12,10 @@ import { latestCheckpoint, type ProjectRow } from './project.js';
 import { listTree, openShadow, readTreeFile, type Shadow } from './shadow.js';
 
 export interface ContextBuildOptions {
-  budget: number;
+  /** Legacy per-call daily budget; ignored when `job` is given. */
+  budget?: number;
+  /** Already-started job (DIG-75): the build logs its calls against it and never checks the budget. */
+  job?: JobRef;
   now?: () => Date;
 }
 
@@ -35,7 +38,9 @@ export function latestContextText(db: DatabaseSync, repoId: number): string | un
  * snapshotted, never a denylisted file). `buildProjectMap` reads synchronously and chooses which
  * files to read from their paths alone, so one dry pass collects the paths, then they are loaded.
  */
-async function mapOfTree(shadow: Shadow, treeSha: string): Promise<ProjectMap> {
+/** Exported for DIG-75's job runner: the compact `ProjectMap` grounding used for a first Explain's
+ * digest parts, built in parallel with (instead of waiting for) the LLM project context. */
+export async function mapOfTree(shadow: Shadow, treeSha: string): Promise<ProjectMap> {
   const files = await listTree(shadow, treeSha);
   const wanted: string[] = [];
   buildProjectMap(files, (p) => {
@@ -51,17 +56,32 @@ function readUserMd(row: ProjectRow): string | null {
   return row.contextPath && existsSync(row.contextPath) ? readFileSync(row.contextPath, 'utf8') : null;
 }
 
-/** One build from the latest checkpoint: one provider call against the daily budget. */
+/** One build from the latest checkpoint: one provider call against the daily budget (or the given job). */
 export async function buildContext(
   db: DatabaseSync, home: string, row: ProjectRow, provider: ExplanationProvider, opts: ContextBuildOptions,
-) {
+): Promise<ProjectContextResultOut> {
   const latest = latestCheckpoint(db, row.id);
   if (!latest) throw new Error('project has no checkpoint yet');
   const shadow = await openShadow(projectDataDir(home, row.id), row.path);
   const map = await mapOfTree(shadow, latest.treeSha);
   return buildProjectContext(db, row.id, latest.id, row.name, map, readUserMd(row), provider, {
-    budget: opts.budget, now: opts.now, language: row.language,
+    ...(opts.job ? { job: opts.job } : { budget: opts.budget }), now: opts.now, language: row.language,
   });
+}
+
+/** A context refresh as its own job (`digest context`, `POST /api/projects/:id/context/refresh`):
+ * one budget unit, checked once; `budget` with no call when today's jobs are used up. */
+export async function refreshContext(
+  db: DatabaseSync, home: string, row: ProjectRow, provider: ExplanationProvider, opts: { budget: number; now?: () => Date },
+): Promise<ProjectContextResultOut> {
+  const now = opts.now ?? (() => new Date());
+  const jobId = startJob(db, 'context', { repoId: row.id }, opts.budget, now);
+  if (jobId === null) return { outcome: 'budget', content: null, calls: 0 };
+  try {
+    return await buildContext(db, home, row, provider, { job: { jobId, budget: opts.budget, now }, now });
+  } finally {
+    finishJob(db, jobId, now);
+  }
 }
 
 /** Whether the last build was written in another language than the project's current one. Its
@@ -80,26 +100,25 @@ function builtInOtherLanguage(sourceHash: string | null, map: ProjectMap, langua
  * README, a manifest, the user `.md` or the top-level folders changed since the last build, at
  * most once a day (`needsRefresh`). A change of the project's language always rebuilds, even
  * inside that daily throttle, so new digests are never grounded in the old language's context.
- * Returns whether a build ran.
+ * Returns the build's result, or `null` when no build ran.
  */
 export async function ensureContext(
   db: DatabaseSync, home: string, row: ProjectRow, provider: ExplanationProvider, opts: ContextBuildOptions,
-): Promise<boolean> {
+): Promise<ProjectContextResultOut | null> {
   const last = db.prepare(
     `SELECT pc.created_at AS createdAt, pc.user_context_hash AS userHash, pc.source_hash AS sourceHash, c.shadow_sha AS treeSha
      FROM project_context pc LEFT JOIN checkpoint c ON c.id = pc.checkpoint_id
      WHERE pc.repo_id = ? ORDER BY pc.created_at DESC, pc.id DESC LIMIT 1`,
   ).get(row.id) as { createdAt: string; userHash: string | null; sourceHash: string | null; treeSha: string | null } | undefined;
   const latest = latestCheckpoint(db, row.id);
-  if (!latest) return false;
+  if (!latest) return null;
   if (last) {
-    if (!last.treeSha) return false;
+    if (!last.treeSha) return null;
     const shadow = await openShadow(projectDataDir(home, row.id), row.path);
     const [prev, next] = [await mapOfTree(shadow, last.treeSha), await mapOfTree(shadow, latest.treeSha)];
     const now = (opts.now ?? (() => new Date()))();
     const languageChanged = builtInOtherLanguage(last.sourceHash, prev, row.language);
-    if (!languageChanged && !needsRefresh(prev, next, last.userHash, hashUserMd(readUserMd(row)), last.createdAt, now)) return false;
+    if (!languageChanged && !needsRefresh(prev, next, last.userHash, hashUserMd(readUserMd(row)), last.createdAt, now)) return null;
   }
-  await buildContext(db, home, row, provider, opts);
-  return true;
+  return buildContext(db, home, row, provider, opts);
 }
