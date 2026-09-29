@@ -176,12 +176,22 @@ cost note) avoids adding a field the model could get wrong.
   // apps/web/src/hunks.ts — pure, no new imports
   export interface HunkRange { side: 'old' | 'new'; start: number; end: number }
   export function hunkRange(h: PatchHunk): HunkRange {
-    const news = h.lines.map((l) => l.newNo).filter((n): n is number => n !== null);
-    if (news.length > 0) return { side: 'new', start: h.newStart, end: news[news.length - 1]! };
-    const olds = h.lines.map((l) => l.oldNo).filter((n): n is number => n !== null);
-    return { side: 'old', start: h.oldStart, end: olds[olds.length - 1] ?? h.oldStart };
+    const adds = h.lines.filter((l) => l.kind === 'add').map((l) => l.newNo!);
+    if (adds.length > 0) return { side: 'new', start: adds[0]!, end: adds[adds.length - 1]! };
+    const dels = h.lines.filter((l) => l.kind === 'del').map((l) => l.oldNo!);
+    return { side: 'old', start: dels[0] ?? h.oldStart, end: dels[dels.length - 1] ?? h.oldStart };
   }
   ```
+
+  (Revision note: the first draft filtered by `l.newNo !== null`, which is true for every `ctx`
+  line too — `splitPatch` gives context lines both an `oldNo` and a `newNo`, `hunks.ts:29`. Since
+  a unified hunk almost always has surrounding context, that version returned the *whole hunk's*
+  new-side span for nearly every hunk, including pure-deletion ones, and never reached the
+  old-side branch on real input. Filtering on `kind` — `'add'` for the new-side range, `'del'` for
+  the old-side one — fixes both: it reproduces this doc's own worked examples in §7 exactly
+  (`12–14` and `line 41`, not `10–15` and `40–41`), and a deletion-only hunk now actually takes the
+  old-side branch. Caught in review before this reached the CTO; see `hunks.test.ts`'s new
+  deletion-only case in the PR that implements this.)
 
 - **No overlap validation needed.** Two hunks of one file's unified diff cannot describe
   overlapping line ranges by construction (each `@@` header starts strictly after the previous
@@ -263,7 +273,23 @@ Everything proposed is **S** and client-only (`apps/web/src`); nothing here touc
 
 ## 10. Handoff
 
-Assigning to the UX Reviewer for critique — in particular: whether the P2 badge treatment
-actually reads as "which step" at a glance versus adding visual noise to every hunk block, and
-whether deferring the two-pane layout (§4) is the right call or worth a second opinion before it
-reaches the CTO.
+**Revision history.** Rev 1 went to the UX Reviewer, who confirmed P1's label format, P2's badge
+(kept as-is — reads as "which step" without adding noise), P3's focus/announce fix, the §4 defer
+(reading-pane-is-the-only-long-scroll principle in `docs/ux-v3.md §1` is real and applies), and
+§5's no-schema-change call — but blocked on §5's `hunkRange()` not reproducing its own worked
+examples (using `newNo !== null` as the "is this an added line" test, which is also true for
+context lines). Rev 2 (this version) applies the Reviewer's own corrected implementation verbatim
+(filtering on `l.kind === 'add'`/`'del'` instead of nullness) and re-checked it by hand against
+both §7 worked examples: `upload.js` → `12–14` ✓, `cli.js` → `line 41` ✓. Per the Reviewer's own
+comment ("once `hunkRange()` matches its own worked examples, this is ready for the CTO"), this
+revision is submitted directly to the CTO rather than looping back through the Reviewer again —
+everything else in the brief was already signed off unconditionally in rev 1.
+
+Open item carried forward for the CTO, not the Reviewer: §4's honest gap (a `≤3`-step area has no
+TOC, so no "steps on one side" affordance) — recommend accepting as-is per the reasoning there,
+but flagging since the issue's wording implies every area.
+
+Follow-up test to add during implementation (Reviewer's request, not yet a code change — this
+brief has no code, see §9): a `hunks.test.ts` case with a deletion-only hunk that has context
+lines on both sides, asserting `hunkRange()` returns the old-side range of just the deleted
+line(s), not the hunk's full old-side span.
