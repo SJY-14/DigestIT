@@ -1,6 +1,19 @@
 # Roadmap
 
-## UX improvement cycle 1 (in progress)
+## Removing the AI-made look (in progress)
+
+DIG-63 (Board, 2026-09-29): the UI and the generated explanations should read as human-crafted. The audit and its
+critique (`docs/ux/ai-look-audit.md`, `critique-2.md`) found the UI and the current real output clean. What's missing is
+a guard that keeps them that way.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-65 | AI-tell lint in the validators (en/ko), one retry, `style_warnings`; prompt style rules | Summarization engineer | — |
+| 0 | DIG-66 | UI-copy lint test over evaluated `copy.ts`; string sweep | Frontend engineer | — |
+| 1 | DIG-67 | Verify: before/after screens, lint counts, blind read; `docs/ux/ai-look-summary.md` | UX reviewer | DIG-65, DIG-66 |
+| 2 | — | Operator real-provider acceptance run (en and ko) | Board operator | DIG-65 |
+
+## UX improvement cycle 1 (done)
 
 DIG-55 (Board, 2026-09-28): a UX Reviewer audit, a Designer brief and a critique round, followed by a CTO decision
 (`docs/ux/audit-1.md`, `brief-1.md`, `critique-1.md`, `decision-1.md`). The decision: build P1–P4, P6 and P5 option A.
