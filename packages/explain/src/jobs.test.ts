@@ -1,137 +1,106 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
-import { StubProvider } from './stub.js';
-import {
-  explainAreaWalkthrough, explainDigestAreaText, explainDigestSummary, finishJob, markPartsBudget, setPrepMs, startJob,
-} from './jobs.js';
+import { budgetStatus, finishJob, logJobCall, markPartsBudget, setPrepMs, startJob } from './jobs.js';
 
-function seedDigest(db: DatabaseSync, files: { path: string; status?: 'A' | 'M' | 'D'; additions?: number; deletions?: number; patch?: string | null }[]): number {
+function seed(db: DatabaseSync): number {
   db.prepare("INSERT INTO repo (id, name, path) VALUES (1, 'DigestIT', '/x')").run();
   const r = db.prepare("INSERT INTO change_unit (repo_id, kind, head_sha, title) VALUES (1, 'digest', 'shadow1', 'digest')").run();
-  const id = Number(r.lastInsertRowid);
-  for (const f of files) {
-    db.prepare('INSERT INTO file_change (change_unit_id, path, status, additions, deletions, patch) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, f.path, f.status ?? 'M', f.additions ?? 5, f.deletions ?? 1, f.patch === undefined ? '@@ -1,1 +1,5 @@\n+added line\n' : f.patch);
-  }
-  return id;
+  return Number(r.lastInsertRowid);
 }
 
-const jobRow = (db: DatabaseSync, id: number) =>
-  db.prepare('SELECT kind, area_id AS areaId, started_at AS startedAt, finished_at AS finishedAt, prep_ms AS prepMs FROM explain_job WHERE id = ?')
-    .get(id) as { kind: string; areaId: string | null; startedAt: string; finishedAt: string | null; prepMs: number | null };
-
-describe('startJob / finishJob', () => {
-  it('writes one row per action and finishes it', () => {
+describe('startJob/finishJob/budgetStatus', () => {
+  it('counts a job once no matter how many parts logged ok/error calls against it', () => {
     const db = openDb(':memory:');
-    const changeUnitId = seedDigest(db, [{ path: 'a.ts' }]);
-    const id = startJob(db, 'explain', { repoId: 1, changeUnitId }, 40, () => new Date('2026-01-01T00:00:00Z'));
-    expect(id).not.toBeNull();
-    expect(jobRow(db, id!)).toMatchObject({ kind: 'explain', finishedAt: null });
-    setPrepMs(db, id!, 42);
-    finishJob(db, id!, () => new Date('2026-01-01T00:00:01Z'));
-    const row = jobRow(db, id!);
-    expect(row.prepMs).toBe(42);
-    expect(row.finishedAt).toBe('2026-01-01T00:00:01.000Z');
+    const id = seed(db);
+    const jobId = startJob(db, 'explain', { repoId: 1, changeUnitId: id }, 5);
+    expect(jobId).not.toBeNull();
+    logJobCall(db, new Date(), 'digest', { jobId: jobId!, part: 'summary', changeUnitId: id, model: 'sonnet', durationMs: 10, outcome: 'ok' });
+    logJobCall(db, new Date(), 'digest', { jobId: jobId!, part: 'area:a', changeUnitId: id, model: 'sonnet', durationMs: 10, outcome: 'ok' });
+    expect(budgetStatus(db, new Date())).toBe(1);
+    finishJob(db, jobId!);
+    const row = db.prepare('SELECT finished_at FROM explain_job WHERE id = ?').get(jobId) as { finished_at: string | null };
+    expect(row.finished_at).not.toBeNull();
   });
 
-  it('returns null once today\'s job budget is spent, without writing a row', () => {
+  it('does not count a job with no ok/error call yet (only a pending/budget row)', () => {
     const db = openDb(':memory:');
-    const now = () => new Date('2026-01-01T00:00:00Z');
-    const changeUnitId = seedDigest(db, [{ path: 'a.ts' }]);
-    // Two prior jobs, each with one settled call, count as 2 used units.
-    for (let i = 0; i < 2; i++) {
-      db.prepare("INSERT INTO explain_job (id, kind, started_at) VALUES (?, 'explain', ?)").run(i + 1, now().toISOString());
-      db.prepare("INSERT INTO explain_call (at, change_unit_id, reason, duration_ms, outcome, job_id) VALUES (?, ?, 'digest', 5, 'ok', ?)")
-        .run(now().toISOString(), changeUnitId, i + 1);
-    }
-    expect(startJob(db, 'explain', {}, 2, now)).toBeNull();
-    expect(db.prepare('SELECT count(*) AS n FROM explain_job').get() as { n: number }).toEqual({ n: 2 });
+    const id = seed(db);
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 5);
+    expect(budgetStatus(db, new Date())).toBe(0);
+    expect(jobId).not.toBeNull();
   });
 
-  it('does not count a legacy explain_call with no job_id twice, and counts each such row as one unit', () => {
+  it('counts a legacy explain_call row (no job_id) as one, alongside jobs', () => {
     const db = openDb(':memory:');
-    const now = () => new Date('2026-01-01T00:00:00Z');
-    const changeUnitId = seedDigest(db, [{ path: 'a.ts' }]);
+    const id = seed(db);
     db.prepare("INSERT INTO explain_call (at, change_unit_id, reason, duration_ms, outcome) VALUES (?, ?, 'digest', 5, 'ok')")
-      .run(now().toISOString(), changeUnitId);
-    expect(startJob(db, 'explain', {}, 1, now)).toBeNull();
-    expect(startJob(db, 'explain', {}, 2, now)).not.toBeNull();
-  });
-});
-
-describe('markPartsBudget', () => {
-  it('records a budget outcome per part, restart-recoverable', () => {
-    const db = openDb(':memory:');
-    const id = seedDigest(db, [{ path: 'a.ts' }]);
-    markPartsBudget(db, id, ['summary', 'area:a'], () => new Date('2026-01-01T00:00:00Z'));
-    const rows = db.prepare("SELECT part, outcome FROM explain_call WHERE change_unit_id = ?").all(id) as unknown as { part: string; outcome: string }[];
-    expect(rows.map((r) => [r.part, r.outcome]).sort()).toEqual([['area:a', 'budget'], ['summary', 'budget']]);
-  });
-});
-
-describe('explainDigestSummary (interim: one combined call)', () => {
-  it('runs the existing digest call and reports it as the summary part', async () => {
-    const db = openDb(':memory:');
-    const id = seedDigest(db, [{ path: 'apps/web/src/App.tsx' }]);
-    const provider = new StubProvider();
-    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40, () => new Date())!;
-    const r = await explainDigestSummary(db, id, provider, { job: { jobId, budget: 40 } });
-    expect(r.outcome).toBe('ok');
-    expect(r.calls).toBe(1);
-  });
-});
-
-describe('explainDigestAreaText (interim: free read of the summary result)', () => {
-  it('is "cached" with 0 calls once the area is present in the summary\'s L2', async () => {
-    const db = openDb(':memory:');
-    const id = seedDigest(db, [{ path: 'apps/web/src/App.tsx' }]);
-    const provider = new StubProvider();
-    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40, () => new Date())!;
-    const summary = await explainDigestSummary(db, id, provider, { job: { jobId, budget: 40 } });
-    expect(summary.outcome).toBe('ok');
-    const l2 = db.prepare('SELECT content FROM explanation WHERE change_unit_id = ? AND level = 2').get(id) as { content: string };
-    const areaId = (JSON.parse(l2.content) as { items: { id: string }[] }).items[0]!.id;
-    const r = await explainDigestAreaText(db, id, areaId, provider, { job: { jobId, budget: 40 } });
-    expect(r).toEqual({ outcome: 'cached', calls: 0 });
+      .run(new Date().toISOString(), id);
+    expect(budgetStatus(db, new Date())).toBe(1);
+    const jobId = startJob(db, 'explain', { changeUnitId: id }, 2);
+    expect(jobId).not.toBeNull();
+    logJobCall(db, new Date(), 'digest', { jobId: jobId!, part: 'summary', changeUnitId: id, model: 'sonnet', durationMs: 5, outcome: 'ok' });
+    expect(budgetStatus(db, new Date())).toBe(2);
   });
 
-  it('is "error" when the summary did not produce this area id', async () => {
+  it('checks the budget once, at startJob: refuses a new job once the limit is hit, even mid-day', () => {
     const db = openDb(':memory:');
-    const id = seedDigest(db, [{ path: 'apps/web/src/App.tsx' }]);
-    const provider = new StubProvider();
-    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40, () => new Date())!;
-    await explainDigestSummary(db, id, provider, { job: { jobId, budget: 40 } });
-    const r = await explainDigestAreaText(db, id, 'no-such-area', provider, { job: { jobId, budget: 40 } });
-    expect(r.outcome).toBe('error');
+    const id = seed(db);
+    const now = new Date();
+    for (let i = 0; i < 3; i++) {
+      const jobId = startJob(db, 'area', { changeUnitId: id }, 3, () => now);
+      expect(jobId).not.toBeNull();
+      logJobCall(db, now, 'area', { jobId: jobId!, part: `walkthrough:a${i}`, changeUnitId: id, model: 'sonnet', durationMs: 1, outcome: 'ok' });
+    }
+    expect(startJob(db, 'area', { changeUnitId: id }, 3, () => now)).toBeNull();
+    expect(budgetStatus(db, now)).toBe(3);
   });
 
-  it('is "error" with no call when the summary has not run yet', async () => {
+  it('only counts calls from today, not a job started yesterday', () => {
     const db = openDb(':memory:');
-    const id = seedDigest(db, [{ path: 'apps/web/src/App.tsx' }]);
-    const provider = new StubProvider();
-    const r = await explainDigestAreaText(db, id, 'settings-ui', provider, { job: { jobId: 1, budget: 40 } });
-    expect(r).toEqual({ outcome: 'error', calls: 0, detail: 'area not produced by the summary call' });
+    const id = seed(db);
+    const yesterday = new Date(Date.now() - 24 * 3_600_000);
+    const jobId = startJob(db, 'explain', { changeUnitId: id }, 5, () => yesterday);
+    logJobCall(db, yesterday, 'digest', { jobId: jobId!, part: 'summary', changeUnitId: id, model: 'sonnet', durationMs: 5, outcome: 'ok' });
+    expect(budgetStatus(db, new Date())).toBe(0);
   });
-});
 
-describe('explainAreaWalkthrough', () => {
-  it('reports a real, independent per-area call and calls onProgress once with the final result', async () => {
+  it('logs the DIG-73 timing columns', () => {
     const db = openDb(':memory:');
-    const id = seedDigest(db, [{ path: 'apps/web/src/App.tsx' }]);
-    const provider = new StubProvider();
-    // Seed the digest's own L0/L1/L2 explanation rows that explainArea reads for grounding.
-    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40, () => new Date())!;
-    await explainDigestSummary(db, id, provider, { job: { jobId, budget: 40 } });
-    const l2 = db.prepare('SELECT content FROM explanation WHERE change_unit_id = ? AND level = 2').get(id) as { content: string };
-    const areaId = (JSON.parse(l2.content) as { items: { id: string }[] }).items[0]!.id;
-
-    const events: { done: boolean }[] = [];
-    const r = await explainAreaWalkthrough(db, id, areaId, provider, {
-      job: { jobId, budget: 40 }, onProgress: (e) => events.push(e),
+    const id = seed(db);
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 5)!;
+    logJobCall(db, new Date(), 'area', {
+      jobId, part: 'walkthrough:ui', changeUnitId: id, model: 'sonnet', effort: 'low',
+      timing: { startupMs: 100, ttftMs: 200, genMs: 300, inputTokens: 1000, outputTokens: 50 },
+      durationMs: 600, outcome: 'ok',
     });
-    expect(r.outcome).toBe('ok');
-    expect(events).toHaveLength(1);
-    expect(events[0]!.done).toBe(true);
+    const row = db.prepare('SELECT job_id, part, model, effort, startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens FROM explain_call WHERE job_id = ?')
+      .get(jobId) as Record<string, unknown>;
+    expect(row).toEqual({
+      job_id: jobId, part: 'walkthrough:ui', model: 'sonnet', effort: 'low',
+      startup_ms: 100, ttft_ms: 200, gen_ms: 300, input_tokens: 1000, output_tokens: 50,
+    });
+  });
+});
+
+describe('setPrepMs / markPartsBudget', () => {
+  it('stores prep_ms on the job row', () => {
+    const db = openDb(':memory:');
+    const id = seed(db);
+    const jobId = startJob(db, 'explain', { repoId: 1, changeUnitId: id }, 5)!;
+    setPrepMs(db, jobId, 42);
+    expect(db.prepare('SELECT prep_ms FROM explain_job WHERE id = ?').get(jobId)).toEqual({ prep_ms: 42 });
+  });
+
+  it('records a budget outcome per part that does not itself use up the budget', () => {
+    const db = openDb(':memory:');
+    const id = seed(db);
+    markPartsBudget(db, id, ['summary', 'area:a', 'context'], () => new Date());
+    const rows = db.prepare('SELECT part, reason, outcome FROM explain_call WHERE change_unit_id = ? ORDER BY part')
+      .all(id) as unknown as { part: string; reason: string; outcome: string }[];
+    expect(rows.map((r) => [r.part, r.reason, r.outcome])).toEqual([
+      ['area:a', 'digest', 'budget'], ['context', 'context', 'budget'], ['summary', 'digest', 'budget'],
+    ]);
+    expect(budgetStatus(db, new Date())).toBe(0);
   });
 });

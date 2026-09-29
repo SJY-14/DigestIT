@@ -1,5 +1,6 @@
 import type {
   AreaWalkthrough,
+  DigestAreaSkeleton,
   DigestL2Content,
   ExplainLanguage,
   L0Content,
@@ -7,7 +8,47 @@ import type {
   L2Content,
   L3Content,
   ProjectContextContent,
+  WalkthroughStep,
 } from '@digestit/core';
+
+/** The four Fast Explain tasks (docs/explain-speed.md §3), each with its own model/effort. */
+export type ExplainTask = 'context' | 'summary' | 'area' | 'walkthrough';
+export const EXPLAIN_TASKS: readonly ExplainTask[] = ['context', 'summary', 'area', 'walkthrough'];
+
+/** `claude --effort`. */
+export type Effort = 'low' | 'medium' | 'high';
+
+/** Per-call timing (docs/explain-speed.md §1), from the CLI's `stream-json` events. */
+export interface CallTiming {
+  /** Spawn to the CLI's `system`/`init` event. */
+  startupMs: number;
+  /** Init to the first text delta. */
+  ttftMs: number;
+  /** First text delta to the `result` event. */
+  genMs: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}
+
+/** Outcome of one part of a split Explain (docs/explain-speed.md §4); shared by every part function. */
+export type PartOutcome = {
+  outcome: 'ok' | 'truncated' | 'error' | 'cached';
+  calls: number;
+  detail?: string;
+};
+
+/** A provider call's own model/effort and timing, present once the call is made over `stream-json`. */
+export interface CallMeta {
+  effort?: Effort;
+  timing?: CallTiming;
+}
+
+/** Steps arrive in order and are only ever appended; `overview` is set once the model has written it. */
+export interface AreaStreamChunk {
+  overview: string | null;
+  steps: WalkthroughStep[];
+  done: boolean;
+}
 
 export interface ProviderFile {
   path: string;
@@ -199,7 +240,7 @@ export interface ContextInput {
   retryFeedback?: string[];
 }
 
-export interface ContextResult {
+export interface ContextResult extends CallMeta {
   content: ProjectContextContent;
   provider: string;
   model: string;
@@ -232,6 +273,55 @@ export interface DigestResult {
 }
 
 /**
+ * Prepared input for the split `summary` part (docs/explain-speed.md §4): the
+ * whole diff under a smaller budget, plus the deterministic area list (labels
+ * only, no LLM text yet) so L0/L1 can refer to "the area list" for shape.
+ */
+export interface DigestSummaryInput {
+  repoName: string;
+  files: ProviderFile[];
+  areas: Pick<DigestAreaSkeleton, 'id' | 'label'>[];
+  context?: string;
+  language: ExplainLanguage;
+  retryFeedback?: string[];
+}
+
+export interface DigestSummaryLevels {
+  l0: L0Content;
+  l1: L1Content;
+}
+
+export interface DigestSummaryResult extends CallMeta {
+  levels: DigestSummaryLevels;
+  provider: string;
+  model: string;
+}
+
+/** Prepared input for one `area:<id>` part: only that area's own files. */
+export interface DigestAreaTextInput {
+  repoName: string;
+  area: Pick<DigestAreaSkeleton, 'id' | 'label'>;
+  areas: Pick<DigestAreaSkeleton, 'id' | 'label'>[];
+  files: ProviderFile[];
+  context?: string;
+  language: ExplainLanguage;
+  retryFeedback?: string[];
+}
+
+export interface DigestAreaTextContent {
+  title: string;
+  effect: string;
+  how: string;
+  why: string;
+}
+
+export interface DigestAreaTextResult extends CallMeta {
+  content: DigestAreaTextContent;
+  provider: string;
+  model: string;
+}
+
+/**
  * Prepared input for one L2 area's lazy L3 (DIG-37): only that area's own
  * files (already filtered, budgeted and redacted), plus the digest's L0/L1
  * and this area's own L2 item as grounding, and the compact project context.
@@ -247,7 +337,7 @@ export interface AreaInput {
   retryFeedback?: string[];
 }
 
-export interface AreaResult {
+export interface AreaResult extends CallMeta {
   content: AreaWalkthrough;
   provider: string;
   model: string;
@@ -266,8 +356,16 @@ export interface ExplanationProvider {
   briefing?(input: BriefingFacts): Promise<BriefingResult>;
   /** One call returns the project's purpose, key modules, glossary and conventions. */
   explainContext?(input: ContextInput): Promise<ContextResult>;
-  /** One call returns L0 + L1 + L2 areas for a digest. */
+  /** One call returns L0 + L1 + L2 areas for a digest (the one-call path; kept for the CLI). */
   digest?(input: DigestInput): Promise<DigestResult>;
-  /** One call returns the lazy L3 walkthrough (overview, steps over hunks, what to check) for one L2 area. */
-  explainArea?(input: AreaInput): Promise<AreaResult>;
+  /** Split `summary` part (DIG-74/75): one call returns L0 + L1 only. */
+  explainDigestSummary?(input: DigestSummaryInput): Promise<DigestSummaryResult>;
+  /** Split `area:<id>` part (DIG-74/75): one call returns one area's title/effect/how/why. */
+  explainDigestAreaText?(input: DigestAreaTextInput): Promise<DigestAreaTextResult>;
+  /**
+   * One call returns the lazy L3 walkthrough (overview, steps over hunks, what to check) for one
+   * L2 area. `onProgress`, when given, is called with the partial walkthrough as it streams;
+   * steps are only ever appended, never reordered or edited.
+   */
+  explainArea?(input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult>;
 }

@@ -2,15 +2,17 @@ import { parseArgs } from 'node:util';
 import { openDb } from '@digestit/core';
 import { createProvider } from './config.js';
 import { DEFAULT_BUDGET, explainAll } from './pipeline.js';
+import { formatTimingReport, timingReport } from './timing-report.js';
 
-export const USAGE = `usage: digest explain --all|--unit <id,...> [options]   (also: digest-explain ...)
+export const USAGE = `usage: digest explain --all|--unit <id,...>|--timing [options]   (also: digest-explain ...)
   --db <file>             SQLite file (default $DIGESTIT_DB or .cache/digestit.sqlite)
   --provider <name>       stub | claude-code (default $DIGESTIT_PROVIDER or stub)
   --allow <repo,...>      repo allowlist (default $DIGESTIT_ALLOWLIST or DigestIT)
   --unit <id,...>         only these change unit ids instead of --all
   --concurrency <n>       parallel provider calls (default 2)
   --max-calls <n>         per-run cap on provider calls, retries included (default ${DEFAULT_BUDGET.maxCalls})
-  --budget-tokens <n>     per-run cap on estimated input tokens (default ${DEFAULT_BUDGET.maxTokens})`;
+  --budget-tokens <n>     per-run cap on estimated input tokens (default ${DEFAULT_BUDGET.maxTokens})
+  --timing                read-only: print startup/ttft/gen percentiles per part/model/effort, then exit`;
 
 function num(name: string, v: string | undefined): number | undefined | 'bad' {
   if (v === undefined) return undefined;
@@ -34,11 +36,21 @@ export async function runExplainCli(args: string[]): Promise<number> {
       options: {
         all: { type: 'boolean' }, db: { type: 'string' }, provider: { type: 'string' }, allow: { type: 'string' },
         unit: { type: 'string' }, concurrency: { type: 'string' }, 'max-calls': { type: 'string' }, 'budget-tokens': { type: 'string' },
+        timing: { type: 'boolean' },
       },
     }));
   } catch (e) {
     console.error(`${e instanceof Error ? e.message : String(e)}\n${USAGE}`);
     return 2;
+  }
+  if (values.timing) {
+    const db = openDb(values.db ?? process.env.DIGESTIT_DB);
+    try {
+      console.log(formatTimingReport(timingReport(db)));
+      return 0;
+    } finally {
+      db.close();
+    }
   }
   if (!values.all && !values.unit) {
     console.error(USAGE);
