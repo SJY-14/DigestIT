@@ -284,7 +284,7 @@ function useNarrow(breakpoint = 1000): boolean {
   return narrow;
 }
 
-export function MainV2() {
+export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) => void } = {}) {
   const [projects, setProjects] = useState<ProjectDto[] | null>(null);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [projectsNotFound, setProjectsNotFound] = useState(false);
@@ -330,6 +330,9 @@ export function MainV2() {
   // The UI chrome's language follows the current project's setting; 'en' before any project is
   // known (the setup form, or while projects are still loading).
   const lang: ExplainLanguage = projects?.find((p) => p.id === currentProjectId)?.language ?? 'en';
+  // App keeps the last-known project language for its own chrome (the nav, the History menu),
+  // since it stays mounted on pages this component doesn't (DIG-60).
+  useEffect(() => { onLanguage?.(lang); }, [lang, onLanguage]);
   useEffect(() => {
     if (url.project === null && fallbackProjectId !== null) replace({ project: fallbackProjectId });
     // eslint-disable-next-line react-hooks/exhaustive-deps

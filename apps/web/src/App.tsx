@@ -3,7 +3,8 @@ import type { OpenedVia } from './api.js';
 import { levelForKey, loadLevel, saveLevel, stepForKey } from './level.js';
 import { Panel } from './Panel.js';
 import { commitLabel, formatDate, relativeTime, shortSha } from './format.js';
-import { plural } from './copy.js';
+import { navCopy, plural, type Lang } from './copy.js';
+import { fetchProjects } from './v2Api.js';
 import { Graph } from './Graph.js';
 import { useTimeline } from './useTimeline.js';
 import { useLive } from './useLive.js';
@@ -19,7 +20,9 @@ const UNIT_HASH = '#unit=';
 type Page = 'main' | 'units' | 'timeline' | 'briefing' | 'insights';
 const PATH_FOR: Record<Page, string> = { main: '/', units: '/units', timeline: '/timeline', briefing: '/briefing', insights: '/insights' };
 const HISTORY_PAGES = ['units', 'timeline', 'briefing', 'insights'] as const;
-const PAGE_LABEL: Record<Page, string> = { main: 'Home', units: 'Units', timeline: 'Timeline', briefing: 'Briefing', insights: 'Insights' };
+const HISTORY_DESC_KEY = {
+  units: 'unitsDesc', timeline: 'timelineDesc', briefing: 'briefingDesc', insights: 'insightsDesc',
+} as const satisfies Record<(typeof HISTORY_PAGES)[number], keyof ReturnType<typeof navCopy>>;
 
 function pageFor(path: string): Page {
   switch (path.replace(/\/+$/, '')) {
@@ -64,6 +67,35 @@ function usePage(): [Page, (p: Page) => void] {
 export function App() {
   const { repos, repoId, setRepoId, rows, done, loading, error, loadMore } = useTimeline();
   const [page, setPage] = usePage();
+  // The last-known project language, for the nav/History-menu chrome (DIG-60): MainV2 (mounted
+  // only on the "main" page) reports it here via `onLanguage`, so it survives switching to a
+  // History page even after MainV2 unmounts. `langKnown` tracks whether a real value (from
+  // MainV2 or the cold-load fetch below) has replaced the 'en' default, so the fetch fires at
+  // most once and never overrides a value MainV2 already reported.
+  const [lang, setLang] = useState<Lang>('en');
+  const langKnown = useRef(false);
+  const onLanguage = useCallback((l: Lang) => {
+    langKnown.current = true;
+    setLang(l);
+  }, []);
+  // Cold-load fallback (critique of brief-1, P1): a History page can be the first page opened
+  // this session, in which case MainV2 never mounts to report a language at all. `repoId` and a
+  // v2 project's id are the same underlying row (see `findProjectRow`, apps/server/src/v2.ts), so
+  // the repo this History page is showing can be looked up in the existing v2 projects list with
+  // no new endpoint.
+  useEffect(() => {
+    if (langKnown.current || page === 'main' || repoId === null) return;
+    langKnown.current = true;
+    const ac = new AbortController();
+    fetchProjects(ac.signal).then(
+      (projects) => {
+        const p = projects.find((pr) => pr.id === repoId);
+        if (p) setLang(p.language);
+      },
+      () => undefined, // stays at the 'en' default
+    );
+    return () => ac.abort();
+  }, [page, repoId]);
   const live = useLive(repoId);
   const reviews = reviewStates(live.metrics);
   const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null);
@@ -185,6 +217,7 @@ export function App() {
 
   const selectedRow = rows.find((r) => r.commit.sha === selected)?.commit;
   const gutter = rows.reduce((m, r) => Math.max(m, r.lanes.width), 1);
+  const T = navCopy(lang);
 
   return (
     <div className={page === 'main' ? 'app with-panel home' : anySelected && showsPanel ? 'app with-panel' : 'app'}>
@@ -202,11 +235,12 @@ export function App() {
         {page !== 'main' && repos.length === 1 && <span className="repo-name">{repos[0]?.name}</span>}
         <nav className="nav" aria-label="Pages">
           <a href={PATH_FOR.main} aria-current={page === 'main' ? 'page' : undefined} onClick={(e) => { e.preventDefault(); setPage('main'); }}>
-            {PAGE_LABEL.main}
+            {T.home}
           </a>
           <details className="history-menu" ref={historyMenu}>
-            <summary>History</summary>
+            <summary>{T.history}</summary>
             <div className="history-menu-list" role="menu">
+              <span className="history-menu-label">{T.otherViews}</span>
               {HISTORY_PAGES.map((p) => (
                 <a
                   key={p}
@@ -215,7 +249,8 @@ export function App() {
                   aria-current={page === p ? 'page' : undefined}
                   onClick={(e) => { e.preventDefault(); closeHistoryMenu(); setPage(p); }}
                 >
-                  {PAGE_LABEL[p]}
+                  <span className="menu-item-label">{T[p]}</span>
+                  <span className="menu-item-desc">{T[HISTORY_DESC_KEY[p]]}</span>
                 </a>
               ))}
             </div>
@@ -228,7 +263,7 @@ export function App() {
         )}
       </header>
       {page === 'main' ? (
-        <MainV2 />
+        <MainV2 onLanguage={onLanguage} />
       ) : !showsPanel ? (
         <main>
           <p className="muted">Daily and weekly briefings aren't available yet.</p>

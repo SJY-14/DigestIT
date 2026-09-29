@@ -196,6 +196,19 @@ const select = async (el: HTMLSelectElement, value: string) => {
   });
 };
 
+describe('MainV2: onLanguage (DIG-60)', () => {
+  it('reports the current project language, and updates it if the project switches', async () => {
+    projectsResponse = [fixtureProject, { ...fixtureProject2, language: 'ko' }];
+    const onLanguage = vi.fn();
+    await render(<MainV2 onLanguage={onLanguage} />);
+    await ready();
+    await waitFor(() => onLanguage.mock.calls.some((c) => c[0] === 'en'));
+
+    await select(host.querySelector('.project-switcher') as HTMLSelectElement, String(fixtureProject2.id));
+    await waitFor(() => onLanguage.mock.calls.some((c) => c[0] === 'ko'));
+  });
+});
+
 describe('MainV2: switching projects (DIG-57)', () => {
   beforeEach(() => { projectsResponse = [fixtureProject, fixtureProject2]; });
 
