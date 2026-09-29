@@ -103,17 +103,20 @@ overview in the same digest" — the area prompt already receives the digest's L
 (`area.ts` `digestBlock`), so the model has what it needs to check this itself. Low cost, and
 folds naturally into the same prompt-rule change as Finding 1.
 
-### 3. [judgment call, not confirmed] "Explaining… 5s" progress label
+### 3. [reviewed, no change] "Explaining… 12s" progress label
 
-`docs/ux/screens` (light-en-header-running / running-later) shows a primary button reading
-"Explaining… 5s" with a spinning ring while a digest is generated. This sits close to the
+`.cache/dig47-acceptance/old/shots-claude-code-dig47/light-en-header-running-later.png` (corrected
+citation — not under `docs/ux/screens/`, which doesn't have this shot) shows a primary button
+reading "Explaining… 12s" with a spinning ring while a digest is generated. This sits close to the
 issue's banned "Analyzing…, Thinking…, Generating magic…" pattern in *shape* (ellipsis + verb +
-spinner), but differs in substance: it names the literal action in progress and shows real
-elapsed time (per `docs/ux-v3.md` section 4: "running state with elapsed seconds... so a reload
-keeps the timer"), which is the opposite of vague "thinking" copy — it reads more like a CI job's
-"Building… 42s" than a chatbot's "Thinking…". I'm not marking this a defect; flagging it because
-it's the one place the two patterns visually rhyme, and the Reviewer should make the final call
-on whether the rhyme itself is worth avoiding (e.g. dropping the ellipsis, "Explaining (5s)").
+spinner), but differs in substance: it names the literal action in progress and shows real,
+ticking elapsed time (per `docs/ux-v3.md` section 4: "running state with elapsed seconds... so a
+reload keeps the timer"), which is the opposite of vague "thinking" copy — it reads like a CI
+job's "Running… 12s," not a chatbot's "Thinking…". Reviewed against the actual pixels (not just
+the copy) per critique-2.md: closing this as no-change. Making the label less concrete to avoid
+the ellipsis-rhyme (a bare spinner, or "Working…") would be a regression — it would remove the
+live counter that's the actual reason this doesn't read as AI-coded. If anything the only tell
+here is the ellipsis alone, which isn't worth a change by itself.
 
 ### 4. [gap, low priority] No copy-lint test yet to guard the "already clean" state
 
@@ -121,28 +124,63 @@ on whether the rhyme itself is worth avoiding (e.g. dropping the ellipsis, "Expl
 above), but there's no test enforcing that — a future change could reintroduce one and nothing
 would catch it before a human read it. This is exactly the "UI-copy lint test" DIG-63 asks for
 under "Both." Low priority only because there's nothing to *fix* today; it's a regression guard,
-not a current defect. Concretely: a small vitest in `apps/web/src` reading `copy.ts` as source
-text (the existing test suite already reads `.css` as text for a different check, per this repo's
-memory notes on Vitest CSS stubbing — same technique applies to reading `.ts` source, or just
-`import * as copy from './copy.js'` and check the exported string/function outputs) against a
-banned-word list, `/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u`, and `/!/`.
+not a current defect.
+
+Concretely, two different checks need two different inputs, per critique-2.md: `copy.ts` is
+TypeScript, not a string table, and already has legitimate `!` characters that aren't exclamation
+marks (`!builtLabel`, `!/^[a-z][a-z0-9_]*$/.test(code)` — confirmed by grep, two hits, both
+negation/regex syntax). A literal `/!/` test against the raw source would red-build on code that's
+already merged, for a reason that has nothing to do with tone. So: `import * as copy from
+'./copy.js'`, walk the exported strings and function outputs, and run `/!/` only against those
+*evaluated* values, never the source text. The banned-word list and the emoji range
+(`/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u`) don't collide with TS syntax the same way, so they
+can run against either the evaluated strings or the raw source — evaluated strings is still the
+simpler single method to build and maintain, so use it for all three checks rather than mixing
+methods.
 
 ## New tells to add to the checklist
 
-- **Same-opener repetition across sibling generations in one response** (Finding 2) — the
+- **Same-opener repetition across sibling generations within one digest** (Finding 2) — the
   existing checklist is written per-field ("openers like…"); it doesn't cover the case where each
   individual field passes but the *set* of fields reads as templated because they share an
   opener. Worth adding as its own line since it can't be caught by a single-string pattern match —
-  it needs a cross-field check or a prompt rule, not a regex.
-- **Progress-copy that rhymes with "thinking" language even when it's factually concrete**
-  (Finding 3) — the checklist's example list ("Analyzing…", "Thinking…") is about vague verbs;
-  worth noting that ellipsis+spinner is itself a visual/rhythmic signal independent of the words
-  used, so a factually honest label can still trigger the same reaction.
+  it needs a cross-field check or a prompt rule, not a regex. Scoped explicitly to *within one
+  digest*: the observed case was two area overviews in the same walkthrough, not a pattern across
+  unrelated digests — a global opener-tracker would be more expensive to build and isn't what was
+  observed, so don't scope the fix wider than the evidence.
+- **Question to ask, not a default-to-fix pattern: does this progress copy rhyme with "thinking"
+  language only in rhythm, or is it actually vague?** (Finding 3) — the checklist's example list
+  ("Analyzing…", "Thinking…") is about vague verbs with no real referent; ellipsis+spinner is a
+  separate, purely visual/rhythmic signal that can co-occur with genuinely concrete, honest copy
+  (a live elapsed-time counter naming the real action, as in Finding 3). When auditing this in
+  future cycles, check whether the copy names a real action and shows real progress before
+  flagging it — pattern-matching on shape alone risks "fixing" a legitimately good indicator into
+  a vaguer one.
+
+## Revision note (after critique-2.md)
+
+This is the Designer's one revision pass per the loop, addressing all three requested changes in
+`critique-2.md`:
+
+- Finding 3 reworded from "judgment call, not confirmed" to "reviewed, no change" (closed, not
+  carried forward), and its screenshot citation corrected to
+  `.cache/dig47-acceptance/old/shots-claude-code-dig47/light-en-header-running-later.png`.
+- Finding 4's fix direction corrected: the `/!/` check must run against evaluated `copy.ts`
+  exports, not raw source text (raw-source `/!/` would false-positive on existing negation/regex
+  syntax); the import-and-evaluate method is now the primary (only) method, not a fallback.
+- Both new checklist items reworded: the opener-repetition item is now scoped explicitly to
+  "within one digest," and the progress-copy item is now phrased as a question to ask rather than
+  a default-to-fix pattern.
+
+No other changes — Findings 1 and 2, and the "already clean" section, stand as critique-2.md
+confirmed them (including the independent regex-sweep verification of the "no real tells in the
+sample" claim).
 
 ## Handoff
 
-Reassigning DIG-63 to the UX Reviewer for critique per the loop: check whether Findings 1–4 are
-real and correctly scoped, whether the "already clean" section is actually clean (spot-check a
-few claims against the code rather than trusting this doc), and whether the two new checklist
-items are worth keeping. Finding 1 is the one that matters most for the CTO's Frontend/
-Summarization split — everything else is small.
+Ready for the CTO to decide and split per the loop (step 3): Finding 1 (build the real AI-tell
+lint, `style_warnings` field, retry-on-style-warning — retry plumbing already exists and is
+reusable) and Finding 2 (one prompt-rule line against same-opener repetition, folds into the same
+change) go to Summarization. Finding 4 (copy-lint regression test, evaluated-exports method) goes
+to Frontend. Finding 3 is closed, no build needed. The two new checklist items are confirmed
+additions to the issue's "AI tells" list for future audits.
