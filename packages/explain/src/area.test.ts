@@ -4,13 +4,13 @@ import { openDb } from '@digestit/core';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AreaWalkthrough, DigestL2Content, DigestL2Item, ExplainLanguage, L0Content, L1Content } from '@digestit/core';
+import type { AreaProgressEvent, AreaWalkthrough, DigestL2Content, DigestL2Item, ExplainLanguage, L0Content, L1Content } from '@digestit/core';
 import { splitHunks } from '@digestit/core/hunks';
 import {
   AREA_PROMPT_VERSION, DIGEST_PROMPT_VERSION, OTHER_CHANGES, RepoNotAllowedError, StubProvider, areaHunks, buildAreaPrompt,
-  checkAreaWalkthrough, checkDigestLevels, createProvider, explainArea, prepareAreaInput, prepareDigestInput,
+  checkAreaWalkthrough, checkDigestLevels, createProvider, explainArea, prepareAreaInput, prepareDigestInput, startJob,
 } from './index.js';
-import type { AreaInput, AreaResult, ExplanationProvider, ProviderFile } from './index.js';
+import type { AreaInput, AreaResult, AreaStreamChunk, ExplanationProvider, ProviderFile } from './index.js';
 import { truncateSentences } from './style.js';
 
 function seedArea(
@@ -659,5 +659,55 @@ describe('walkthrough-snapback goldens', () => {
     }
     expect(allHunks.filter((h) => !covered.has(h))).toEqual([]);
     if (g.language === 'ko') expect(g.areas[0]!.walkthrough.overview).toMatch(/[가-힣]/);
+  });
+});
+
+class StreamingScripted implements ExplanationProvider {
+  readonly id = 'scripted';
+  readonly model = 'm';
+  constructor(private readonly chunks: AreaStreamChunk[], private readonly final: AreaWalkthrough) {}
+  async explain(): Promise<never> { throw new Error('unused'); }
+  async explainArea(_input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult> {
+    for (const c of this.chunks) onProgress?.(c);
+    return { content: this.final, provider: this.id, model: this.model };
+  }
+}
+
+describe('explainArea with a job (DIG-73/74)', () => {
+  it('logs against the job instead of checking the per-call budget', async () => {
+    const db = openDb(':memory:');
+    const id = seedArea(db, FILES, { id: 'settings-ui', paths: FILES.map((f) => f.path) });
+    const jobId = startJob(db, 'area', { changeUnitId: id, areaId: 'settings-ui' }, 40)!;
+    const p = new Scripted([validReply]);
+    const r = await explainArea(db, id, 'settings-ui', p, { job: { jobId, budget: 40 } });
+    expect(r.outcome).toBe('ok');
+    const calls = db.prepare('SELECT job_id, part, reason FROM explain_call WHERE job_id = ?').all(jobId);
+    expect(calls).toEqual([{ job_id: jobId, part: 'walkthrough:settings-ui', reason: 'area' }]);
+  });
+
+  it('throws when neither budget nor job is given', async () => {
+    const db = openDb(':memory:');
+    const id = seedArea(db, FILES, { id: 'settings-ui', paths: FILES.map((f) => f.path) });
+    await expect(explainArea(db, id, 'settings-ui', new Scripted([validReply]), {} as never)).rejects.toThrow(/budget.*job/);
+  });
+
+  it('forwards onProgress chunks as AreaProgressEvents with the caller\'s areaId, appended and in order', async () => {
+    const db = openDb(':memory:');
+    const id = seedArea(db, FILES, { id: 'settings-ui', paths: FILES.map((f) => f.path) });
+    const jobId = startJob(db, 'area', { changeUnitId: id, areaId: 'settings-ui' }, 40)!;
+    const chunks: AreaStreamChunk[] = [
+      { overview: null, steps: [], done: false },
+      { overview: 'A new Settings screen.', steps: [validReply.steps[0]!], done: false },
+      { overview: 'A new Settings screen.', steps: validReply.steps, done: true },
+    ];
+    const p = new StreamingScripted(chunks, validReply);
+    const seen: AreaProgressEvent[] = [];
+    await explainArea(db, id, 'settings-ui', p, { job: { jobId, budget: 40 }, onProgress: (e) => seen.push(e) });
+    expect(seen).toHaveLength(3);
+    expect(seen.every((e) => e.areaId === 'settings-ui')).toBe(true);
+    expect(seen[2]!.done).toBe(true);
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i]!.steps.slice(0, seen[i - 1]!.steps.length)).toEqual(seen[i - 1]!.steps);
+    }
   });
 });

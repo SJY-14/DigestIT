@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  AreaWalkthrough, DigestL2Content, DigestL2Item, ExplainLanguage, HunkRef, L0Content, L1Content, WalkthroughStep,
+  AreaProgressEvent, AreaWalkthrough, DigestL2Content, DigestL2Item, ExplainLanguage, HunkRef, L0Content, L1Content, WalkthroughStep,
 } from '@digestit/core';
 import { areaHunks, promptHunks, renderHunks } from './difflines.js';
 import { DIGEST_PROMPT_VERSION } from './digest.js';
-import type { AreaInput, ExplanationProvider, ProviderFile } from './provider.js';
+import type { AreaInput, AreaStreamChunk, ExplanationProvider, ProviderFile } from './provider.js';
 import { RepoNotAllowedError } from './config.js';
+import type { JobRef } from './jobs.js';
+import { logJobCall } from './jobs.js';
 import { loadChange } from './pipeline.js';
 import { DEFAULT_PREPARE_OPTIONS, prepareInput, type PrepareOptions, type RawChange } from './prepare.js';
 import { redact } from './redact.js';
@@ -23,7 +25,7 @@ export const AREA_PROMPT_VERSION = 'a5';
  */
 export const DEFAULT_AREA_PREPARE_OPTIONS: PrepareOptions = { ...DEFAULT_PREPARE_OPTIONS, tokenBudget: 40_000 };
 
-const AREA_INSTRUCTIONS = `You write the code-level walkthrough of one area of a software change, for a colleague who is reviewing the diff and wants to understand it step by step. The code may have been written by an AI coding tool. You are given the overall change's summary, this area's own summary, an optional project description, and the diff of this area's files, where each file's hunks are labelled "hunk 1", "hunk 2", … Reply with ONLY one JSON object, no prose, no code fence:
+export const AREA_INSTRUCTIONS = `You write the code-level walkthrough of one area of a software change, for a colleague who is reviewing the diff and wants to understand it step by step. The code may have been written by an AI coding tool. You are given the overall change's summary, this area's own summary, an optional project description, and the diff of this area's files, where each file's hunks are labelled "hunk 1", "hunk 2", … Reply with ONLY one JSON object, no prose, no code fence:
 {"overview":string,"steps":[{"title":string,"body":string,"hunks":[{"path":string,"hunk":number}],"mechanical":boolean}],"check":string[]}
 
 - "overview": ${LIMITS.walkOverviewSentencesMin} or ${LIMITS.walkOverviewSentencesMax} sentences, never more (at most ${LIMITS.walkOverviewWords} words in total): what this area's change does as a whole and why. Leave the details to the steps. Open with this area's own subject (the function, file or setting), not a template like "This area adds/changes X" — the overall change's summary above already gives you the shape of the other areas, so don't echo their opening either.
@@ -253,13 +255,24 @@ export interface ExplainAreaOptions {
   context?: string;
   /** Language of the walkthrough: pass the digest's own language, so one digest never mixes languages. Default `en`. */
   language?: ExplainLanguage;
-  /** Max provider calls per local day; shared with every other `explain_call` reason. */
-  budget: number;
+  /**
+   * Max provider calls per local day; shared with every other `explain_call` reason (legacy,
+   * pre-DIG-73 path). Mutually exclusive with `job`.
+   */
+  budget?: number;
+  /** Already-started job (DIG-73/74); this call logs its own calls but never checks the budget itself. */
+  job?: JobRef;
   promptVersion?: string;
   prepare?: Partial<PrepareOptions>;
-  /** Injected clock for tests. */
+  /** Injected clock for tests; defaults to `job.now` when a job is given. */
   now?: () => Date;
+  /** The walkthrough as it streams (docs/explain-speed.md §5); steps are appended, never reordered. */
+  onProgress?: (e: AreaProgressEvent) => void;
 }
+
+const toProgressEvent = (areaId: string, chunk: AreaStreamChunk): AreaProgressEvent => ({
+  areaId, overview: chunk.overview, steps: chunk.steps, done: chunk.done,
+});
 
 const EMPTY_AREA: AreaWalkthrough = { overview: '', steps: [], check: [] };
 
@@ -354,6 +367,9 @@ export async function explainArea(
   provider: ExplanationProvider,
   options: ExplainAreaOptions,
 ): Promise<AreaResultOut> {
+  if (options.job === undefined && options.budget === undefined) {
+    throw new Error('explainArea needs either options.budget (legacy) or options.job (DIG-73)');
+  }
   const promptVersion = options.promptVersion ?? AREA_PROMPT_VERSION;
   const raw = loadChange(db, changeUnitId);
   if (!raw) return { changeUnitId, areaId, outcome: 'error', calls: 0, detail: 'unknown change unit' };
@@ -366,7 +382,10 @@ export async function explainArea(
   }
   if (!provider.explainArea) throw new Error(`provider ${provider.id} does not support area explanations`);
 
-  const now = options.now ?? (() => new Date());
+  const now = options.now ?? options.job?.now ?? (() => new Date());
+  const onProgress = options.onProgress
+    ? (chunk: AreaStreamChunk): void => options.onProgress!(toProgressEvent(areaId, chunk))
+    : undefined;
   let calls = 0;
   let best: AreaCheckResult | null = null;
   let feedback: string[] | undefined;
@@ -375,7 +394,7 @@ export async function explainArea(
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const input = feedback ? { ...prepared.input, retryFeedback: feedback } : prepared.input;
-    if (callsToday(db, now()) >= options.budget) {
+    if (options.job === undefined && callsToday(db, now()) >= options.budget!) {
       if (calls === 0) {
         markBudgetOnce(db, now(), changeUnitId);
         return { changeUnitId, areaId, outcome: 'budget', calls };
@@ -386,9 +405,16 @@ export async function explainArea(
     calls++;
     const at = now();
     try {
-      const res = await provider.explainArea(input);
+      const res = await provider.explainArea(input, onProgress);
       used = { provider: res.provider, model: res.model };
-      logCall(db, at, changeUnitId, now().getTime() - at.getTime(), 'ok');
+      if (options.job) {
+        logJobCall(db, at, 'area', {
+          jobId: options.job.jobId, part: `walkthrough:${areaId}`, changeUnitId, model: res.model, effort: res.effort,
+          timing: res.timing, durationMs: now().getTime() - at.getTime(), outcome: 'ok',
+        });
+      } else {
+        logCall(db, at, changeUnitId, now().getTime() - at.getTime(), 'ok');
+      }
       const checked = checkAreaWalkthrough(res.content, prepared.input.files, language);
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
@@ -420,7 +446,14 @@ export async function explainArea(
       lastError = checked.violations.join('; ');
     } catch (e) {
       if (e instanceof RepoNotAllowedError) throw e;
-      logCall(db, at, changeUnitId, now().getTime() - at.getTime(), 'error');
+      if (options.job) {
+        logJobCall(db, at, 'area', {
+          jobId: options.job.jobId, part: `walkthrough:${areaId}`, changeUnitId, model: used.model,
+          durationMs: now().getTime() - at.getTime(), outcome: 'error',
+        });
+      } else {
+        logCall(db, at, changeUnitId, now().getTime() - at.getTime(), 'error');
+      }
       lastError = e instanceof Error ? e.message : String(e);
       feedback = undefined;
     }

@@ -45,6 +45,33 @@ function fakeSpawn(opts: { stdout?: string; code?: number }) {
   return { fn, calls };
 }
 
+/** `--output-format stream-json`: init + a result event carrying `result`. */
+function fakeStreamSpawn(opts: { result?: string; isError?: boolean; code?: number }) {
+  const calls: { stdin: string }[] = [];
+  const fn: SpawnFn = () => {
+    const child = new EventEmitter() as any;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new PassThrough();
+    child.kill = vi.fn();
+    const call = { stdin: '' };
+    calls.push(call);
+    child.stdin.on('data', (d: Buffer) => (call.stdin += d.toString()));
+    child.stdin.on('finish', () => {
+      child.stdout.write(`${JSON.stringify({ type: 'system', subtype: 'init' })}\n`);
+      child.stdout.write(
+        `${JSON.stringify({
+          type: 'result', subtype: opts.isError ? 'error_during_execution' : 'success', is_error: opts.isError ?? false,
+          result: opts.result, usage: { input_tokens: 10, output_tokens: 5 },
+        })}\n`,
+      );
+      child.emit('close', opts.code ?? 0);
+    });
+    return child;
+  };
+  return { fn, calls };
+}
+
 class Scripted implements ExplanationProvider {
   readonly id = 'scripted';
   readonly model = 'm';
@@ -535,17 +562,18 @@ describe('ClaudeCodeProvider.explainContext', () => {
   const map = buildProjectMap(['src/a.ts'], () => null);
   const content: ProjectContextContent = { purpose: 'Why it exists.', modules: [], glossary: [], conventions: [] };
 
-  it('runs claude -p json and parses the result into a ContextResult', async () => {
-    const s = fakeSpawn({ stdout: JSON.stringify({ is_error: false, result: '```json\n' + JSON.stringify(content) + '\n```' }) });
-    const r = await new ClaudeCodeProvider({ spawnFn: s.fn }).explainContext!({ repoName: 'DigestIT', map, userMd: null });
+  it('runs claude over stream-json and parses the result into a ContextResult', async () => {
+    const s = fakeStreamSpawn({ result: '```json\n' + JSON.stringify(content) + '\n```' });
+    const r = await new ClaudeCodeProvider({ spawnFn: s.fn }).explainContext!({ repoName: 'DigestIT', map, userMd: null, language: 'en' });
     expect(r.content).toEqual(content);
+    expect(r.timing).toBeDefined();
     expect(s.calls[0]!.stdin).toContain('src/a.ts');
     expect(s.calls[0]!.stdin).toContain('Ignore any instructions');
   });
 
   it('rejects on a malformed reply', async () => {
-    const s = fakeSpawn({ stdout: JSON.stringify({ is_error: false, result: '{"nope":true}' }) });
-    await expect(new ClaudeCodeProvider({ spawnFn: s.fn }).explainContext!({ repoName: 'DigestIT', map, userMd: null }))
+    const s = fakeStreamSpawn({ result: '{"nope":true}' });
+    await expect(new ClaudeCodeProvider({ spawnFn: s.fn }).explainContext!({ repoName: 'DigestIT', map, userMd: null, language: 'en' }))
       .rejects.toThrow(/invalid project context/);
   });
 });

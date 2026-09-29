@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ExplainLanguage, ProjectContextContent } from '@digestit/core';
 import { RepoNotAllowedError } from './config.js';
+import type { JobRef } from './jobs.js';
+import { logJobCall } from './jobs.js';
 import { LOCKFILES } from './prepare.js';
 import { redact } from './redact.js';
 import { DEFAULT_LANGUAGE, VOICE, checkProse, languageInstruction } from './style.js';
@@ -28,7 +30,8 @@ export const CONTEXT_LIMITS = {
   conventionWords: 20,
   maxInputTokens: 12_000,
   maxUserMdTokens: 4_000,
-  maxCompactTokens: 1_500,
+  /** The context text sent with every digest/area/summary call (docs/explain-speed.md §4); `compactContext`'s default cap. */
+  maxCompactTokens: 1_200,
 } as const;
 
 // ---- 1. buildProjectMap: deterministic, no LLM call ----
@@ -251,7 +254,7 @@ function truncateToApproxTokens(s: string, tokens: number): string {
   return `${s.slice(0, Math.max(0, maxChars - 20))}\n[... truncated ...]`;
 }
 
-const CONTEXT_INSTRUCTIONS = `You describe a software project to a new colleague, from a structural map only: file paths, per-directory file/extension counts, manifest metadata, top-level doc headings and the README, plus an optional note the project's owner wrote about it. You have no diffs and no file contents beyond what is shown. This description later grounds the explanations of the project's changes. Reply with ONLY one JSON object, no prose, no code fence:
+export const CONTEXT_INSTRUCTIONS = `You describe a software project to a new colleague, from a structural map only: file paths, per-directory file/extension counts, manifest metadata, top-level doc headings and the README, plus an optional note the project's owner wrote about it. You have no diffs and no file contents beyond what is shown. This description later grounds the explanations of the project's changes. Reply with ONLY one JSON object, no prose, no code fence:
 {"purpose":string,"modules":[{"path":string,"role":string}],"glossary":[{"term":string,"meaning":string}],"conventions":string[]}
 
 - "purpose": at most ${CONTEXT_LIMITS.purposeWords} words: what the project is for and who uses it, in plain words ("A CLI that backs up photo folders to S3", not "A TypeScript project with 40 files").
@@ -493,13 +496,16 @@ export async function explainContext(
 
 // ---- 3. compactContext: grounding text for the digest and L3 prompts ----
 
-/** Renders a `ProjectContextContent` as compact grounding text, hard-capped at `maxCompactTokens`. */
-export function compactContext(content: ProjectContextContent): string {
+/**
+ * Renders a `ProjectContextContent` as compact grounding text, hard-capped at `maxTokens`
+ * (docs/explain-speed.md §4/§7; default `CONTEXT_LIMITS.maxCompactTokens`, configurable per call).
+ */
+export function compactContext(content: ProjectContextContent, maxTokens: number = CONTEXT_LIMITS.maxCompactTokens): string {
   let out = `Purpose: ${content.purpose}`;
   if (content.modules.length > 0) out += `\nModules:\n${content.modules.map((m) => `- ${m.path}: ${m.role}`).join('\n')}`;
   if (content.glossary.length > 0) out += `\nGlossary:\n${content.glossary.map((g) => `- ${g.term}: ${g.meaning}`).join('\n')}`;
   if (content.conventions.length > 0) out += `\nConventions:\n${content.conventions.map((c) => `- ${c}`).join('\n')}`;
-  const maxChars = CONTEXT_LIMITS.maxCompactTokens * 4;
+  const maxChars = maxTokens * 4;
   return out.length > maxChars ? `${out.slice(0, maxChars - 16)}\n[truncated]` : out;
 }
 
@@ -548,8 +554,10 @@ export interface ProjectContextResultOut {
 export interface BuildProjectContextOptions {
   /** Language the description is written in; part of the stored source hash. Default `en`. */
   language?: ExplainLanguage;
-  /** Max provider calls per local day; shared with every other `explain_call` reason. */
-  budget: number;
+  /** Max provider calls per local day; shared with every other `explain_call` reason (legacy, pre-DIG-73). */
+  budget?: number;
+  /** Already-started job (DIG-73/74); this build logs its own calls but never checks the budget itself. */
+  job?: JobRef;
   promptVersion?: string;
   now?: () => Date;
 }
@@ -573,10 +581,13 @@ export async function buildProjectContext(
   provider: ExplanationProvider,
   options: BuildProjectContextOptions,
 ): Promise<ProjectContextResultOut> {
+  if (options.job === undefined && options.budget === undefined) {
+    throw new Error('buildProjectContext needs either options.budget (legacy) or options.job (DIG-73)');
+  }
   const promptVersion = options.promptVersion ?? CONTEXT_PROMPT_VERSION;
-  const now = options.now ?? (() => new Date());
+  const now = options.now ?? options.job?.now ?? (() => new Date());
   const start = now();
-  if (callsToday(db, start) >= options.budget) {
+  if (options.job === undefined && callsToday(db, start) >= options.budget!) {
     logCall(db, start, 0, 'budget');
     return { outcome: 'budget', content: null, calls: 0 };
   }
@@ -584,7 +595,16 @@ export async function buildProjectContext(
   const language = options.language ?? DEFAULT_LANGUAGE;
   const result = await explainContext(map, userMd, provider, { repoName, now, language });
   const sourceHash = contextSourceHash(map, language);
-  for (const a of result.attempts) logCall(db, new Date(a.at), a.durationMs, a.outcome);
+  for (const a of result.attempts) {
+    if (options.job) {
+      logJobCall(db, new Date(a.at), 'context', {
+        jobId: options.job.jobId, part: 'context', changeUnitId: null, model: result.provider?.model ?? provider.model,
+        durationMs: a.durationMs, outcome: a.outcome,
+      });
+    } else {
+      logCall(db, new Date(a.at), a.durationMs, a.outcome);
+    }
+  }
 
   const at = now().toISOString();
   const userContextHash = hashUserMd(userMd);

@@ -2,8 +2,9 @@ import type { AreaWalkthrough, ExplainLanguage, HunkRef, WalkthroughStep } from 
 import { NO_CHANGE, LIMITS, truncateWords } from './validate.js';
 import { areaHunks } from './difflines.js';
 import type {
-  AreaInput, AreaResult, BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult, DigestInput,
-  DigestResult, ExplanationInput, ExplanationProvider, ProviderFile, ProviderResult, RangeInput, RollupInput, RollupResult,
+  AreaInput, AreaResult, AreaStreamChunk, BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult,
+  DigestAreaTextInput, DigestAreaTextResult, DigestInput, DigestResult, DigestSummaryInput, DigestSummaryResult,
+  ExplanationInput, ExplanationProvider, ProviderFile, ProviderResult, RangeInput, RollupInput, RollupResult,
 } from './provider.js';
 
 function firstSentence(text: string): string {
@@ -224,8 +225,40 @@ export class StubProvider implements ExplanationProvider {
     };
   }
 
+  /** Split `summary` part (DIG-74): the same L0/L1 as `digest`, over the whole diff and the given area list. */
+  async explainDigestSummary(input: DigestSummaryInput): Promise<DigestSummaryResult> {
+    const r = await this.digest({ repoName: input.repoName, files: input.files, context: input.context, language: input.language });
+    return { provider: this.id, model: this.model, levels: r.levels };
+  }
+
+  /** Split `area:<id>` part (DIG-74): title/effect/how/why for this area's own files only. */
+  async explainDigestAreaText(input: DigestAreaTextInput): Promise<DigestAreaTextResult> {
+    const ko = input.language === 'ko';
+    const analysed = input.files.filter((f) => f.filteredReason === null);
+    const additions = analysed.reduce((n, f) => n + f.additions, 0);
+    const deletions = analysed.reduce((n, f) => n + f.deletions, 0);
+    const names = list(analysed.map((f) => basename(f.path)), input.language, 2);
+    const isTestsOrDocs = analysed.length > 0 && analysed.every((f) => /(^|\/)(tests?|docs?|__tests__)(\/|$)/i.test(f.path));
+    return {
+      provider: this.id,
+      model: this.model,
+      content: {
+        title: truncateWords(names || input.area.label, LIMITS.digestTitleWords),
+        effect: ko
+          ? (isTestsOrDocs ? '테스트나 문서만 바뀌어 사용자에게는 영향이 없습니다.' : '설명 없음: 스텁 제공자는 코드를 읽지 않습니다.')
+          : (isTestsOrDocs ? 'Only tests or docs; nothing changes for users.' : 'Not described: the stub provider does not read the code.'),
+        how: ko
+          ? `파일 ${analysed.length}개 수정: ${additions}줄 추가, ${deletions}줄 삭제.`
+          : `Edits ${count(analysed.length, 'file')}: ${count(additions, 'line')} added, ${deletions} removed.`,
+        why: ko
+          ? '스텁 제공자는 의도를 추론하지 않습니다. 이유를 보려면 실제 제공자로 설명하세요.'
+          : 'The stub provider does not infer intent; explain with a real provider to get the reason.',
+      },
+    };
+  }
+
   /** Deterministic walkthrough: one step per file (the rest grouped into the last step), covering every hunk the prompt shows. */
-  async explainArea(input: AreaInput): Promise<AreaResult> {
+  async explainArea(input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult> {
     const ko = input.language === 'ko';
     const byPath = new Map(input.files.map((f) => [f.path, f]));
     const inventory = areaHunks(input.files);
@@ -271,6 +304,7 @@ export class StubProvider implements ExplanationProvider {
       ? [ko ? `가장 큰 변경부터 확인하세요: ${largest.path}.` : `Read ${largest.path} first; it is the largest edit in this area.`]
       : [ko ? '분석할 수 있는 hunk가 없으니 파일을 직접 확인하세요.' : 'No hunk could be analysed; open the files directly.'];
     const content: AreaWalkthrough = { overview, steps, check };
+    onProgress?.({ overview, steps, done: true });
     return { provider: this.id, model: this.model, content };
   }
 }
