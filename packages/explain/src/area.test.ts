@@ -82,7 +82,7 @@ const FILES: ProviderFile[] = [
 ];
 
 const validReply: AreaWalkthrough = {
-  overview: 'This area adds a Settings screen and routes /settings to it from App. The screen is an empty shell for now, so the route can land before the options do.',
+  overview: 'A new Settings screen now renders behind a /settings route registered from App. The screen is an empty shell for now, so the route can land before the options do.',
   steps: [
     {
       title: 'An empty Settings screen',
@@ -568,6 +568,40 @@ describe('explainArea', () => {
     }
     const r = await explainArea(db, id, 'settings-ui', new StubProvider(), { budget: 40 });
     expect(r).toMatchObject({ outcome: 'error', calls: 0, detail: 'unknown area' });
+  });
+});
+
+describe('explainArea AI-tell retry (DIG-65)', () => {
+  const warnings = (db: DatabaseSync) => (db.prepare('SELECT style_warnings FROM area_explanation').get() as { style_warnings: number }).style_warnings;
+  const seed = (db: DatabaseSync) => seedArea(db, FILES, { id: 'settings-ui', paths: FILES.map((f) => f.path) });
+  const tells: AreaWalkthrough = { ...validReply, check: ['It is worth noting that Settings renders nothing yet!'] };
+
+  it('retries exactly once on tells alone and stores the count left after the retry', async () => {
+    const db = openDb(':memory:');
+    const p = new Scripted([tells, tells]);
+    const r = await explainArea(db, seed(db), 'settings-ui', p, { budget: 40 });
+    expect(r).toMatchObject({ outcome: 'ok', calls: 2 });
+    expect(p.inputs[1]!.retryFeedback).toEqual([
+      expect.stringContaining('check: item 1: uses the hedge'), expect.stringContaining('check: item 1: uses "!"'),
+    ]);
+    expect(rows(db)[0]!.status).toBe('ok');
+    expect(warnings(db)).toBe(2);
+  });
+
+  it('keeps attempt 1 when the retry is hard-invalid', async () => {
+    const db = openDb(':memory:');
+    const partial = { ...validReply, steps: [validReply.steps[0]!] };
+    const r = await explainArea(db, seed(db), 'settings-ui', new Scripted([tells, partial]), { budget: 40 });
+    expect(r).toMatchObject({ outcome: 'ok', calls: 2 });
+    expect(JSON.parse(rows(db)[0]!.content)).toEqual(tells);
+    expect(warnings(db)).toBe(2);
+  });
+
+  it('keeps attempt 1 as ok when the retry throws', async () => {
+    const db = openDb(':memory:');
+    const r = await explainArea(db, seed(db), 'settings-ui', new Scripted([tells, new Error('boom')]), { budget: 40 });
+    expect(r).toMatchObject({ outcome: 'ok', calls: 2 });
+    expect(rows(db)[0]!.status).toBe('ok');
   });
 });
 

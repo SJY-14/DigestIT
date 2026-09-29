@@ -1,4 +1,5 @@
 import type { ExplainLanguage } from '@digestit/core';
+import { aiTells } from './tells.js';
 import { cleanText, hasUnsafeMarkup, truncateWords, wordCount } from './validate.js';
 
 // Shared voice, language and boilerplate rules for the digest, area and context prompts (DIG-48).
@@ -8,12 +9,13 @@ export const DEFAULT_LANGUAGE: ExplainLanguage = 'en';
 export const KO_CHARS_PER_WORD = 5;
 
 /** Tone rules pasted into every user-facing prompt. */
-export const VOICE = `Voice: you are a senior engineer explaining this to a colleague who knows the project but has not read this change. Write plain, natural sentences in the active voice, as you would say them out loud. Name the concrete things: functions, flags, endpoints, config keys, commands, screens. Say what happens, not that "something changed". Never write filler such as "may have changed", "Changed here.", "Changes in <folder>", "file(s)" or a bare "No user-visible change". When the change does not show something (for example why a limit was picked), say in one clause what exactly is unclear and what would settle it (a test, a ticket, the caller); never write a bare "not evident from the diff".`;
+export const VOICE = `Voice: you are a senior engineer explaining this to a colleague who knows the project but has not read this change. Write plain, natural sentences in the active voice, as you would say them out loud. Name the concrete things: functions, flags, endpoints, config keys, commands, screens. Say what happens, not that "something changed". Never write filler such as "may have changed", "Changed here.", "Changes in <folder>", "file(s)" or a bare "No user-visible change". When the change does not show something (for example why a limit was picked), say in one clause what exactly is unclear and what would settle it (a test, a ticket, the caller); never write a bare "not evident from the diff".
+Style: start every field with its concrete subject, never with "This change", "This commit", "This PR", "This update" or "This area" followed by a generic verb like "introduces/enhances/improves/adds" — name the function, flag, screen or file first, so two areas of the same change never read like the same template. Avoid hedges and filler: "it's worth noting", "it is important to note", "essentially", "various", "a number of", "ensures that", "helps to" — state the fact directly instead. Avoid marketing words: "seamless", "effortless", "powerful", "robust", "comprehensive", "streamlined", "leverage", "unlock", "supercharge", "delve", "elevate" — and never write "enhances"/"improves" without naming what concretely changed. A claim that something is more maintainable, readable, reliable or performant needs a number, a name or a mechanism in the same sentence, not just the adjective. Write plain prose: no "!", no markdown bold or italics ("**", "__"), at most one em dash per sentence, and no rhythmic triplet of comparatives like "faster, safer, and more reliable". Never end with a recap sentence such as "In summary", "To summarize", "In conclusion" or a trailing "Overall, ..." — stop after the last concrete point.`;
 
 /** The language rule: prose in `language`, code as written, JSON keys and ids in English. */
 export function languageInstruction(language: ExplainLanguage): string {
   if (language === 'ko') {
-    return `Language: write every prose value (everything a reader sees: sentences, titles, bullets, list items) in Korean (한국어), in the concise written style a Korean senior engineer uses with a colleague (~합니다/~습니다 endings; no translationese, no English sentences). Keep code identifiers, file paths, flags, endpoints, commands and quoted code exactly as written in the change: never translate or transliterate them. JSON keys, ids and hunk references stay exactly as specified. "Words" below means space-separated words (어절). Each field may also use at most ${KO_CHARS_PER_WORD} characters per allowed word, spaces included (e.g. at most ${8 * KO_CHARS_PER_WORD} characters for an 8-word title).`;
+    return `Language: write every prose value (everything a reader sees: sentences, titles, bullets, list items) in Korean (한국어), in the concise written style a Korean senior engineer uses with a colleague (~합니다/~습니다 endings; never 하십시오체 such as "…하십시오"/"…바랍니다"; no translationese, no English sentences). Avoid "전반적으로" (overall), "다양한" (various), "효율적으로" (efficiently) and "보다 원활한/원활하게" (smoother) as vague filler, and never open with a chatty "살펴보겠습니다"/"알아보겠습니다" ("let's look at/find out") — state the fact directly. Keep code identifiers, file paths, flags, endpoints, commands and quoted code exactly as written in the change: never translate or transliterate them. JSON keys, ids and hunk references stay exactly as specified. "Words" below means space-separated words (어절). Each field may also use at most ${KO_CHARS_PER_WORD} characters per allowed word, spaces included (e.g. at most ${8 * KO_CHARS_PER_WORD} characters for an 8-word title).`;
   }
   return 'Language: write every prose value in English. Keep code identifiers, file paths, flags, endpoints and quoted code exactly as written in the change.';
 }
@@ -112,11 +114,13 @@ export function isStatsLine(text: string): boolean {
 
 /**
  * Cleans one prose field and checks it against a word limit, the language's
- * character cap and the boilerplate rules. Over-limit text is cut; boilerplate
- * is reported but kept (only a retry can replace it).
+ * character cap, the boilerplate rules and the AI-tell lint. Over-limit text
+ * is cut; boilerplate and tells are reported but never rewritten or
+ * truncated on their account (only a retry can replace them). Tells go into
+ * `styleWarnings`, never `v`: they are soft signals, not hard violations.
  */
 export function checkProse(
-  raw: string, label: string, words: number, language: ExplainLanguage, v: string[],
+  raw: string, label: string, words: number, language: ExplainLanguage, v: string[], styleWarnings: string[] = [],
 ): string {
   if (hasUnsafeMarkup(raw)) v.push(`${label}: contains HTML or a link`);
   let text = cleanText(raw);
@@ -129,7 +133,10 @@ export function checkProse(
     v.push(`${label}: ${charLength(text)} characters, limit ${cap}`);
     text = truncateChars(text, cap);
   }
-  const bad = text === '' ? null : boilerplate(text, language);
-  if (bad) v.push(`${label}: ${bad}`);
+  if (text !== '') {
+    const bad = boilerplate(text, language);
+    if (bad) v.push(`${label}: ${bad}`);
+    for (const tell of aiTells(text, language)) styleWarnings.push(`${label}: ${tell}`);
+  }
   return text;
 }

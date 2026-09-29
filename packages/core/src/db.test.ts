@@ -32,7 +32,7 @@ describe('migrate', () => {
     db.exec("INSERT INTO repo(name,path) VALUES('r','/r')");
     db.exec("INSERT INTO change_unit(repo_id,head_sha,title) VALUES(1,'a','t')");
     const ins = (level: number) =>
-      db.exec(`INSERT INTO explanation VALUES(1,${level},'{}','ok','stub','m','v1','h','now')`);
+      db.exec(`INSERT INTO explanation VALUES(1,${level},'{}','ok','stub','m','v1','h','now',0)`);
     ins(0);
     expect(() => ins(0)).toThrow();
     expect(() => ins(4)).toThrow();
@@ -83,12 +83,12 @@ describe('migrate', () => {
       INSERT INTO checkpoint(repo_id,seq,shadow_sha,tree_sha,taken_at,reason) VALUES(2,2,'s2','t2','now','explain');
       INSERT INTO change_unit(id,repo_id,kind,head_sha,base_sha,title) VALUES(10,2,'digest','s2','s1','Digest 1');
       INSERT INTO digest(change_unit_id,repo_id,from_checkpoint_id,to_checkpoint_id,created_at) VALUES(10,2,1,2,'now');
-      INSERT INTO area_explanation VALUES(10,'api','{}','ok','stub','m','a1','h','now');
+      INSERT INTO area_explanation VALUES(10,'api','{}','ok','stub','m','a1','h','now',0);
       INSERT INTO explain_call(at,change_unit_id,reason,outcome) VALUES('now',10,'area','ok');`);
     expect(() => db.exec("INSERT INTO repo(name,path,mode) VALUES('x','/x','bogus')")).toThrow();
     expect(() => db.exec("INSERT INTO checkpoint(repo_id,seq,shadow_sha,tree_sha,taken_at,reason) VALUES(2,2,'s','t','now','init')")).toThrow();
     expect(() => db.exec("INSERT INTO change_unit(repo_id,kind,head_sha,title) VALUES(2,'digest','s2','dup')")).toThrow();
-    expect(() => db.exec("INSERT INTO area_explanation VALUES(10,'api','{}','ok','stub','m','a1','h','now')")).toThrow();
+    expect(() => db.exec("INSERT INTO area_explanation VALUES(10,'api','{}','ok','stub','m','a1','h','now',0)")).toThrow();
     expect(() => db.exec("INSERT INTO explain_call(at,reason,outcome) VALUES('now','bogus','ok')")).toThrow();
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   });

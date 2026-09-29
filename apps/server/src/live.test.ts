@@ -33,7 +33,7 @@ function seed(path = ':memory:') {
   for (const s of ['c1', 'c2', 'c3']) member.run(1, s);
   member.run(2, 'c4');
   db.prepare("INSERT INTO file_change (change_unit_id, path, status, additions, deletions) VALUES (11, 'a.ts', 'M', 5, 2)").run();
-  const ex = db.prepare("INSERT INTO explanation VALUES (?, ?, ?, 'ok', 'stub', 'm', 'v1', 'h', '2026-09-24')");
+  const ex = db.prepare("INSERT INTO explanation VALUES (?, ?, ?, 'ok', 'stub', 'm', 'v1', 'h', '2026-09-24', 0)");
   ex.run(10, 0, '{"text":"old why"}');
   ex.run(11, 0, '{"text":"why"}');
   db.prepare("INSERT INTO worktree_state VALUES (1, '/wt', 'DIG-1-slug', 'c3', 4, 120, 30, 0, '2026-09-24T10:05:00Z')").run();
@@ -106,7 +106,7 @@ describe('pending (budget)', () => {
     expect((await app.inject('/api/work-units/DIG-1')).json().pendingBudget).toBe(true);
     expect((await app.inject('/api/work-units/DIG-3')).json().pendingBudget).toBe(false);
     // Explained since: no longer pending.
-    db.prepare("INSERT INTO explanation VALUES (11, 0, '{\"text\":\"why\"}', 'ok', 'stub', 'm', ?, 'h', '2026-09-24')").run(RANGE_PROMPT_VERSION);
+    db.prepare("INSERT INTO explanation VALUES (11, 0, '{\"text\":\"why\"}', 'ok', 'stub', 'm', ?, 'h', '2026-09-24', 0)").run(RANGE_PROMPT_VERSION);
     expect((await app.inject('/api/work-units/DIG-1')).json().pendingBudget).toBe(false);
   });
 });
@@ -230,10 +230,10 @@ describe('sse', () => {
     setTimeout(() => {
       writer.prepare("INSERT INTO change_unit (id, repo_id, kind, head_sha, title) VALUES (20, 1, 'digest', 'tree1', 'digest 1')").run();
       writer.prepare(
-        "INSERT INTO explanation VALUES (20, 0, '{\"text\":\"why\"}', 'ok', 'stub', 'm', 'd1', 'h', '2026-09-24')",
+        "INSERT INTO explanation VALUES (20, 0, '{\"text\":\"why\"}', 'ok', 'stub', 'm', 'd1', 'h', '2026-09-24', 0)",
       ).run();
       writer.prepare(
-        "INSERT INTO area_explanation VALUES (20, 'area-a', '{}', 'ok', 'stub', 'm', 'a1', 'h', '2026-09-24')",
+        "INSERT INTO area_explanation VALUES (20, 'area-a', '{}', 'ok', 'stub', 'm', 'a1', 'h', '2026-09-24', 0)",
       ).run();
     }, 100);
     const text = await readUntil(res, (t) => t.includes('event: digest') && t.includes('event: area'));

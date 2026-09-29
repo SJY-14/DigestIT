@@ -9,8 +9,8 @@ import type {
   ContextInput, ContextResult, ExplanationProvider, ManifestKind, ProjectDoc, ProjectManifest, ProjectMap, ProjectMapDir,
 } from './provider.js';
 
-/** Bump whenever the instructions or the rendering below change. */
-export const CONTEXT_PROMPT_VERSION = 'c2';
+/** Bump whenever the instructions or the rendering below change. `c3` (DIG-65) added the AI-tell style rules. */
+export const CONTEXT_PROMPT_VERSION = 'c3';
 
 export const CONTEXT_LIMITS = {
   maxPaths: 400,
@@ -309,6 +309,8 @@ function validPaths(map: ProjectMap): Set<string> {
 export interface CheckContextResult {
   content: ProjectContextContent;
   violations: string[];
+  /** AI-tell hits (DIG-65): soft style signals, never truncated or rewritten on their account. */
+  styleWarnings: string[];
 }
 
 /**
@@ -322,9 +324,10 @@ export function checkContext(raw: unknown, map: ProjectMap, language: ExplainLan
     return null;
   }
   const v: string[] = [];
+  const sw: string[] = [];
   const known = validPaths(map);
 
-  const purpose = checkProse(raw.purpose, 'purpose', CONTEXT_LIMITS.purposeWords, language, v);
+  const purpose = checkProse(raw.purpose, 'purpose', CONTEXT_LIMITS.purposeWords, language, v, sw);
   if (purpose === '') v.push('purpose: empty');
 
   const modules: ProjectContextContent['modules'] = [];
@@ -338,7 +341,7 @@ export function checkContext(raw: unknown, map: ProjectMap, language: ExplainLan
       v.push(`modules: item ${i} path "${path}" is not in the project map`);
       return;
     }
-    const role = checkProse(m.role, `modules: item ${i} role`, CONTEXT_LIMITS.moduleRoleWords, language, v);
+    const role = checkProse(m.role, `modules: item ${i} role`, CONTEXT_LIMITS.moduleRoleWords, language, v, sw);
     modules.push({ path, role });
   });
   if (modules.length > CONTEXT_LIMITS.modulesMax) {
@@ -352,8 +355,8 @@ export function checkContext(raw: unknown, map: ProjectMap, language: ExplainLan
       v.push(`glossary: item ${i} is malformed`);
       return;
     }
-    const term = checkProse(g.term, `glossary: item ${i} term`, CONTEXT_LIMITS.glossaryTermWords, language, v);
-    const meaning = checkProse(g.meaning, `glossary: item ${i} meaning`, CONTEXT_LIMITS.glossaryMeaningWords, language, v);
+    const term = checkProse(g.term, `glossary: item ${i} term`, CONTEXT_LIMITS.glossaryTermWords, language, v, sw);
+    const meaning = checkProse(g.meaning, `glossary: item ${i} meaning`, CONTEXT_LIMITS.glossaryMeaningWords, language, v, sw);
     if (term === '' || meaning === '') {
       v.push(`glossary: item ${i} is empty`);
       return;
@@ -371,7 +374,7 @@ export function checkContext(raw: unknown, map: ProjectMap, language: ExplainLan
       v.push(`conventions: item ${i} is not a string`);
       return;
     }
-    const text = checkProse(c, `conventions: item ${i}`, CONTEXT_LIMITS.conventionWords, language, v);
+    const text = checkProse(c, `conventions: item ${i}`, CONTEXT_LIMITS.conventionWords, language, v, sw);
     if (text === '') {
       v.push(`conventions: item ${i} is empty`);
       return;
@@ -383,7 +386,7 @@ export function checkContext(raw: unknown, map: ProjectMap, language: ExplainLan
     conventions.length = CONTEXT_LIMITS.conventionsMax;
   }
 
-  return { content: { purpose, modules, glossary, conventions }, violations: v };
+  return { content: { purpose, modules, glossary, conventions }, violations: v, styleWarnings: sw };
 }
 
 export interface ContextAttempt {
@@ -403,6 +406,8 @@ export interface ExplainContextResult {
   attempts: ContextAttempt[];
   provider?: { provider: string; model: string };
   detail?: string;
+  /** AI-tell hits left in the stored content (DIG-65); 0 on 'error'. */
+  styleWarnings: number;
 }
 
 export interface ExplainContextOptions {
@@ -450,13 +455,26 @@ export async function explainContext(
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
         feedback = [lastError];
-      } else if (checked.violations.length === 0) {
-        return { outcome: 'ok', content: checked.content, calls, attempts, provider: used };
-      } else {
-        best = checked;
-        feedback = checked.violations;
-        lastError = checked.violations.join('; ');
+        continue;
       }
+      const clean = checked.violations.length === 0 && checked.styleWarnings.length === 0;
+      if (clean) return { outcome: 'ok', content: checked.content, calls, attempts, provider: used, styleWarnings: 0 };
+      if (attempt === 0) {
+        best = checked;
+        feedback = [...checked.violations, ...checked.styleWarnings];
+        lastError = feedback.join('; ');
+        continue;
+      }
+      // Last attempt: accept it per today's hard-violation rules, recording the tells left. If it
+      // is hard-invalid while attempt 1 was hard-valid (only tells), keep attempt 1 instead (DIG-65).
+      if (checked.violations.length === 0) {
+        return { outcome: 'ok', content: checked.content, calls, attempts, provider: used, styleWarnings: checked.styleWarnings.length };
+      }
+      if (best && best.violations.length === 0) {
+        return { outcome: 'ok', content: best.content, calls, attempts, provider: used, styleWarnings: best.styleWarnings.length };
+      }
+      best = checked;
+      lastError = checked.violations.join('; ');
     } catch (e) {
       if (e instanceof RepoNotAllowedError) throw e;
       attempts.push({ at: at.toISOString(), durationMs: now().getTime() - at.getTime(), outcome: 'error' });
@@ -464,8 +482,13 @@ export async function explainContext(
       feedback = undefined;
     }
   }
-  if (best) return { outcome: 'truncated', content: best.content, calls, attempts, provider: used, detail: lastError };
-  return { outcome: 'error', content: null, calls, attempts, provider: used, detail: lastError };
+  // A hard-valid attempt 1 kept only for its tells stays 'ok' when the retry fails, is unusable or
+  // runs out of budget (DIG-65): 'truncated' is only for output that broke a hard rule.
+  if (best && best.violations.length === 0) {
+    return { outcome: 'ok', content: best.content, calls, attempts, provider: used, styleWarnings: best.styleWarnings.length };
+  }
+  if (best) return { outcome: 'truncated', content: best.content, calls, attempts, provider: used, detail: lastError, styleWarnings: best.styleWarnings.length };
+  return { outcome: 'error', content: null, calls, attempts, provider: used, detail: lastError, styleWarnings: 0 };
 }
 
 // ---- 3. compactContext: grounding text for the digest and L3 prompts ----
@@ -503,12 +526,12 @@ function logCall(db: DatabaseSync, at: Date, durationMs: number, outcome: 'ok' |
 function storeProjectContext(
   db: DatabaseSync, repoId: number, checkpointId: number | null, content: ProjectContextContent,
   status: 'ok' | 'truncated' | 'error', sourceHash: string, userContextHash: string | null,
-  provider: { provider: string; model: string }, promptVersion: string, at: string, fromFiles: number,
+  provider: { provider: string; model: string }, promptVersion: string, at: string, fromFiles: number, styleWarnings = 0,
 ): void {
   db.prepare(
-    `INSERT INTO project_context (repo_id, checkpoint_id, content, status, source_hash, user_context_hash, provider, model, prompt_version, created_at, from_files)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(repoId, checkpointId, JSON.stringify(content), status, sourceHash, userContextHash, provider.provider, provider.model, promptVersion, at, fromFiles);
+    `INSERT INTO project_context (repo_id, checkpoint_id, content, status, source_hash, user_context_hash, provider, model, prompt_version, created_at, from_files, style_warnings)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(repoId, checkpointId, JSON.stringify(content), status, sourceHash, userContextHash, provider.provider, provider.model, promptVersion, at, fromFiles, styleWarnings);
 }
 
 const EMPTY_CONTEXT: ProjectContextContent = { purpose: '', modules: [], glossary: [], conventions: [] };
@@ -567,9 +590,9 @@ export async function buildProjectContext(
   const userContextHash = hashUserMd(userMd);
   const used = result.provider ?? { provider: provider.id, model: provider.model };
   if (result.outcome === 'ok' || result.outcome === 'truncated') {
-    storeProjectContext(db, repoId, checkpointId, result.content!, result.outcome, sourceHash, userContextHash, used, promptVersion, at, map.totalFiles);
+    storeProjectContext(db, repoId, checkpointId, result.content!, result.outcome, sourceHash, userContextHash, used, promptVersion, at, map.totalFiles, result.styleWarnings);
   } else {
-    storeProjectContext(db, repoId, checkpointId, EMPTY_CONTEXT, 'error', sourceHash, userContextHash, used, promptVersion, at, map.totalFiles);
+    storeProjectContext(db, repoId, checkpointId, EMPTY_CONTEXT, 'error', sourceHash, userContextHash, used, promptVersion, at, map.totalFiles, 0);
   }
   return { outcome: result.outcome, content: result.content, calls: result.calls, detail: result.detail };
 }

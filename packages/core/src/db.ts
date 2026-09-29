@@ -267,6 +267,13 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE repo ADD COLUMN language TEXT NOT NULL DEFAULT 'en' CHECK (language IN ('en','ko'));
   ALTER TABLE digest ADD COLUMN language TEXT NOT NULL DEFAULT 'en' CHECK (language IN ('en','ko'));
   `,
+  // DIG-65 (AI-tell lint): AI-tell hits left after the one style retry, per stored row. Internal
+  // only (never shown in the UI) — a report metric, not part of any content JSON.
+  `
+  ALTER TABLE explanation ADD COLUMN style_warnings INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE area_explanation ADD COLUMN style_warnings INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE project_context ADD COLUMN style_warnings INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {

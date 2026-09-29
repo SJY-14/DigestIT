@@ -87,22 +87,27 @@ export function isCached(db: DatabaseSync, id: number, promptVersion: string, in
   return rows.length === 4 && rows.every((r) => (r.status === 'ok' || r.status === 'truncated') && r.input_hash === inputHash);
 }
 
-/** Writes one or more levels for a change unit in one transaction; used by `store` (all four levels) and `explainDigest` (levels 0-2). */
+/**
+ * Writes one or more levels for a change unit in one transaction; used by
+ * `store` (all four levels) and `explainDigest` (levels 0-2). `styleWarnings`
+ * (DIG-65) is the number of AI-tell hits left after the retry; internal only,
+ * never shown in the UI.
+ */
 export function storeLevels(
   db: DatabaseSync, id: number, contents: readonly (readonly [Level, unknown])[], status: ExplanationStatus,
-  provider: { provider: string; model: string }, promptVersion: string, inputHash: string, at: string,
+  provider: { provider: string; model: string }, promptVersion: string, inputHash: string, at: string, styleWarnings = 0,
 ): void {
   const stmt = db.prepare(
-    `INSERT INTO explanation (change_unit_id, level, content, status, provider, model, prompt_version, input_hash, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO explanation (change_unit_id, level, content, status, provider, model, prompt_version, input_hash, created_at, style_warnings)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (change_unit_id, level, prompt_version) DO UPDATE SET
        content = excluded.content, status = excluded.status, provider = excluded.provider,
-       model = excluded.model, input_hash = excluded.input_hash, created_at = excluded.created_at`,
+       model = excluded.model, input_hash = excluded.input_hash, created_at = excluded.created_at, style_warnings = excluded.style_warnings`,
   );
   db.exec('BEGIN');
   try {
     for (const [level, content] of contents) {
-      stmt.run(id, level, JSON.stringify(content), status, provider.provider, provider.model, promptVersion, inputHash, at);
+      stmt.run(id, level, JSON.stringify(content), status, provider.provider, provider.model, promptVersion, inputHash, at, styleWarnings);
     }
     db.exec('COMMIT');
   } catch (e) {

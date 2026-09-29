@@ -392,6 +392,17 @@ describe('explainContext', () => {
     expect(r.attempts.map((a) => a.outcome)).toEqual(['error', 'ok']);
   });
 
+  it('retries once on tells alone, and keeps a hard-valid attempt 1 as ok when the retry is worse (DIG-65)', async () => {
+    const tells = { ...good, purpose: 'Seamlessly helps people digest changes!' };
+    const p = new Scripted([tells, { ...good, modules: [{ path: 'made/up.ts', role: 'x' }] }]);
+    const r = await explainContext(map, null, p);
+    expect(r).toMatchObject({ outcome: 'ok', calls: 2, content: tells, styleWarnings: 2 });
+    expect(p.calls[1]!.retryFeedback).toHaveLength(2);
+
+    const clean = await explainContext(map, null, new Scripted([tells, good]));
+    expect(clean).toMatchObject({ outcome: 'ok', content: good, styleWarnings: 0 });
+  });
+
   it('throws for a provider that does not implement explainContext', async () => {
     const noContext: ExplanationProvider = { id: 'x', model: 'm', explain: async () => { throw new Error('unused'); } };
     await expect(explainContext(map, null, noContext)).rejects.toThrow(/does not support project context/);
