@@ -557,6 +557,24 @@ describe('explainArea', () => {
     expect(r).toMatchObject({ outcome: 'error', calls: 0, detail: 'unknown area' });
   });
 
+  it('explains an area of a split digest (L0/L1 and L2 stored under different prompt versions)', async () => {
+    const db = openDb(':memory:');
+    const id = seedArea(db, FILES, { id: 'settings-ui', paths: FILES.map((f) => f.path) }, { promptVersion: 's1' });
+    db.prepare("UPDATE explanation SET prompt_version = 'at1' WHERE change_unit_id = ? AND level = 2").run(id);
+    const p = new Scripted([validReply]);
+    const r = await explainArea(db, id, 'settings-ui', p, { budget: 40 });
+    expect(r).toMatchObject({ outcome: 'ok', calls: 1 });
+    expect(p.inputs[0]!.digest.l0).toBe('Adds a settings screen and tidies the storage layer.');
+  });
+
+  it('explains an area whose summary part failed, from its L2 text alone', async () => {
+    const db = openDb(':memory:');
+    const id = seedArea(db, FILES, { id: 'settings-ui', paths: FILES.map((f) => f.path) });
+    db.prepare("UPDATE explanation SET status = 'error' WHERE change_unit_id = ? AND level IN (0, 1)").run(id);
+    const r = await explainArea(db, id, 'settings-ui', new Scripted([validReply]), { budget: 40 });
+    expect(r).toMatchObject({ outcome: 'ok', calls: 1 });
+  });
+
   it('returns error when the digest itself was never explained', async () => {
     const db = openDb(':memory:');
     db.prepare("INSERT INTO repo (id, name, path) VALUES (1, 'DigestIT', '/x')").run();

@@ -398,6 +398,8 @@ export interface ExplainDigestSummaryOptions {
   job: JobRef;
   promptVersion?: string;
   prepare?: Partial<PrepareOptions>;
+  /** Call even when a stored `ok`/`truncated` result matches the input (a retry of a `truncated` part). */
+  force?: boolean;
 }
 
 /**
@@ -417,7 +419,7 @@ export async function explainDigestSummary(
 
   const language = opts.language ?? DEFAULT_LANGUAGE;
   const prepared = prepareDigestSummaryInput(raw, areas.map(({ id, label }) => ({ id, label })), opts.context, language, opts.prepare);
-  if (isSummaryCached(db, changeUnitId, promptVersion, prepared.inputHash)) return { outcome: 'cached', calls: 0 };
+  if (!opts.force && isSummaryCached(db, changeUnitId, promptVersion, prepared.inputHash)) return { outcome: 'cached', calls: 0 };
 
   const now = opts.job.now ?? (() => new Date());
   let calls = 0;

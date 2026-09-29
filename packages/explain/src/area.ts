@@ -300,8 +300,8 @@ function markBudgetOnce(db: DatabaseSync, at: Date, changeUnitId: number): void 
  * Loads the digest's own L0, L1 and the requested area's L2 item from one
  * complete set of stored levels: the current `DIGEST_PROMPT_VERSION` when it
  * exists, otherwise the newest older one, so digests explained before a prompt
- * bump still get their areas explained. `null` when the digest has not been
- * explained yet, or the area id does not exist.
+ * bump still get their areas explained; a split digest has no such set (see
+ * below). `null` when the area's L2 text is not stored, or the id does not exist.
  */
 function loadDigestArea(db: DatabaseSync, changeUnitId: number, areaId: string): DigestArea | null {
   const rows = db.prepare(
@@ -315,10 +315,17 @@ function loadDigestArea(db: DatabaseSync, changeUnitId: number, areaId: string):
     if (!levels.has(r.level)) levels.set(r.level, r.content);
     byVersion.set(r.prompt_version, levels);
   }
-  const levels = [...byVersion.values()].find((m) => m.size === 3);
-  if (!levels) return null;
-  const l0 = JSON.parse(levels.get(0)!) as L0Content;
-  const l1 = JSON.parse(levels.get(1)!) as L1Content;
+  // A one-call digest stores all three levels under one prompt version; a split one (DIG-74/75)
+  // stores L0/L1 (`summary`) and L2 (`area:<id>`) under different ones, and its summary may have
+  // failed while the area text landed: then the latest row of each level is used, L2 required.
+  let levels = [...byVersion.values()].find((m) => m.size === 3);
+  if (!levels) {
+    levels = new Map<number, string>();
+    for (const r of rows) if (!levels.has(r.level)) levels.set(r.level, r.content);
+  }
+  if (!levels.has(2)) return null;
+  const l0 = levels.has(0) ? (JSON.parse(levels.get(0)!) as L0Content) : { text: '' };
+  const l1 = levels.has(1) ? (JSON.parse(levels.get(1)!) as L1Content) : { userVisible: false, bullets: [] };
   const l2 = JSON.parse(levels.get(2)!) as DigestL2Content;
   const item = l2.items.find((it) => it.id === areaId);
   if (!item) return null;
