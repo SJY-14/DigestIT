@@ -3,13 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { openDb } from '@digestit/core';
+import { openDb, type AreaProgressEvent, type DigestPartsDto } from '@digestit/core';
 import {
-  StubProvider, createProvider, type AreaInput, type AreaResult, type ContextInput, type ContextResult,
-  type DigestInput, type DigestResult, type ExplanationProvider, type PartCallOptions, type PartOutcome,
+  StubProvider, type AreaInput, type AreaResult, type AreaStreamChunk, type ContextInput, type ContextResult,
+  type DigestAreaTextInput, type DigestAreaTextResult, type DigestSummaryInput, type DigestSummaryResult,
 } from '@digestit/explain';
-import { AreaExplainRunningError, ExplainJobRunner } from './explain-job.js';
-import { initProject, findProject, ProjectLockedError, type ProjectRow } from './project.js';
+import { AreaExplainRunningError, ExplainJobRunner, explainProject, retryDigest } from './explain-job.js';
+import { findProject, initProject, ProjectLockedError, type ProjectRow } from './project.js';
 
 let root: string;
 let proj: string;
@@ -23,7 +23,7 @@ const write = (name: string, content: string) => {
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'digest-explain-job-'));
-  proj = join(root, 'project');
+  proj = join(root, 'my-project');
   home = join(root, 'home');
   mkdirSync(proj, { recursive: true });
   db = openDb(':memory:');
@@ -33,222 +33,311 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** Registers the project, then edits files in three places: areas `server`, `web` and the root. */
 async function initAndEdit(): Promise<ProjectRow> {
-  write('a.ts', 'one\n');
+  write('server/api.ts', 'export const a = 1;\n');
+  write('web/view.ts', 'export const v = 1;\n');
+  write('README.md', '# my-project\n');
   const init = await initProject(db, home, proj);
-  write('a.ts', 'one\ntwo\n');
-  write('b.ts', 'new file\n');
+  write('server/api.ts', 'export const a = 2;\nexport const b = 3;\n');
+  write('web/view.ts', 'export const v = 2;\n');
+  write('README.md', '# my-project\n\nA demo.\n');
   return findProject(db, String(init.repoId)) as ProjectRow;
 }
 
-const provider = (name: string): ExplanationProvider => createProvider({ provider: 'stub', repoAllowlist: [name] });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const gate = () => {
+  let open: () => void = () => {};
+  const promise = new Promise<void>((r) => { open = r; });
+  return { promise, open };
+};
 
-/** Waits for `runner`'s in-flight job on `digestId` to fully settle. */
-async function waitDone(runner: ExplainJobRunner, digestId: number, timeoutMs = 2000): Promise<void> {
+interface Span { part: string; start: number; end: number }
+
+/** The stub provider, with per-part delays, failures and a log of every call's span and input. */
+class ScriptedProvider extends StubProvider {
+  spans: Span[] = [];
+  contexts: Record<string, string | undefined> = {};
+  delay: Record<string, number> = {};
+  wait: Record<string, Promise<void>> = {};
+  /** Parts that throw on each attempt while their counter is > 0. */
+  fail: Record<string, number> = {};
+  inFlight = 0;
+  maxInFlight = 0;
+
+  private async around<T>(part: string, context: string | undefined, fn: () => Promise<T>): Promise<T> {
+    const start = Date.now();
+    this.inFlight++;
+    this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+    try {
+      this.contexts[part] = context;
+      if (this.wait[part]) await this.wait[part];
+      if (this.delay[part]) await sleep(this.delay[part]!);
+      if ((this.fail[part] ?? 0) > 0) {
+        this.fail[part]!--;
+        throw new Error(`${part} failed`);
+      }
+      return await fn();
+    } finally {
+      this.inFlight--;
+      this.spans.push({ part, start, end: Date.now() });
+    }
+  }
+
+  override explainDigestSummary(input: DigestSummaryInput): Promise<DigestSummaryResult> {
+    return this.around('summary', input.context, () => super.explainDigestSummary(input));
+  }
+  override explainDigestAreaText(input: DigestAreaTextInput): Promise<DigestAreaTextResult> {
+    return this.around(`area:${input.area.id}`, input.context, () => super.explainDigestAreaText(input));
+  }
+  override explainContext(input: ContextInput): Promise<ContextResult> {
+    return this.around('context', undefined, () => super.explainContext(input));
+  }
+  override explainArea(input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult> {
+    return this.around('walkthrough', input.context, () => super.explainArea(input, onProgress));
+  }
+  calls(part: string): number {
+    return this.spans.filter((s) => s.part === part).length;
+  }
+}
+
+const provider = () => new ScriptedProvider();
+
+async function settle(runner: ExplainJobRunner, digestId: number, timeoutMs = 3000): Promise<void> {
   const start = Date.now();
   while (!runner.isDone(digestId)) {
     if (Date.now() - start > timeoutMs) throw new Error('timed out waiting for the job to settle');
-    await new Promise((r) => setTimeout(r, 5));
+    await sleep(5);
   }
 }
 
 describe('ExplainJobRunner.start', () => {
-  it('returns before a slow provider finishes, and the job settles in the background', async () => {
+  it('stores the deterministic areas and returns before a slow provider finishes', async () => {
     const project = await initAndEdit();
-    let released: () => void = () => {};
-    const gate = new Promise<void>((r) => { released = r; });
-    const slow: Partial<ExplainPartFnsTest> = {
-      summary: async (d, id, p, opts) => { await gate; return { outcome: 'ok', calls: 1 }; },
-    };
-    const runner = new ExplainJobRunner(db, home, { parts: slow, now: () => new Date() });
+    const p = provider();
+    p.delay.summary = 1500;
+    p.delay['area:server'] = 1500;
+    const runner = new ExplainJobRunner(db, home);
     const t0 = Date.now();
-    const result = await runner.start(project, provider(project.name));
+    const r = await runner.start(project, p);
     expect(Date.now() - t0).toBeLessThan(1000);
-    expect(result.noChanges).toBe(false);
-    expect(result.digestId).not.toBeNull();
-    expect(runner.isDone(result.digestId!)).toBe(false);
-    released();
-    await waitDone(runner, result.digestId!);
+    expect(r.noChanges).toBe(false);
+    expect(runner.isDone(r.digestId!)).toBe(false);
+    const parts = runner.getParts(r.digestId!)!;
+    expect(Object.keys(parts.areas).sort()).toEqual(['project-root', 'server', 'web']);
+    expect(parts.summary === 'pending' || parts.summary === 'running').toBe(true);
+    const job = db.prepare('SELECT prep_ms AS prepMs, finished_at AS finishedAt FROM explain_job WHERE change_unit_id = ?')
+      .get(r.digestId!) as { prepMs: number; finishedAt: string | null };
+    expect(job.prepMs).toBeGreaterThanOrEqual(0);
+    expect(job.finishedAt).toBeNull();
+    const report = await r.settled;
+    expect(report.parts.map((x) => x.part).sort()).toEqual(['area:project-root', 'area:server', 'area:web', 'context', 'summary']);
+    const done = runner.getParts(r.digestId!)!;
+    expect(done.summary).toBe('ok');
+    expect(Object.values(done.areas)).toEqual(['ok', 'ok', 'ok']);
+    expect(done.finishedAt).not.toBeNull();
   });
 
-  it('409s a second Explain while the first is still running (lock held past the response)', async () => {
+  it('409s a second Explain while the first runs, and releases the lock once it settles', async () => {
     const project = await initAndEdit();
-    let released: () => void = () => {};
-    const gate = new Promise<void>((r) => { released = r; });
-    const runner = new ExplainJobRunner(db, home, {
-      parts: { summary: async () => { await gate; return { outcome: 'ok', calls: 1 }; } },
-    });
-    const result = await runner.start(project, provider(project.name));
-    await expect(runner.start(project, provider(project.name))).rejects.toThrow(ProjectLockedError);
-    released();
-    await waitDone(runner, result.digestId!);
-    // The lock is released once the job settles: a third Explain (no further changes) reports noChanges.
-    const again = await runner.start(project, provider(project.name));
-    expect(again.noChanges).toBe(true);
+    const p = provider();
+    const g = gate();
+    p.wait.summary = g.promise;
+    const runner = new ExplainJobRunner(db, home);
+    const r = await runner.start(project, p);
+    await expect(runner.start(project, p)).rejects.toThrow(ProjectLockedError);
+    await expect(runner.retry(project, r.digestId!, p)).rejects.toThrow(ProjectLockedError);
+    g.open();
+    await r.settled;
+    expect((await runner.start(project, p)).noChanges).toBe(true);
   });
 
-  it('marks every part budget, with no provider call, when the daily job budget is already spent', async () => {
+  it('with the day\'s budget spent: no provider call, every part `budget`, the digest still has files and areas', async () => {
     const project = await initAndEdit();
-    let calls = 0;
-    const runner = new ExplainJobRunner(db, home, {
-      budget: 0,
-      parts: { summary: async () => { calls++; return { outcome: 'ok', calls: 1 }; } },
-    });
-    const result = await runner.start(project, provider(project.name));
-    expect(result.noChanges).toBe(false);
-    expect(calls).toBe(0);
-    const parts = runner.getParts(result.digestId!)!;
+    const p = provider();
+    const runner = new ExplainJobRunner(db, home, { budget: 0 });
+    const r = await runner.start(project, p);
+    const report = await r.settled;
+    expect(report.jobId).toBeNull();
+    expect(p.spans).toEqual([]);
+    const parts = runner.getParts(r.digestId!)!;
     expect(parts.summary).toBe('budget');
-    expect(Object.values(parts.areas)).toEqual(Object.values(parts.areas).map(() => 'budget'));
+    expect(parts.context).toBe('budget');
+    expect(Object.values(parts.areas)).toEqual(['budget', 'budget', 'budget']);
+    expect(runner.isDone(r.digestId!)).toBe(true);
+    const files = db.prepare('SELECT count(*) AS n FROM file_change WHERE change_unit_id = ?').get(r.digestId!) as { n: number };
+    expect(files.n).toBe(3);
+    expect(db.prepare('SELECT count(*) AS n FROM explain_job').get()).toEqual({ n: 0 });
+
+    // Tomorrow's budget (a bigger limit here) runs exactly the parts marked `budget`.
+    const later = new ExplainJobRunner(db, home, { budget: 40 });
+    const retry = await later.retry(project, r.digestId!, p);
+    await retry.settled;
+    const after = later.getParts(r.digestId!)!;
+    expect(after.summary).toBe('ok');
+    expect(Object.values(after.areas)).toEqual(['ok', 'ok', 'ok']);
+    expect(after.context).toBe('ok');
   });
 
-  it('a failing area part does not block the others, and parts stream in over time as they settle', async () => {
+  it('parts settle independently, in order of completion, and summary is queued first', async () => {
     const project = await initAndEdit();
-    const seen: string[] = [];
-    const runner = new ExplainJobRunner(db, home, {
-      parts: {
-        summary: async () => ({ outcome: 'ok', calls: 1 }),
-        areaText: async (_db, _id, areaId) => {
-          await new Promise((r) => setTimeout(r, areaId === 'a' ? 5 : 20));
-          if (areaId === 'a') throw new Error('boom');
-          return { outcome: 'ok', calls: 1 };
-        },
-      },
-    });
-    // Force two known area ids by seeding the digest directly is more work than needed: instead
-    // just assert on whatever ids groupDigestAreas produced, generically.
-    const result = await runner.start(project, provider(project.name));
-    const unsub = runner.subscribeParts(result.digestId!, (dto) => {
-      for (const [id, status] of Object.entries(dto.areas)) if (status !== 'pending' && status !== 'running') seen.push(`${id}:${status}`);
-    });
-    await waitDone(runner, result.digestId!);
-    unsub();
-    const parts = runner.getParts(result.digestId!)!;
-    const areaIds = Object.keys(parts.areas);
-    expect(areaIds.length).toBeGreaterThan(0);
-    // At least one area failed and at least one (if more than one area exists) is unaffected by it.
-    const statuses = Object.values(parts.areas);
-    expect(statuses).toContain('error');
-  });
-
-  it("first Explain's context part runs in parallel with the digest parts, not serially after them", async () => {
-    const project = await initAndEdit();
-    const log: { name: string; start: number; end: number }[] = [];
-    const timed: Partial<ExplainPartFnsTest> = {
-      summary: async () => {
-        const start = Date.now();
-        await new Promise((r) => setTimeout(r, 40));
-        log.push({ name: 'summary', start, end: Date.now() });
-        return { outcome: 'ok', calls: 1 };
-      },
-    };
-    class TimedProvider implements ExplanationProvider {
-      readonly id = 'timed';
-      readonly model = 'timed-1';
-      private inner = new StubProvider();
-      async explain(input: never): Promise<never> { throw new Error('unused'); }
-      async explainContext(input: ContextInput): Promise<ContextResult> {
-        const start = Date.now();
-        await new Promise((r) => setTimeout(r, 40));
-        const res = await this.inner.explainContext!(input);
-        log.push({ name: 'context', start, end: Date.now() });
-        return res;
+    const p = provider();
+    p.delay['area:web'] = 10;
+    p.delay.summary = 60;
+    p.delay['area:server'] = 120;
+    p.delay['area:project-root'] = 180;
+    const runner = new ExplainJobRunner(db, home, { maxInFlight: 4 });
+    const r = await runner.start(project, p);
+    const order: string[] = [];
+    const seen = new Set<string>();
+    runner.subscribeParts(r.digestId!, (dto: DigestPartsDto) => {
+      const entries: [string, string][] = [['summary', dto.summary], ...Object.entries(dto.areas).map(([k, v]) => [`area:${k}`, v] as [string, string])];
+      for (const [k, v] of entries) {
+        if (!seen.has(k) && v !== 'pending' && v !== 'running') {
+          seen.add(k);
+          order.push(k);
+        }
       }
-      async digest(input: DigestInput): Promise<DigestResult> { return this.inner.digest!(input); }
-      async explainArea(input: AreaInput): Promise<AreaResult> { return this.inner.explainArea!(input); }
-    }
-    const runner = new ExplainJobRunner(db, home, { parts: timed });
-    const result = await runner.start(project, new TimedProvider());
-    await waitDone(runner, result.digestId!);
-    expect(log).toHaveLength(2);
-    const [a, b] = log;
-    // Overlapping intervals: the later one starts before the earlier one ends.
-    const overlap = Math.min(a!.end, b!.end) - Math.max(a!.start, b!.start);
-    expect(overlap).toBeGreaterThan(0);
-  });
-});
-
-describe('ExplainJobRunner restart recovery', () => {
-  it('a part with nothing stored and no live job reads as "error" after a simulated restart', async () => {
-    const project = await initAndEdit();
-    let releaseSummary: () => void = () => {};
-    const gate = new Promise<void>((r) => { releaseSummary = r; });
-    const runner = new ExplainJobRunner(db, home, {
-      parts: { summary: async () => { await gate; return { outcome: 'ok', calls: 1 }; } },
     });
-    const result = await runner.start(project, provider(project.name));
-    // "Restart": a fresh runner instance shares the DB but has no in-memory job state at all.
-    const restarted = new ExplainJobRunner(db, home);
-    const parts = restarted.getParts(result.digestId!)!;
-    expect(parts.summary).toBe('error');
-    expect(Object.values(parts.areas)).toEqual(Object.values(parts.areas).map(() => 'error'));
-    releaseSummary();
-    await waitDone(runner, result.digestId!);
+    await r.settled;
+    expect(order).toEqual(['area:web', 'summary', 'area:server', 'area:project-root']);
+    expect(p.spans.find((s) => s.part === 'summary')!.start).toBeLessThanOrEqual(p.spans.find((s) => s.part === 'area:web')!.start);
+  });
+
+  it('keeps at most `maxInFlight` provider calls running at once', async () => {
+    const project = await initAndEdit();
+    const p = provider();
+    for (const k of ['summary', 'area:server', 'area:web', 'area:project-root', 'context']) p.delay[k] = 30;
+    const r = await new ExplainJobRunner(db, home, { maxInFlight: 2 }).start(project, p);
+    await r.settled;
+    expect(p.maxInFlight).toBe(2);
+  });
+
+  it('on a first Explain, context builds in parallel and the parts are grounded on the compact project map', async () => {
+    const project = await initAndEdit();
+    const p = provider();
+    p.delay.context = 150;
+    p.delay.summary = 150;
+    const runner = new ExplainJobRunner(db, home);
+    const r = await runner.start(project, p);
+    const t0 = Date.now(); // after the no-LLM prep
+    const report = await r.settled;
+    const elapsed = Date.now() - t0;
+    const ctx = p.spans.find((s) => s.part === 'context')!;
+    const sum = p.spans.find((s) => s.part === 'summary')!;
+    expect(Math.min(ctx.end, sum.end) - Math.max(ctx.start, sum.start)).toBeGreaterThan(100); // overlapping
+    expect(elapsed).toBeLessThan(290); // serial would be >= 300 ms
+    expect(p.contexts.summary).toContain('server/api.ts'); // the rendered map, not an LLM description
+    expect(report.parts.find((x) => x.part === 'context')!.status).toBe('ok');
+    expect(runner.getParts(r.digestId!)!.context).toBe('ok');
+
+    // The next Explain uses the LLM context and reports `context` as skipped (no refresh needed).
+    write('web/view.ts', 'export const v = 3;\n');
+    const p2 = provider();
+    const r2 = await runner.start(project, p2);
+    await r2.settled;
+    expect(p2.calls('context')).toBe(0);
+    expect(p2.contexts.summary).toBeDefined();
+    expect(p2.contexts.summary).not.toContain('server/api.ts\n');
+    expect(runner.getParts(r2.digestId!)!.context).toBe('skipped');
+    expect(runner.getParts(r.digestId!)!.context).toBe('ok');
   });
 });
 
 describe('ExplainJobRunner.retry', () => {
-  it('re-runs only parts left error/truncated/budget, not everything', async () => {
+  it('a failing area does not block the others, and a retry re-runs only that area', async () => {
     const project = await initAndEdit();
-    // Real bridge (explainDigestSummary -> explainDigest), against a provider whose first digest()
-    // call fails and second succeeds: exercises retry through the actual storage path, not a fake
-    // that skips it (getParts derives terminal status from what the part function actually stored).
-    let attempt = 0;
-    class FlakyOnce extends StubProvider {
-      override async digest(input: DigestInput): Promise<DigestResult> {
-        attempt++;
-        // explainDigest retries once internally (2 attempts per call): both attempts of the first
-        // job-level call must fail so the job genuinely settles 'error', not 'ok' via its own retry.
-        if (attempt <= 2) throw new Error('boom');
-        return super.digest(input);
-      }
-    }
-    const flaky = new FlakyOnce();
+    const p = provider();
+    p.fail['area:web'] = 2; // both attempts of the first job
     const runner = new ExplainJobRunner(db, home);
-    const result = await runner.start(project, flaky);
-    await waitDone(runner, result.digestId!);
-    expect(runner.getParts(result.digestId!)!.summary).toBe('error');
+    const r = await runner.start(project, p);
+    const report = await r.settled;
+    expect(report.parts.find((x) => x.part === 'area:web')!.status).toBe('error');
+    const parts = runner.getParts(r.digestId!)!;
+    expect(parts.areas).toEqual({ 'project-root': 'ok', server: 'ok', web: 'error' });
+    expect(parts.summary).toBe('ok');
+    const l2 = JSON.parse((db.prepare('SELECT content FROM explanation WHERE change_unit_id = ? AND level = 2').get(r.digestId!) as { content: string }).content);
+    expect(l2.items.map((it: { id: string }) => it.id).sort()).toEqual(['project-root', 'server']);
 
-    const retry = await runner.retry(project, result.digestId!, flaky);
-    expect(retry.nothingToRetry).toBe(false);
-    await waitDone(runner, result.digestId!);
-    expect(runner.getParts(result.digestId!)!.summary).toBe('ok');
-    expect(attempt).toBe(3);
+    const before = p.spans.length;
+    const retry = await runner.retry(project, r.digestId!, p);
+    const retried = await retry.settled!;
+    expect(retried.parts.map((x) => x.part)).toEqual(['area:web']);
+    expect(p.spans.slice(before).map((s) => s.part)).toEqual(['area:web']);
+    expect(runner.getParts(r.digestId!)!.areas).toEqual({ 'project-root': 'ok', server: 'ok', web: 'ok' });
+    const job = db.prepare("SELECT count(*) AS n FROM explain_job WHERE kind = 'retry'").get() as { n: number };
+    expect(job.n).toBe(1);
 
-    const again = await runner.retry(project, result.digestId!, flaky);
-    expect(again.nothingToRetry).toBe(true);
+    expect((await runner.retry(project, r.digestId!, p)).settled).toBeNull();
+  });
+});
+
+describe('ExplainJobRunner restart recovery', () => {
+  it('parts with nothing stored and no live job read as `error`; stored parts keep their status', async () => {
+    const project = await initAndEdit();
+    const p = provider();
+    const g = gate();
+    p.wait['area:server'] = g.promise;
+    p.wait['area:project-root'] = g.promise;
+    p.wait['area:web'] = g.promise;
+    const runner = new ExplainJobRunner(db, home);
+    const r = await runner.start(project, p);
+    while (runner.getParts(r.digestId!)!.summary !== 'ok') await sleep(5);
+
+    // A restarted server: same DB, a fresh runner with no in-memory job.
+    const restarted = new ExplainJobRunner(db, home);
+    const parts = restarted.getParts(r.digestId!)!;
+    expect(parts.summary).toBe('ok');
+    expect(parts.areas).toEqual({ 'project-root': 'error', server: 'error', web: 'error' });
+    expect(parts.finishedAt).toBeNull();
+    expect(restarted.isDone(r.digestId!)).toBe(true);
+    g.open();
+    await r.settled;
   });
 });
 
 describe('ExplainJobRunner.startArea', () => {
-  it('409s a duplicate click on the same area, and streams a final area-progress event', async () => {
+  it('returns at once, streams progress, ends with the stored walkthrough as `done`, and 409s a duplicate click', async () => {
     const project = await initAndEdit();
     const runner = new ExplainJobRunner(db, home);
-    const first = await runner.start(project, provider(project.name));
-    await waitDone(runner, first.digestId!);
-    const areaId = Object.keys(runner.getParts(first.digestId!)!.areas)[0]!;
+    const r = await runner.start(project, provider());
+    await r.settled;
 
-    let released: () => void = () => {};
-    const gate = new Promise<void>((r) => { released = r; });
-    const events: { done: boolean }[] = [];
-    const runner2 = new ExplainJobRunner(db, home, {
-      parts: { areaWalkthrough: async (_d, _id, _a, _p, opts) => { await gate; opts.onProgress?.({ areaId, overview: 'x', steps: [], done: true }); return { outcome: 'ok', calls: 1 }; } },
-    });
-    const unsub = runner2.subscribeAreaProgress(first.digestId!, (e) => events.push(e));
-    const started = await runner2.startArea(project, first.digestId!, areaId, provider(project.name));
-    expect(started.started).toBe(true);
-    expect(runner2.isAreaRunning(first.digestId!, areaId)).toBe(true);
-    await expect(runner2.startArea(project, first.digestId!, areaId, provider(project.name))).rejects.toThrow(AreaExplainRunningError);
-    released();
-    while (runner2.isAreaRunning(first.digestId!, areaId)) await new Promise((r) => setTimeout(r, 5));
+    const p = provider();
+    const g = gate();
+    p.wait.walkthrough = g.promise;
+    const events: AreaProgressEvent[] = [];
+    const unsub = runner.subscribeAreaProgress(r.digestId!, (e) => events.push(e));
+    const started = await runner.startArea(project, r.digestId!, 'server', p);
+    expect(started.settled).not.toBeNull();
+    expect(runner.isAreaRunning(r.digestId!, 'server')).toBe(true);
+    expect(runner.isDone(r.digestId!)).toBe(false);
+    await expect(runner.startArea(project, r.digestId!, 'server', p)).rejects.toThrow(AreaExplainRunningError);
+    g.open();
+    expect((await started.settled!).outcome).toBe('ok');
     unsub();
-    expect(events).toHaveLength(1);
-    expect(events[0]!.done).toBe(true);
+    expect(runner.isDone(r.digestId!)).toBe(true);
+    const last = events[events.length - 1]!;
+    expect(last.done).toBe(true);
+    expect(last.steps.length).toBeGreaterThan(0);
+    expect(events.slice(0, -1).every((e) => !e.done)).toBe(true);
+    const job = db.prepare("SELECT area_id AS areaId, finished_at AS finishedAt FROM explain_job WHERE kind = 'area'").get() as { areaId: string; finishedAt: string | null };
+    expect(job.areaId).toBe('server');
+    expect(job.finishedAt).not.toBeNull();
   });
 });
 
-// Loosens the imported ExplainPartFns type for tests that only override `summary`/`areaText`.
-type ExplainPartFnsTest = {
-  summary: (db: DatabaseSync, changeUnitId: number, provider: ExplanationProvider, opts: PartCallOptions) => Promise<PartOutcome>;
-  areaText: (db: DatabaseSync, changeUnitId: number, areaId: string, provider: ExplanationProvider, opts: PartCallOptions) => Promise<PartOutcome>;
-};
+describe('explainProject / retryDigest (the CLI path)', () => {
+  it('waits for every part and reports per-part timing', async () => {
+    const project = await initAndEdit();
+    const p = provider();
+    p.fail.summary = 2;
+    const r = await explainProject(db, home, project, p, { budget: 40 });
+    expect(r.outcome).toBe('error');
+    expect(r.detail).toMatch(/^summary: /);
+    expect(r.report!.parts.every((x) => x.ms >= 0)).toBe(true);
+    const again = await retryDigest(db, home, r.digestId!, p, { budget: 40 });
+    expect(again.outcome).toBe('ok');
+    expect(again.report!.parts.map((x) => x.part)).toEqual(['summary']);
+  });
+});

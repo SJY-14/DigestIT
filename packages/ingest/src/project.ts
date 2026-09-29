@@ -4,7 +4,7 @@ import { basename, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { BudgetDto, CheckpointReason, CommitStats, DigestAreaSkeleton, ExplainLanguage, SkipReason } from '@digestit/core';
 import { groupDigestAreas } from '@digestit/core';
-import { type DigestOutcome, type ExplanationProvider, explainDigest, filterReason } from '@digestit/explain';
+import { budgetStatus as jobUnitsUsed, filterReason } from '@digestit/explain';
 import { DEFAULT_DAILY_BUDGET, startOfLocalDay } from './scheduler.js';
 import { ensureDir0700, projectDataDir } from './datahome.js';
 import { addIgnorePatterns, hasOwnGitignore, readIgnorePatterns, suggestIgnorePatterns, type IgnoreSuggestion } from './ignore.js';
@@ -80,10 +80,8 @@ function tryLock(path: string, startedAt: string): boolean {
 
 /**
  * Acquires the per-project explain lock synchronously; throws `ProjectLockedError` when another
- * explain (fresh, retry, or DIG-75's async job) already holds it. Split out from `withProjectLock`
- * so the async job runner can hold the lock across a backgrounded LLM phase instead of only across
- * one awaited call (DIG-75: the lock must stay held until the job settles, not until the HTTP
- * response is sent).
+ * explain (fresh or retry) already holds it. The job runner (`explain-job.ts`) keeps it held across
+ * the backgrounded LLM parts, until the job settles, not just until the HTTP response is sent.
  */
 export function acquireProjectLock(dataDir: string, startedAt: string): void {
   ensureDir0700(dataDir);
@@ -97,12 +95,6 @@ export function acquireProjectLock(dataDir: string, startedAt: string): void {
 
 export function releaseProjectLock(dataDir: string): void {
   try { unlinkSync(`${dataDir}/explain.lock`); } catch { /* already gone */ }
-}
-
-/** Exclusive, per-project lock file: only one `explain` (fresh or `--retry`) runs at a time. */
-function withProjectLock<T>(dataDir: string, startedAt: string, fn: () => Promise<T>): Promise<T> {
-  acquireProjectLock(dataDir, startedAt);
-  return fn().finally(() => releaseProjectLock(dataDir));
 }
 
 export function isExplaining(home: string, repoId: number): boolean {
@@ -292,11 +284,11 @@ async function takeInitCheckpoint(
   return { tracked: tracked.length, skipped: result.skipped };
 }
 
-/** Today's shared call budget (every `explain_call` reason counts). `limit` is the configured daily cap. */
+/** Today's budget: one unit per job that made a provider call (docs/explain-speed.md "Budget
+ * decision"), the same count `startJob` checks. `limit` is the configured daily cap. */
 export function budgetStatus(db: DatabaseSync, now: Date = new Date(), limit: number = DEFAULT_DAILY_BUDGET): BudgetDto {
   const start = startOfLocalDay(now);
-  const used = (db.prepare("SELECT count(*) AS n FROM explain_call WHERE at >= ? AND outcome IN ('ok','error')")
-    .get(start.toISOString()) as { n: number }).n;
+  const used = jobUnitsUsed(db, now);
   const resetsAt = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1).toISOString();
   return { limit, used, remaining: Math.max(0, limit - used), resetsAt };
 }
@@ -321,14 +313,6 @@ export async function projectStatus(
     project, pending: pendingStats, budget: budgetStatus(db, now, limit),
     explaining: isExplaining(home, project.id), explainStartedAt: explainingSince(home, project.id),
   };
-}
-
-export interface ExplainProjectResult {
-  noChanges: boolean;
-  digestId: number | null;
-  outcome: DigestOutcome | null;
-  calls: number;
-  detail?: string;
 }
 
 function insertDigestChangeUnit(
@@ -357,17 +341,6 @@ function insertDigestChangeUnit(
   return changeUnitId;
 }
 
-export interface ExplainOptions {
-  /**
-   * Compact project context for grounding. `explainProject` calls a function form after the new
-   * checkpoint is recorded, so an Explain-time context refresh sees the current structure.
-   */
-  context?: string | (() => Promise<string | undefined>);
-  /** Daily call cap shared with every other `explain_call` reason (default `DEFAULT_DAILY_BUDGET`). */
-  budget?: number;
-  now?: () => Date;
-}
-
 export interface PreparedExplainDigest {
   noChanges: boolean;
   changeUnitId: number | null;
@@ -380,10 +353,7 @@ export interface PreparedExplainDigest {
  * deterministic areas (`groupDigestAreas`, DIG-75) in one transaction. Must be called with the
  * project lock already held; the caller reads `from` fresh inside that lock so a second,
  * concurrently queued call never mints a duplicate checkpoint for the same tree.
- *
- * Split out of `explainProject` (DIG-75) so the async job runner can await just this (target
- * < 1 s) before responding, then keep the lock held across the backgrounded LLM phase instead of
- * only across one awaited call.
+ * The job runner awaits only this before responding (its time is `explain_job.prep_ms`).
  */
 export async function prepareExplainDigest(
   db: DatabaseSync, home: string, project: ProjectRow, now: () => Date = () => new Date(),
@@ -413,43 +383,4 @@ export async function prepareExplainDigest(
     throw e;
   }
   return { noChanges: false, changeUnitId, areas };
-}
-
-/**
- * `digest explain`: snapshots the project; if the tree changed, records a checkpoint, a `digest`
- * change unit and its files, then explains it (v2-4). Unchanged tree: no checkpoint, no call.
- * Serialized per project by a lock file, and the previous checkpoint is read inside that lock so a
- * second, concurrently queued call never mints a duplicate checkpoint for the same tree.
- */
-export async function explainProject(
-  db: DatabaseSync, home: string, project: ProjectRow, provider: ExplanationProvider, opts: ExplainOptions = {},
-): Promise<ExplainProjectResult> {
-  const now = opts.now ?? (() => new Date());
-  const budget = opts.budget ?? DEFAULT_DAILY_BUDGET;
-  const dataDir = projectDataDir(home, project.id);
-  return withProjectLock(dataDir, now().toISOString(), async () => {
-    const prepared = await prepareExplainDigest(db, home, project, now);
-    if (prepared.noChanges) return { noChanges: true, digestId: null, outcome: null, calls: 0 };
-    const context = typeof opts.context === 'function' ? await opts.context() : opts.context;
-    const r = await explainDigest(db, prepared.changeUnitId!, provider, { context, budget, now, language: project.language });
-    return { noChanges: false, digestId: prepared.changeUnitId, outcome: r.outcome, calls: r.calls, detail: r.detail };
-  });
-}
-
-/** `digest explain --retry <digestId>`: re-runs the provider call for an existing digest; no new snapshot.
- * The retry keeps the language the digest was first written in, even if the project's changed since. */
-export async function retryDigest(
-  db: DatabaseSync, home: string, digestId: number, provider: ExplanationProvider, opts: ExplainOptions = {},
-): Promise<ExplainProjectResult> {
-  const row = db.prepare('SELECT repo_id, language FROM digest WHERE change_unit_id = ?').get(digestId) as
-    { repo_id: number; language: ExplainLanguage } | undefined;
-  if (!row) throw new Error(`no digest ${digestId}`);
-  const budget = opts.budget ?? DEFAULT_DAILY_BUDGET;
-  const dataDir = projectDataDir(home, row.repo_id);
-  const startedAt = (opts.now ?? (() => new Date()))().toISOString();
-  return withProjectLock(dataDir, startedAt, async () => {
-    const context = typeof opts.context === 'function' ? await opts.context() : opts.context;
-    const r = await explainDigest(db, digestId, provider, { context, budget, now: opts.now, language: row.language });
-    return { noChanges: false, digestId, outcome: r.outcome, calls: r.calls, detail: r.detail };
-  });
 }

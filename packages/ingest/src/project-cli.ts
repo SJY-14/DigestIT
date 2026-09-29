@@ -6,10 +6,10 @@ import { addIgnorePatterns, isValidIgnorePattern, readIgnorePatterns, removeIgno
 import { DEFAULT_DAILY_BUDGET } from './scheduler.js';
 import { intOpt, providerFromArgs } from './watch.js';
 import {
-  ProjectLockedError, explainProject, findProject, initProject, latestCheckpoint, listProjects,
-  projectStatus, retryDigest, updateProjectLanguage, type ExplainProjectResult,
+  ProjectLockedError, findProject, initProject, latestCheckpoint, listProjects, projectStatus, updateProjectLanguage,
 } from './project.js';
-import { buildContext, ensureContext, latestContextText } from './project-context.js';
+import { explainProject, retryDigest, type ExplainProjectResult } from './explain-job.js';
+import { refreshContext } from './project-context.js';
 
 export const INIT_USAGE =
   'usage: digest init <path> [--name <name>] [--context <file.md>] [--language <en|ko>] [--ignore <pattern>]... [--db <file>]';
@@ -181,9 +181,21 @@ export const EXPLAIN_PROJECT_USAGE =
   'usage: digest explain [project] [--retry <digestId>] [--provider <name>] [--allow <repo,...>] [--budget <n>] [--db <file>]';
 
 function report(r: ExplainProjectResult): void {
+  if (r.report && r.report.jobId === null && r.report.parts.length === 0) {
+    console.log(`digest ${r.digestId}: nothing to retry`);
+    return;
+  }
   const suffix = r.detail ? ` (${r.detail.slice(0, 160)})` : '';
   console.log(`digest ${r.digestId}: ${r.outcome}${suffix}, ${r.calls} provider call(s)`);
-  if (r.outcome === 'budget' || r.outcome === 'error') console.log(`retry with: digest explain --retry ${r.digestId}`);
+  if (r.report && r.report.jobId !== null) {
+    console.log(`  prep ${r.report.prepMs} ms`);
+    for (const p of r.report.parts) {
+      console.log(`  ${p.part}: ${p.status} in ${p.ms} ms, ${p.calls} call(s)${p.detail ? ` (${p.detail.slice(0, 120)})` : ''}`);
+    }
+  }
+  if (r.outcome === 'budget' || r.outcome === 'error' || r.outcome === 'truncated') {
+    console.log(`retry with: digest explain --retry ${r.digestId}`);
+  }
 }
 
 const outcomeExit = (r: ExplainProjectResult): number => (r.outcome === 'error' ? 1 : 0);
@@ -228,7 +240,7 @@ export async function runProjectExplainCli(argv: string[]): Promise<number> {
         console.error('unknown provider');
         return 2;
       }
-      const r = await retryDigest(db, home, digestId, provider, { context: latestContextText(db, row.id), budget: budget ?? DEFAULT_DAILY_BUDGET });
+      const r = await retryDigest(db, home, digestId, provider, { budget: budget ?? DEFAULT_DAILY_BUDGET });
       report(r);
       return outcomeExit(r);
     }
@@ -242,21 +254,13 @@ export async function runProjectExplainCli(argv: string[]): Promise<number> {
       console.error('unknown provider');
       return 2;
     }
-    const limit = budget ?? DEFAULT_DAILY_BUDGET;
-    const context = async () => {
-      try {
-        if (await ensureContext(db, home, found, provider, { budget: limit })) console.log(contextLine(db, found.id));
-      } catch (e) {
-        console.error(`project context not built: ${e instanceof Error ? e.message : String(e)}`);
-      }
-      return latestContextText(db, found.id);
-    };
-    const r = await explainProject(db, home, found, provider, { context, budget: limit });
+    const r = await explainProject(db, home, found, provider, { budget: budget ?? DEFAULT_DAILY_BUDGET });
     if (r.noChanges) {
       console.log('No changes since last check');
       return 0;
     }
     report(r);
+    if (r.report?.parts.some((p) => p.part === 'context')) console.log(contextLine(db, found.id));
     return outcomeExit(r);
   } catch (e) {
     if (e instanceof ProjectLockedError) {
@@ -309,7 +313,7 @@ export async function runContextCli(argv: string[]): Promise<number> {
       console.error('unknown provider');
       return 2;
     }
-    const r = await buildContext(db, home, found, provider, { budget: budget ?? DEFAULT_DAILY_BUDGET });
+    const r = await refreshContext(db, home, found, provider, { budget: budget ?? DEFAULT_DAILY_BUDGET });
     if (r.outcome === 'budget') {
       console.error('daily LLM budget exhausted; context not rebuilt');
       return 1;

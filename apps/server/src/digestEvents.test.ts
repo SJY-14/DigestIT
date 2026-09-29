@@ -3,8 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
-import { openDb } from '@digestit/core';
-import { createProvider, type AreaInput, type AreaResult, type DigestInput, type DigestResult, type ExplanationProvider } from '@digestit/explain';
+import { openDb, type DigestPartsDto } from '@digestit/core';
+import {
+  StubProvider, type AreaInput, type AreaResult, type AreaStreamChunk, type ContextInput, type ContextResult,
+  type DigestAreaTextInput, type DigestAreaTextResult, type DigestSummaryInput, type DigestSummaryResult,
+} from '@digestit/explain';
 import { buildApp } from './app.js';
 
 let root: string;
@@ -34,37 +37,57 @@ function deferred<T = void>(): { promise: Promise<T>; resolve: (v: T) => void } 
   return { promise, resolve };
 }
 
-/** A provider whose `digest()` call is gated, so a test can observe the digest mid-flight. */
-class GatedProvider implements ExplanationProvider {
-  readonly id = 'gated';
-  readonly model = 'gated-1';
-  private inner: ExplanationProvider;
-  constructor(private gate: Promise<void>, allow: string[]) {
-    this.inner = createProvider({ provider: 'stub', repoAllowlist: allow });
+type Gate = { promise: Promise<void>; resolve: () => void };
+
+/** The stub provider with one gate per part (`summary`, `area:<id>`, `context`, `walkthrough`). */
+class GatedProvider extends StubProvider {
+  gates = new Map<string, Gate>();
+  gate(part: string): Gate {
+    if (!this.gates.has(part)) this.gates.set(part, deferred<void>() as Gate);
+    return this.gates.get(part)!;
   }
-  async explain(): Promise<never> { throw new Error('unused'); }
-  async digest(input: DigestInput): Promise<DigestResult> {
-    await this.gate;
-    return this.inner.digest!(input);
+  openAll(): void {
+    for (const g of this.gates.values()) g.resolve();
+    this.closed = false;
   }
-  async explainContext(): Promise<never> { throw new Error('unused'); }
-  async explainArea(input: AreaInput): Promise<AreaResult> { return this.inner.explainArea!(input); }
+  closed = true;
+  private async pass(part: string): Promise<void> {
+    if (this.closed || this.gates.has(part)) await this.gate(part).promise;
+  }
+  override async explainDigestSummary(input: DigestSummaryInput): Promise<DigestSummaryResult> {
+    await this.pass('summary');
+    return super.explainDigestSummary(input);
+  }
+  override async explainDigestAreaText(input: DigestAreaTextInput): Promise<DigestAreaTextResult> {
+    await this.pass(`area:${input.area.id}`);
+    return super.explainDigestAreaText(input);
+  }
+  override async explainContext(input: ContextInput): Promise<ContextResult> {
+    await this.pass('context');
+    return super.explainContext(input);
+  }
+  override async explainArea(input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult> {
+    await this.pass('walkthrough');
+    return super.explainArea(input, onProgress);
+  }
 }
 
-async function setupApp(gate: Promise<void>) {
+async function setupApp(provider: GatedProvider) {
   root = mkdtempSync(join(tmpdir(), 'digest-events-'));
-  proj = join(root, 'project');
+  proj = join(root, 'my-project');
   home = join(root, 'home');
   mkdirSync(proj, { recursive: true });
-  write('a.ts', 'one\n');
+  write('server/api.ts', 'export const a = 1;\n');
+  write('web/view.ts', 'export const v = 1;\n');
   const db: DatabaseSync = openDb(':memory:');
   const { initProject } = await import('@digestit/ingest');
   const init = await initProject(db, home, proj);
-  write('a.ts', 'one\ntwo\n');
+  write('server/api.ts', 'export const a = 2;\n');
+  write('web/view.ts', 'export const v = 2;\n');
 
   const app = buildApp({
     db, webDir: '/nonexistent', writeToken: WRITE_TOKEN,
-    v2: { home, providerFactory: (allow) => new GatedProvider(gate, allow) },
+    v2: { home, providerFactory: () => provider },
   });
   closers.push(app);
   await app.listen({ host: '127.0.0.1', port: 0 });
@@ -87,49 +110,109 @@ async function readUntil(res: Response, pred: (text: string) => boolean, ms = 40
   return text;
 }
 
+const partsEvents = (text: string) => [...text.matchAll(/event: parts\ndata: (\{.*\})/g)].map((m) => JSON.parse(m[1]!) as DigestPartsDto);
+const settledOrder = (events: DigestPartsDto[]): string[] => {
+  const order: string[] = [];
+  for (const e of events) {
+    const all: [string, string][] = [['summary', e.summary], ['context', e.context], ...Object.entries(e.areas).map(([k, v]) => [`area:${k}`, v] as [string, string])];
+    for (const [k, v] of all) if (v !== 'pending' && v !== 'running' && !order.includes(k)) order.push(k);
+  }
+  return order;
+};
+
+async function startExplain(base: string): Promise<{ digestId: number; ms: number; body: Record<string, unknown> }> {
+  const projects = await (await fetch(`${base}/api/projects`)).json();
+  const t0 = Date.now();
+  const res = await fetch(`${base}/api/projects/${projects[0].id}/explain`, { method: 'POST', headers: authHeaders(base), body: '{}' });
+  const body = await res.json();
+  return { digestId: body.digestId as number, ms: Date.now() - t0, body };
+}
+
 describe('GET /api/digests/:id/events (SSE, DIG-75)', () => {
-  it('sends parts on connect, on change, and done once the job settles, in order', async () => {
-    const gate = deferred<void>();
-    const { base } = await setupApp(gate.promise);
-    const projects = await (await fetch(`${base}/api/projects`)).json();
-    const explainRes = await fetch(`${base}/api/projects/${projects[0].id}/explain`, {
-      method: 'POST', headers: authHeaders(base), body: '{}',
-    });
-    const digestId = (await explainRes.json()).digestId as number;
+  it('POST /explain returns pending before a slow provider answers; parts stream in order of completion, then done', async () => {
+    const p = new GatedProvider();
+    const { base } = await setupApp(p);
+    const { digestId, ms, body } = await startExplain(base);
+    expect(ms).toBeLessThan(1000);
+    expect(body.status).toBe('pending');
+    const detail = await (await fetch(`${base}/api/digests/${digestId}`)).json();
+    expect(detail.areas.map((a: { id: string }) => a.id)).toEqual(['server', 'web']);
+    expect(detail.files).toHaveLength(2);
+    expect(detail.l0).toBeNull();
 
     const ctrl = new AbortController();
     const res = await fetch(`${base}/api/digests/${digestId}/events`, { signal: ctrl.signal });
     expect(res.headers.get('content-type')).toContain('text/event-stream');
-
-    // The initial snapshot arrives before the summary part settles: still pending/running.
+    expect(res.headers.get('cache-control')).toContain('no-cache');
     let text = await readUntil(res, (t) => t.includes('event: parts'));
-    expect(text).toMatch(/"summary":"(pending|running)"/);
-    expect(text).not.toContain('event: done');
+    expect(partsEvents(text)[0]!.summary).toMatch(/pending|running/);
 
-    gate.resolve();
-    text = await readUntil(res, (t) => t.includes('event: done'));
+    // Release the parts in an order different from how they were queued.
+    for (const part of ['area:web', 'context', 'summary', 'area:server']) {
+      p.gate(part).resolve();
+      text += await readUntil(res, (t) => settledOrder(partsEvents(t)).includes(part), 2000);
+    }
+    text += await readUntil(res, (t) => t.includes('event: done'));
     ctrl.abort();
-
-    const partsEvents = [...text.matchAll(/event: parts\ndata: (\{.*\})/g)].map((m) => JSON.parse(m[1]!));
-    expect(partsEvents.length).toBeGreaterThanOrEqual(2);
-    expect(partsEvents.at(-1).summary).toBe('ok');
-    // Events streamed in order: no terminal status appears before a running/pending one for the same part.
-    const summarySeq = partsEvents.map((p) => p.summary);
-    expect(summarySeq.at(-1)).toBe('ok');
+    expect(settledOrder(partsEvents(text))).toEqual(['area:web', 'context', 'summary', 'area:server']);
+    expect(partsEvents(text).at(-1)).toMatchObject({ summary: 'ok', context: 'ok', areas: { server: 'ok', web: 'ok' } });
     expect(text.indexOf('event: done')).toBeGreaterThan(text.lastIndexOf('event: parts'));
+    const after = await (await fetch(`${base}/api/digests/${digestId}`)).json();
+    expect(after.l2.items.map((it: { id: string }) => it.id)).toEqual(['server', 'web']);
+    expect(after.parts.finishedAt).not.toBeNull();
+  });
+
+  it('409s a second Explain while parts are still running', async () => {
+    const p = new GatedProvider();
+    const { base } = await setupApp(p);
+    const { digestId } = await startExplain(base);
+    const projects = await (await fetch(`${base}/api/projects`)).json();
+    const again = await fetch(`${base}/api/projects/${projects[0].id}/explain`, { method: 'POST', headers: authHeaders(base), body: '{}' });
+    expect(again.status).toBe(409);
+    const retry = await fetch(`${base}/api/digests/${digestId}/explain`, { method: 'POST', headers: authHeaders(base), body: '{}' });
+    expect(retry.status).toBe(409);
+    p.openAll();
+  });
+
+  it('streams an area L3 as area-progress, ends with done, and the POST returns at once', async () => {
+    const p = new GatedProvider();
+    p.openAll();
+    const { base } = await setupApp(p);
+    const { digestId } = await startExplain(base);
+    const ctrl0 = new AbortController();
+    await readUntil(await fetch(`${base}/api/digests/${digestId}/events`, { signal: ctrl0.signal }), (t) => t.includes('event: done'));
+    ctrl0.abort();
+
+    const walk = p.gate('walkthrough');
+    const t0 = Date.now();
+    const post = await fetch(`${base}/api/digests/${digestId}/areas/server/explain`, { method: 'POST', headers: authHeaders(base), body: '{}' });
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect((await post.json()).status).toBe('pending');
+    const dup = await fetch(`${base}/api/digests/${digestId}/areas/server/explain`, { method: 'POST', headers: authHeaders(base), body: '{}' });
+    expect(dup.status).toBe(409);
+
+    const ctrl = new AbortController();
+    const res = await fetch(`${base}/api/digests/${digestId}/events`, { signal: ctrl.signal });
+    let text = await readUntil(res, (t) => t.includes('event: parts'));
+    expect(text).not.toContain('event: done');
+    walk.resolve();
+    text += await readUntil(res, (t) => t.includes('event: done'));
+    ctrl.abort();
+    const progress = [...text.matchAll(/event: area-progress\ndata: (\{.*\})/g)].map((m) => JSON.parse(m[1]!));
+    expect(progress.at(-1)).toMatchObject({ areaId: 'server', done: true });
+    expect(progress.at(-1).steps.length).toBeGreaterThan(0);
+    const area = await (await fetch(`${base}/api/digests/${digestId}/areas/server`)).json();
+    expect(area.status).toBe('ok');
   });
 
   it('sends parts + done right away when nothing is running for this digest', async () => {
-    const gate = deferred<void>();
-    gate.resolve(); // never actually gates anything in this test
-    const { base } = await setupApp(gate.promise);
-    const projects = await (await fetch(`${base}/api/projects`)).json();
-    const explainRes = await fetch(`${base}/api/projects/${projects[0].id}/explain`, { method: 'POST', headers: authHeaders(base), body: '{}' });
-    const digestId = (await explainRes.json()).digestId as number;
-    // Let the (already-gate-resolved) job settle before connecting.
+    const p = new GatedProvider();
+    p.openAll();
+    const { base } = await setupApp(p);
+    const { digestId } = await startExplain(base);
     for (let i = 0; i < 40; i++) {
       const parts = (await (await fetch(`${base}/api/digests/${digestId}`)).json()).parts;
-      if (parts && parts.summary !== 'pending' && parts.summary !== 'running') break;
+      if (parts && parts.finishedAt) break;
       await new Promise((r) => setTimeout(r, 25));
     }
     const ctrl = new AbortController();
@@ -141,9 +224,9 @@ describe('GET /api/digests/:id/events (SSE, DIG-75)', () => {
   });
 
   it('404s an unknown digest', async () => {
-    const gate = deferred<void>();
-    gate.resolve();
-    const { base } = await setupApp(gate.promise);
+    const p = new GatedProvider();
+    p.openAll();
+    const { base } = await setupApp(p);
     const res = await fetch(`${base}/api/digests/999/events`);
     expect(res.status).toBe(404);
   });

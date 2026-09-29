@@ -16,9 +16,9 @@ import {
 } from '@digestit/core';
 import {
   AreaExplainRunningError, DEFAULT_DAILY_BUDGET, ExplainJobRunner, ProjectLockedError, addIgnorePatterns,
-  budgetStatus, buildContext, initProject, isValidIgnorePattern, latestCheckpoint,
-  latestContextText as sharedLatestContextText, listProjects, listTree, openShadow, projectDataDir, projectStatus,
-  readIgnorePatterns, removeIgnorePatterns, updateProjectLanguage, type ProjectRow,
+  budgetStatus, initProject, isValidIgnorePattern, latestCheckpoint,
+  listProjects, listTree, openShadow, projectDataDir, projectStatus,
+  readIgnorePatterns, refreshContext, removeIgnorePatterns, updateProjectLanguage, type ProjectRow,
 } from '@digestit/ingest';
 import {
   AREA_PROMPT_VERSION, createProvider,
@@ -153,7 +153,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
   // Fast Explain (DIG-75): the async job runner behind POST /explain, POST /digests/:id/explain
   // (retry) and POST .../areas/:areaId/explain. One instance per server process, holding the
   // in-memory "still running" state that GET /api/digests/:id and the SSE stream below read from.
-  const jobRunner = new ExplainJobRunner(db, home, { budget: budgetLimit, now });
+  const jobRunner = new ExplainJobRunner(db, home, { budget: budgetLimit, now, contextBusy: (repoId) => contextInFlight.has(repoId) });
 
   const latestExplanation = db.prepare(
     `SELECT content, status, created_at FROM explanation WHERE change_unit_id = ? AND level = ?
@@ -188,8 +188,6 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     };
   }
 
-  const latestContextText = (repoId: number) => sharedLatestContextText(db, repoId);
-
   const NOT_TRACKED_EXAMPLES = 5;
   const MAX_IGNORE_PATTERNS_PER_REQUEST = 100;
   /** Paths not stored in the shadow, from the latest checkpoint, grouped by why (DIG-56). */
@@ -217,8 +215,11 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     }
   }
 
-  const buildContextFor = (row: ProjectRow, provider: ExplanationProvider) =>
-    withContextGuard(row, () => buildContext(db, home, row, provider, { budget: budgetLimit, now }));
+  // Also refused while an Explain's own `context` part is building it (first Explain of a project).
+  const buildContextFor = (row: ProjectRow, provider: ExplanationProvider) => {
+    if (jobRunner.isContextRunning(row.id)) throw new InFlightError();
+    return withContextGuard(row, () => refreshContext(db, home, row, provider, { budget: budgetLimit, now }));
+  };
 
   function loadDigestL2(digestId: number): DigestL2Content | null {
     const row = latestExplanation.get(digestId, 2) as { content: string; status: string } | undefined;
@@ -284,7 +285,8 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     return {
       digestId,
       areaId,
-      status: row?.status ?? 'none',
+      // While an L3 job runs (DIG-75) the walkthrough streams over GET /api/digests/:id/events.
+      status: jobRunner.isAreaRunning(digestId, areaId) ? 'pending' : (row?.status ?? 'none'),
       l3: row ? parseJson(row.content, null) : null,
       files,
     };
@@ -599,7 +601,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     const provider = providerFactory([row.name]);
     if (!provider) return reply.code(500).send({ error: 'no_provider' });
     try {
-      const r = await jobRunner.start(row, provider, { context: latestContextText(row.id) });
+      const r = await jobRunner.start(row, provider);
       const budget = budgetStatus(db, now(), budgetLimit);
       if (r.noChanges) return { noChanges: true, digestId: null, status: null, budget };
       graphCache.deleteDigest(r.digestId!);

@@ -1,27 +1,23 @@
-// Fast Explain (DIG-75, docs/explain-speed.md §5): the async Explain job runner. `POST
-// /api/projects/:id/explain` used to hold its HTTP response open for the whole LLM call (the ~50s/
-// ~100s problem the doc measures); this runner does the fast, no-LLM prep synchronously (checkpoint,
-// digest row, deterministic areas), then runs the LLM parts in the background while the caller
-// returns right away. Part status is derived from stored rows plus this runner's in-memory running
-// set (see `getParts`), so a server restart never leaves a part `running` forever: with no live
-// entry and nothing stored, it reads `error`.
+// Fast Explain (DIG-75, docs/explain-speed.md §4-5): the async Explain job runner. `POST
+// /api/projects/:id/explain` used to hold its HTTP response open for the whole LLM call; this runner
+// does the no-LLM prep synchronously (snapshot, checkpoint, digest row, deterministic areas), then
+// runs the LLM parts (`summary`, one `area:<id>` per area, `context`) in the background while the
+// caller returns. Part status is derived from stored rows plus this runner's in-memory running set
+// (see `getParts`), so a server restart never leaves a part `running` forever: with no live entry
+// and nothing stored, it reads `error`.
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  AreaProgressEvent, DigestAreaSkeleton, DigestL2Content, DigestPartsDto, PartStatus,
+  AreaProgressEvent, AreaWalkthrough, DigestAreaSkeleton, DigestL2Content, DigestPartsDto, PartStatus,
 } from '@digestit/core';
 import {
-  type ExplainJobKind, type ExplanationProvider, type JobRef, type PartOutcome, finishJob,
-  markPartsBudget, renderMap, setPrepMs, startJob,
-  explainAreaWalkthrough as realExplainAreaWalkthrough,
-  explainDigestAreaText as realExplainDigestAreaText,
-  explainDigestSummary as realExplainDigestSummary,
+  type ExplainJobKind, type ExplanationProvider, type JobRef, type PartOutcome,
+  explainArea, explainDigestAreaText, explainDigestSummary, finishJob, markPartsBudget, renderMap, setPrepMs, startJob,
 } from '@digestit/explain';
 import { projectDataDir } from './datahome.js';
 import { DEFAULT_DAILY_BUDGET } from './scheduler.js';
 import { ensureContext, latestContextText, mapOfTree } from './project-context.js';
 import {
-  acquireProjectLock, latestCheckpoint, prepareExplainDigest, releaseProjectLock,
-  type ProjectRow,
+  acquireProjectLock, latestCheckpoint, listProjects, prepareExplainDigest, releaseProjectLock, type ProjectRow,
 } from './project.js';
 import { openShadow } from './shadow.js';
 
@@ -32,9 +28,9 @@ export class AreaExplainRunningError extends Error {
   }
 }
 
-type PartKey = 'summary' | 'context' | `area:${string}`;
+export type PartKey = 'summary' | 'context' | `area:${string}`;
 
-/** A tiny concurrency gate: at most `max` callbacks run at once, others wait their turn. */
+/** At most `max` callbacks run at once; the others wait in the order they were queued. */
 class Limiter {
   private active = 0;
   private waiting: (() => void)[] = [];
@@ -51,41 +47,63 @@ class Limiter {
   }
 }
 
+/** One settled part of a job, for `digest explain`'s per-part timing lines. */
+export interface PartReport {
+  part: PartKey;
+  status: PartStatus;
+  calls: number;
+  ms: number;
+  detail?: string;
+}
+
+export interface JobReport {
+  jobId: number | null;
+  prepMs: number;
+  parts: PartReport[];
+}
+
 interface JobState {
   parts: Map<PartKey, 'pending' | 'running'>;
   listeners: Set<(dto: DigestPartsDto) => void>;
 }
 
-export interface ExplainPartFns {
-  summary: typeof realExplainDigestSummary;
-  areaText: typeof realExplainDigestAreaText;
-  areaWalkthrough: typeof realExplainAreaWalkthrough;
-}
-
 export interface ExplainJobRunnerOptions {
+  /** Parts in flight at once per job (docs/explain-speed.md §4); default 4. */
   maxInFlight?: number;
   budget?: number;
   now?: () => Date;
-  /** Overrides the real @digestit/explain part functions; for tests that need genuinely
-   * independent per-area behaviour the interim production bridge can't demonstrate (see jobs.ts). */
-  parts?: Partial<ExplainPartFns>;
+  /** True while something outside the runner (the context refresh endpoint) is building this
+   * project's context; the job then skips its own `context` part instead of racing it. */
+  contextBusy?: (repoId: number) => boolean;
 }
 
 export interface StartResult {
   noChanges: boolean;
   digestId: number | null;
+  /** Resolves once every part has settled (immediately for no changes or an exhausted budget). */
+  settled: Promise<JobReport>;
 }
 
 const RETRYABLE: readonly PartStatus[] = ['error', 'truncated', 'budget'];
+/** Final statuses of settled parts kept per digest (see `getParts`); oldest digests dropped first. */
+const MAX_REMEMBERED_DIGESTS = 500;
 
-/** One `explain_job` row (kind `explain`/`retry`/`area`/`context`) plus, while it runs, an
- * in-memory record of which of its parts are still pending or running. Everything else about a
- * part's status is read back from the DB (see `getParts`), so this class holds no state that a
- * process restart needs to reconstruct. */
+const toStatus = (o: PartOutcome): PartStatus => (o.outcome === 'cached' ? 'ok' : o.outcome);
+
+/**
+ * One `explain_job` row per user action (Explain, retry, area L3) plus, while it runs, an
+ * in-memory record of which parts are pending or running. Everything else about a part's status
+ * is read back from the DB, so a restart loses nothing but the "running" flags.
+ */
 export class ExplainJobRunner {
   private jobs = new Map<number, JobState>(); // keyed by digest change_unit_id
   private areaInFlight = new Set<string>(); // `${digestId}:${areaId}`
   private areaListeners = new Map<number, Set<(e: AreaProgressEvent) => void>>(); // keyed by digestId
+  private contextRunning = new Set<number>(); // repo ids
+  /** Last settled status of each part run in this process. Only needed for areas: their text is
+   * merged into one level-2 row whose single status is that of the last area stored, so it can't
+   * tell one area's `truncated` from another's `ok`. After a restart that row's status is used. */
+  private settledParts = new Map<number, Map<PartKey, PartStatus>>();
 
   constructor(private readonly db: DatabaseSync, private readonly home: string, private readonly opts: ExplainJobRunnerOptions = {}) {}
 
@@ -98,45 +116,29 @@ export class ExplainJobRunner {
   private get now(): () => Date {
     return this.opts.now ?? (() => new Date());
   }
-  private get parts(): ExplainPartFns {
-    return {
-      summary: this.opts.parts?.summary ?? realExplainDigestSummary,
-      areaText: this.opts.parts?.areaText ?? realExplainDigestAreaText,
-      areaWalkthrough: this.opts.parts?.areaWalkthrough ?? realExplainAreaWalkthrough,
-    };
+
+  isContextRunning(repoId: number): boolean {
+    return this.contextRunning.has(repoId);
   }
 
-  private needsContext(repoId: number): boolean {
-    return !this.db.prepare('SELECT 1 AS x FROM project_context WHERE repo_id = ? LIMIT 1').get(repoId);
+  private hasContext(repoId: number): boolean {
+    return !!this.db.prepare('SELECT 1 AS x FROM project_context WHERE repo_id = ? LIMIT 1').get(repoId);
   }
 
-  private allPartKeys(areas: readonly DigestAreaSkeleton[], includeContext: boolean): PartKey[] {
-    const keys: PartKey[] = ['summary', ...areas.map((a) => `area:${a.id}` as const)];
-    if (includeContext) keys.push('context');
-    return keys;
-  }
-
-  private loadAreas(changeUnitId: number): { repoId: number; areas: DigestAreaSkeleton[] } | null {
-    const row = this.db.prepare('SELECT repo_id AS repoId, areas FROM digest WHERE change_unit_id = ?')
-      .get(changeUnitId) as { repoId: number; areas: string | null } | undefined;
+  private loadDigest(changeUnitId: number): { repoId: number; areas: DigestAreaSkeleton[]; language: ProjectRow['language'] } | null {
+    const row = this.db.prepare('SELECT repo_id AS repoId, areas, language FROM digest WHERE change_unit_id = ?')
+      .get(changeUnitId) as { repoId: number; areas: string | null; language: ProjectRow['language'] } | undefined;
     if (!row || row.areas === null) return null;
-    return { repoId: row.repoId, areas: JSON.parse(row.areas) as DigestAreaSkeleton[] };
-  }
-
-  /** The language a digest was first written in (never the project's current language, which may
-   * have changed since -- one digest never mixes languages). */
-  private digestLanguage(changeUnitId: number): ProjectRow['language'] {
-    return (this.db.prepare('SELECT language FROM digest WHERE change_unit_id = ?').get(changeUnitId) as { language: ProjectRow['language'] }).language;
+    return { repoId: row.repoId, areas: JSON.parse(row.areas) as DigestAreaSkeleton[], language: row.language };
   }
 
   /** The compact, deterministic `ProjectMap` rendering (docs/explain-speed.md §4 "Context off the
-   * critical path"): grounding for a first Explain's parts, built in parallel with (not blocking
-   * on) the LLM project context. */
+   * critical path"): grounding for a first Explain's parts while the LLM context builds alongside. */
   private async compactMapText(project: ProjectRow): Promise<string | undefined> {
     try {
-      const shadow = await openShadow(projectDataDir(this.home, project.id), project.path);
       const latest = latestCheckpoint(this.db, project.id);
       if (!latest) return undefined;
+      const shadow = await openShadow(projectDataDir(this.home, project.id), project.path);
       return renderMap(await mapOfTree(shadow, latest.treeSha));
     } catch {
       return undefined; // best-effort grounding; the parts still run without it
@@ -144,12 +146,13 @@ export class ExplainJobRunner {
   }
 
   /**
-   * `POST /api/projects/:id/explain`: takes the project lock, does the no-LLM prep (checkpoint,
-   * digest row, areas), starts an `explain_job` and returns as soon as that prep is done -- the
-   * LLM parts run after this resolves, not before. The lock stays held (via the backgrounded job)
-   * until every part settles, so a second Explain still gets `ProjectLockedError`.
+   * `POST /api/projects/:id/explain` and `digest explain`: takes the project lock, does the no-LLM
+   * prep, starts an `explain_job` and returns once that prep is done; the LLM parts run after this
+   * resolves. The lock stays held until every part settles, so a second Explain still gets
+   * `ProjectLockedError`. The budget is checked once, here: when it is spent, every part is marked
+   * `budget` and no call is made, but the digest (files, areas) still exists.
    */
-  async start(project: ProjectRow, provider: ExplanationProvider, opts: { context?: string } = {}): Promise<StartResult> {
+  async start(project: ProjectRow, provider: ExplanationProvider): Promise<StartResult> {
     const dataDir = projectDataDir(this.home, project.id);
     acquireProjectLock(dataDir, this.now().toISOString());
     const prepStart = performance.now();
@@ -163,161 +166,214 @@ export class ExplainJobRunner {
     const prepMs = Math.round(performance.now() - prepStart);
     if (prepared.noChanges) {
       releaseProjectLock(dataDir);
-      return { noChanges: true, digestId: null };
+      return { noChanges: true, digestId: null, settled: Promise.resolve({ jobId: null, prepMs, parts: [] }) };
     }
     const changeUnitId = prepared.changeUnitId!;
-    const includeContext = this.needsContext(project.id);
+    const firstExplain = !this.hasContext(project.id);
+    const keys: PartKey[] = ['summary', ...prepared.areas.map((a) => `area:${a.id}` as const)];
+    if (firstExplain) keys.push('context');
     const jobId = startJob(this.db, 'explain', { repoId: project.id, changeUnitId }, this.budget, this.now);
     if (jobId === null) {
-      markPartsBudget(this.db, changeUnitId, this.allPartKeys(prepared.areas, includeContext), this.now);
+      markPartsBudget(this.db, changeUnitId, keys, this.now);
       releaseProjectLock(dataDir);
-      return { noChanges: false, digestId: changeUnitId };
+      return { noChanges: false, digestId: changeUnitId, settled: Promise.resolve(this.budgetReport(keys, prepMs)) };
     }
     setPrepMs(this.db, jobId, prepMs);
-    // A brand-new digest is written in the project's language as of right now (matching
-    // prepareExplainDigest, which already stored it that way on the digest row).
-    void this.runJob(changeUnitId, jobId, project, provider, prepared.areas, {
-      context: opts.context, includeContext, dataDir, onlyParts: null, language: project.language,
+    const settled = this.runJob(changeUnitId, jobId, prepMs, project, provider, keys, {
+      dataDir, firstExplain, refreshContext: !firstExplain, language: project.language, force: false,
     });
-    return { noChanges: false, digestId: changeUnitId };
+    return { noChanges: false, digestId: changeUnitId, settled };
+  }
+
+  private budgetReport(keys: readonly PartKey[], prepMs: number): JobReport {
+    return { jobId: null, prepMs, parts: keys.map((part) => ({ part, status: 'budget', calls: 0, ms: 0 })) };
   }
 
   /** `POST /api/digests/:id/explain`: re-runs only the parts currently `error`, `truncated` or
-   * `budget` (not `context`, which has its own refresh endpoint). A no-op (no job, lock released
-   * immediately) when nothing needs it. */
-  async retry(project: ProjectRow, digestId: number, provider: ExplanationProvider): Promise<{ nothingToRetry: boolean }> {
+   * `budget`, in the language the digest was first written in. `settled` is `null` when there was
+   * nothing to re-run (no job, lock released at once). */
+  async retry(project: ProjectRow, digestId: number, provider: ExplanationProvider): Promise<{ settled: Promise<JobReport> | null }> {
     const dataDir = projectDataDir(this.home, project.id);
     acquireProjectLock(dataDir, this.now().toISOString());
-    const loaded = this.loadAreas(digestId);
+    const loaded = this.loadDigest(digestId);
     if (!loaded) {
       releaseProjectLock(dataDir);
       throw new Error(`no digest ${digestId}`);
     }
-    const current = this.getParts(digestId);
-    const failed = new Set<PartKey>();
-    if (current && RETRYABLE.includes(current.summary)) failed.add('summary');
-    for (const [areaId, status] of Object.entries(current?.areas ?? {})) {
-      if (RETRYABLE.includes(status)) failed.add(`area:${areaId}`);
-    }
-    if (failed.size === 0) {
+    const current = this.getParts(digestId)!;
+    const failed: PartKey[] = [];
+    if (RETRYABLE.includes(current.summary)) failed.push('summary');
+    for (const a of loaded.areas) if (RETRYABLE.includes(current.areas[a.id] ?? 'error')) failed.push(`area:${a.id}`);
+    if (RETRYABLE.includes(current.context)) failed.push('context');
+    if (failed.length === 0) {
       releaseProjectLock(dataDir);
-      return { nothingToRetry: true };
+      return { settled: null };
     }
     const jobId = startJob(this.db, 'retry', { repoId: project.id, changeUnitId: digestId }, this.budget, this.now);
     if (jobId === null) {
-      markPartsBudget(this.db, digestId, [...failed], this.now);
+      markPartsBudget(this.db, digestId, failed, this.now);
       releaseProjectLock(dataDir);
-      return { nothingToRetry: false };
+      return { settled: Promise.resolve(this.budgetReport(failed, 0)) };
     }
     setPrepMs(this.db, jobId, 0);
-    const context = latestContextText(this.db, project.id);
-    // Keeps the language the digest was first written in, even if the project's changed since.
-    void this.runJob(digestId, jobId, project, provider, loaded.areas, {
-      context, includeContext: false, dataDir, onlyParts: failed, language: this.digestLanguage(digestId),
+    const settled = this.runJob(digestId, jobId, 0, project, provider, failed, {
+      dataDir, firstExplain: !this.hasContext(project.id), refreshContext: false, language: loaded.language, force: true,
     });
-    return { nothingToRetry: false };
+    return { settled };
   }
 
+  /**
+   * Runs `keys` under one job: `summary` is queued first so it never waits behind area calls, area
+   * parts do not wait for it, and `context` runs alongside (on a first Explain the parts are
+   * grounded on the compact project map instead of waiting for it). Never rejects.
+   */
   private async runJob(
-    changeUnitId: number, jobId: number, project: ProjectRow, provider: ExplanationProvider,
-    areas: readonly DigestAreaSkeleton[],
-    opts: { context?: string; includeContext: boolean; dataDir: string; onlyParts: Set<PartKey> | null; language: ProjectRow['language'] },
-  ): Promise<void> {
-    const allKeys = this.allPartKeys(areas, opts.includeContext);
-    const runKeys = opts.onlyParts ? allKeys.filter((k) => opts.onlyParts!.has(k)) : allKeys;
-    const state: JobState = { parts: new Map(runKeys.map((k) => [k, 'pending' as const])), listeners: new Set() };
+    changeUnitId: number, jobId: number, prepMs: number, project: ProjectRow, provider: ExplanationProvider,
+    keys: readonly PartKey[],
+    opts: { dataDir: string; firstExplain: boolean; refreshContext: boolean; language: ProjectRow['language']; force: boolean },
+  ): Promise<JobReport> {
+    const state: JobState = { parts: new Map(keys.map((k) => [k, 'pending' as const])), listeners: new Set() };
     this.jobs.set(changeUnitId, state);
-    this.emitParts(changeUnitId);
+    const reports: PartReport[] = [];
+    try {
+      const context = opts.firstExplain ? await this.compactMapText(project) : latestContextText(this.db, project.id);
+      const limiter = new Limiter(this.maxInFlight);
+      const job: JobRef = { jobId, budget: this.budget, now: this.now };
+      const { language } = opts;
 
-    let context = opts.context;
-    if (opts.includeContext) context = (await this.compactMapText(project)) ?? context;
-
-    const limiter = new Limiter(this.maxInFlight);
-    const job: JobRef = { jobId, budget: this.budget, now: this.now };
-    const { language } = opts;
-
-    const settle = (key: PartKey, outcome: PartOutcome): void => {
-      void outcome; // outcome is captured in the DB by the part function itself; only status matters here
-      state.parts.delete(key);
-      this.emitParts(changeUnitId);
-    };
-    const runPart = (key: PartKey, fn: () => Promise<PartOutcome>): Promise<void> => limiter.run(async () => {
-      state.parts.set(key, 'running');
-      this.emitParts(changeUnitId);
-      let outcome: PartOutcome;
-      try {
-        outcome = await fn();
-      } catch (e) {
-        outcome = { outcome: 'error', calls: 0, detail: e instanceof Error ? e.message : String(e) };
-      }
-      settle(key, outcome);
-    });
-
-    const promises: Promise<void>[] = [];
-    let summaryPromise: Promise<void> | undefined;
-    if (runKeys.includes('summary')) {
-      summaryPromise = runPart('summary', () => this.parts.summary(this.db, changeUnitId, provider, { job, context, language, areas }));
-      promises.push(summaryPromise);
-    }
-    if (runKeys.includes('context')) {
-      promises.push(runPart('context', async () => {
+      const runPart = (key: PartKey, fn: () => Promise<PartOutcome | null>): Promise<void> => limiter.run(async () => {
+        state.parts.set(key, 'running');
+        this.emitParts(changeUnitId);
+        const t0 = performance.now();
+        let status: PartStatus;
+        let calls = 0;
+        let detail: string | undefined;
         try {
-          await ensureContext(this.db, this.home, project, provider, { budget: this.budget, now: this.now });
-          return { outcome: 'ok', calls: 1 };
+          const outcome = await fn();
+          status = outcome ? toStatus(outcome) : 'skipped';
+          calls = outcome?.calls ?? 0;
+          detail = outcome?.detail;
         } catch (e) {
-          return { outcome: 'error', calls: 0, detail: e instanceof Error ? e.message : String(e) };
+          status = 'error';
+          detail = e instanceof Error ? e.message : String(e);
         }
-      }));
-    }
-    const areaKeys = runKeys.filter((k): k is `area:${string}` => k.startsWith('area:'));
-    if (areaKeys.length > 0) {
-      promises.push((async () => {
-        // Interim bridge (jobs.ts): the area-text part is a free read of the summary call's
-        // result, so it must wait for summary to settle when both are running in the same job.
-        // Independently retried area parts (summaryPromise undefined) never wait.
-        if (summaryPromise) await summaryPromise;
-        await Promise.allSettled(
-          areaKeys.map((key) => runPart(key, () => this.parts.areaText(this.db, changeUnitId, key.slice('area:'.length), provider, { job, context, language }))),
-        );
-      })());
-    }
+        reports.push({ part: key, status, calls, ms: Math.round(performance.now() - t0), detail });
+        this.rememberSettled(changeUnitId, key, status);
+        state.parts.delete(key);
+        this.emitParts(changeUnitId);
+      });
 
-    await Promise.allSettled(promises);
-    finishJob(this.db, jobId, this.now);
-    releaseProjectLock(opts.dataDir);
-    // Capture the listeners before dropping the live state, so the final notification -- the one
-    // a subscriber (the SSE route) uses to decide `isDone` and send `done` -- is not silently
-    // swallowed by `emitParts` finding no state to read listeners from.
-    const { listeners } = state;
-    this.jobs.delete(changeUnitId);
-    const finalDto = this.getParts(changeUnitId);
-    if (finalDto) listeners.forEach((cb) => cb(finalDto));
+      const runs: Promise<void>[] = [];
+      for (const key of keys) {
+        if (key === 'summary') {
+          runs.push(runPart(key, () => explainDigestSummary(this.db, changeUnitId, provider, { job, context, language, force: opts.force })));
+        } else if (key === 'context') {
+          runs.push(runPart(key, () => this.runContext(project, provider, job)));
+        } else {
+          const areaId = key.slice('area:'.length);
+          runs.push(runPart(key, () => explainDigestAreaText(this.db, changeUnitId, areaId, provider, { job, context, language })));
+        }
+      }
+      // A later Explain refreshes the context in the background when `ensureContext`'s rules say so;
+      // it is not a live part (it rarely builds), but a build it does make shows up as `context`.
+      if (opts.refreshContext) runs.push(limiter.run(() => this.runContext(project, provider, job)).then(() => {}, () => {}));
+      this.emitParts(changeUnitId);
+      await Promise.allSettled(runs);
+    } catch {
+      // Only the grounding lookup can throw here (parts catch their own errors); the parts that did
+      // not run read `error` and can be retried.
+    } finally {
+      // Nothing awaits this promise on the server, so cleanup must not throw (e.g. a DB closed at shutdown).
+      try {
+        finishJob(this.db, jobId, this.now);
+      } catch { /* left unfinished: its parts read as stored, or `error` */ }
+      releaseProjectLock(opts.dataDir);
+      // Take the listeners before dropping the live state, so the final notification (the one the
+      // SSE route turns into `done`) still reaches them.
+      const { listeners } = state;
+      this.jobs.delete(changeUnitId);
+      try {
+        const finalDto = this.getParts(changeUnitId);
+        if (finalDto) listeners.forEach((cb) => cb(finalDto));
+      } catch { /* same as above */ }
+    }
+    return { jobId, prepMs, parts: reports };
   }
 
-  /** `POST /api/digests/:id/areas/:areaId/explain`: the L3 walkthrough is already a genuinely
-   * independent per-area call (`explainArea`), so this just backgrounds it and streams progress;
-   * no bridge involved. Throws `AreaExplainRunningError` (409) on a duplicate click. */
-  async startArea(project: ProjectRow, digestId: number, areaId: string, provider: ExplanationProvider): Promise<{ started: boolean }> {
+  /** The `context` part: builds the project context when missing, or refreshes it when
+   * `ensureContext`'s rules say so; `null` (the part reads `skipped`) when nothing was built. */
+  private async runContext(project: ProjectRow, provider: ExplanationProvider, job: JobRef): Promise<PartOutcome | null> {
+    if (this.contextRunning.has(project.id) || this.opts.contextBusy?.(project.id)) return null;
+    this.contextRunning.add(project.id);
+    try {
+      const r = await ensureContext(this.db, this.home, project, provider, { job, now: this.now });
+      if (!r) return null;
+      return { outcome: r.outcome === 'budget' ? 'error' : r.outcome, calls: r.calls, detail: r.detail };
+    } finally {
+      this.contextRunning.delete(project.id);
+    }
+  }
+
+  private rememberSettled(changeUnitId: number, key: PartKey, status: PartStatus): void {
+    let m = this.settledParts.get(changeUnitId);
+    if (!m) {
+      if (this.settledParts.size >= MAX_REMEMBERED_DIGESTS) this.settledParts.delete(this.settledParts.keys().next().value!);
+      m = new Map();
+      this.settledParts.set(changeUnitId, m);
+    }
+    m.set(key, status);
+  }
+
+  /** `POST /api/digests/:id/areas/:areaId/explain`: backgrounds the area's L3 walkthrough as its
+   * own job and streams it as `area-progress` events; the last event (`done: true`) carries the
+   * final, validated walkthrough. Throws `AreaExplainRunningError` on a duplicate click.
+   * `settled` is `null` when the budget refused the job. */
+  async startArea(project: ProjectRow, digestId: number, areaId: string, provider: ExplanationProvider): Promise<{ settled: Promise<PartOutcome> | null }> {
     const key = `${digestId}:${areaId}`;
     if (this.areaInFlight.has(key)) throw new AreaExplainRunningError();
     const jobId = startJob(this.db, 'area', { repoId: project.id, changeUnitId: digestId, areaId }, this.budget, this.now);
-    if (jobId === null) return { started: false };
+    if (jobId === null) return { settled: null };
     this.areaInFlight.add(key);
     const context = latestContextText(this.db, project.id);
-    const language = this.digestLanguage(digestId); // the digest's own language, not the project's current one
-    void (async () => {
-      const job: JobRef = { jobId, budget: this.budget, now: this.now };
+    const language = this.loadDigest(digestId)?.language ?? project.language; // the digest's own language
+    const job: JobRef = { jobId, budget: this.budget, now: this.now };
+    const settled = (async (): Promise<PartOutcome> => {
+      let outcome: PartOutcome;
       try {
-        await this.parts.areaWalkthrough(this.db, digestId, areaId, provider, {
+        const r = await explainArea(this.db, digestId, areaId, provider, {
           job, context, language,
-          onProgress: (e) => this.emitAreaProgress(digestId, e),
+          // The provider's own `done` comes before validation; only the stored result below is final.
+          onProgress: (e) => this.emitAreaProgress(digestId, { ...e, done: false }),
         });
-      } finally {
-        finishJob(this.db, jobId, this.now);
-        this.areaInFlight.delete(key);
+        outcome = { outcome: r.outcome === 'budget' ? 'error' : r.outcome, calls: r.calls, detail: r.detail };
+      } catch (e) {
+        outcome = { outcome: 'error', calls: 0, detail: e instanceof Error ? e.message : String(e) };
       }
+      try {
+        finishJob(this.db, jobId, this.now);
+      } catch { /* see runJob: cleanup never throws */ }
+      this.areaInFlight.delete(key);
+      let final: AreaWalkthrough | null = null;
+      try {
+        final = this.storedWalkthrough(digestId, areaId);
+      } catch { /* see runJob */ }
+      this.emitAreaProgress(digestId, { areaId, overview: final?.overview || null, steps: final?.steps ?? [], done: true });
+      return outcome;
     })();
-    return { started: true };
+    return { settled };
+  }
+
+  private storedWalkthrough(digestId: number, areaId: string): AreaWalkthrough | null {
+    const row = this.db.prepare(
+      `SELECT content FROM area_explanation WHERE change_unit_id = ? AND area_id = ?
+       ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`,
+    ).get(digestId, areaId) as { content: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.content) as AreaWalkthrough;
+    } catch {
+      return null;
+    }
   }
 
   isAreaRunning(digestId: number, areaId: string): boolean {
@@ -330,8 +386,8 @@ export class ExplainJobRunner {
     return false;
   }
 
-  /** True once every part of the digest's own job and every running area L3 under it has
-   * settled: the point at which `GET /api/digests/:id/events` sends `done` and closes. */
+  /** True once every part of the digest's job and every area L3 under it has settled: the point at
+   * which `GET /api/digests/:id/events` sends `done` and closes. */
   isDone(digestId: number): boolean {
     return !this.jobs.has(digestId) && !this.isAnyAreaRunning(digestId);
   }
@@ -339,11 +395,12 @@ export class ExplainJobRunner {
   /** Derives `DigestPartsDto` from stored rows plus the in-memory running set; `null` when
    * `digestId` names no digest, or one created before DIG-75 (no stored `areas`). */
   getParts(changeUnitId: number): DigestPartsDto | null {
-    const loaded = this.loadAreas(changeUnitId);
+    const loaded = this.loadDigest(changeUnitId);
     if (!loaded) return null;
     const { repoId, areas } = loaded;
-    const live = this.jobs.get(changeUnitId);
-    const job = this.db.prepare(
+    const live = this.jobs.get(changeUnitId)?.parts;
+    const settled = this.settledParts.get(changeUnitId);
+    const latestJob = this.db.prepare(
       `SELECT id, started_at AS startedAt, finished_at AS finishedAt FROM explain_job
        WHERE change_unit_id = ? AND kind IN ('explain','retry') ORDER BY started_at DESC, id DESC LIMIT 1`,
     ).get(changeUnitId) as { id: number; startedAt: string; finishedAt: string | null } | undefined;
@@ -351,54 +408,76 @@ export class ExplainJobRunner {
       (this.db.prepare("SELECT DISTINCT part FROM explain_call WHERE change_unit_id = ? AND outcome = 'budget' AND part IS NOT NULL")
         .all(changeUnitId) as unknown as { part: string }[]).map((r) => r.part),
     );
-    const l0 = this.db.prepare(
-      `SELECT status FROM explanation WHERE change_unit_id = ? AND level = 0 ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`,
-    ).get(changeUnitId) as { status: PartStatus } | undefined;
-    const l2 = this.db.prepare(
-      `SELECT content, status FROM explanation WHERE change_unit_id = ? AND level = 2 ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`,
-    ).get(changeUnitId) as { content: string; status: PartStatus } | undefined;
-    const l2Ids = l2 ? new Set((JSON.parse(l2.content) as DigestL2Content).items.map((it) => it.id)) : null;
+    const latestLevel = (level: number) => this.db.prepare(
+      `SELECT content, status FROM explanation WHERE change_unit_id = ? AND level = ?
+       ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`,
+    ).get(changeUnitId, level) as { content: string; status: PartStatus } | undefined;
+    // Stored text wins over an older `budget` marker (a later retry that went through); a part with
+    // neither and no live entry never finished: `error`, so the UI offers a retry.
+    const fallback = (key: PartKey): PartStatus => (budgeted.has(key) ? 'budget' : 'error');
 
-    const summary: PartStatus = live?.parts.get('summary') ?? (budgeted.has('summary') ? 'budget' : (l0?.status ?? 'error'));
+    const l0 = latestLevel(0);
+    const summary: PartStatus = live?.get('summary') ?? l0?.status ?? fallback('summary');
 
+    const l2 = latestLevel(2);
+    let l2Ids = new Set<string>();
+    try {
+      if (l2) l2Ids = new Set((JSON.parse(l2.content) as DigestL2Content).items.map((it) => it.id));
+    } catch { /* unreadable row: treated as not stored */ }
     const areaStatuses: Record<string, PartStatus> = {};
     for (const a of areas) {
       const key: PartKey = `area:${a.id}`;
-      const liveStatus = live?.parts.get(key);
-      if (liveStatus) areaStatuses[a.id] = liveStatus;
-      else if (budgeted.has(key)) areaStatuses[a.id] = 'budget';
-      else if (!l2) areaStatuses[a.id] = 'error';
-      else areaStatuses[a.id] = l2Ids!.has(a.id) ? l2.status : 'error';
+      const stored = l2Ids.has(a.id) ? (settled?.get(key) ?? l2!.status) : undefined;
+      areaStatuses[a.id] = live?.get(key) ?? stored ?? fallback(key);
     }
 
-    const earliestExplainJob = this.db.prepare(
-      `SELECT id FROM explain_job WHERE repo_id = ? AND kind = 'explain' ORDER BY started_at ASC, id ASC LIMIT 1`,
+    return {
+      summary, areas: areaStatuses, context: this.contextStatus(changeUnitId, repoId, live, settled, budgeted),
+      startedAt: latestJob?.startedAt ?? null, finishedAt: latestJob?.finishedAt ?? null,
+    };
+  }
+
+  /** `context` is part of a digest when its job built the project context (a first Explain always
+   * does; a later one only when `ensureContext` decided to refresh) or when it was refused by the
+   * budget; otherwise `skipped`. */
+  private contextStatus(
+    changeUnitId: number, repoId: number, live: Map<PartKey, 'pending' | 'running'> | undefined,
+    settled: Map<PartKey, PartStatus> | undefined, budgeted: Set<string>,
+  ): PartStatus {
+    const liveStatus = live?.get('context');
+    if (liveStatus) return liveStatus;
+    const explainJob = this.db.prepare(
+      `SELECT id, started_at AS startedAt FROM explain_job WHERE change_unit_id = ? AND kind = 'explain' ORDER BY started_at, id LIMIT 1`,
+    ).get(changeUnitId) as { id: number; startedAt: string } | undefined;
+    const called = this.db.prepare(
+      `SELECT 1 AS x FROM explain_call c JOIN explain_job j ON j.id = c.job_id
+       WHERE j.change_unit_id = ? AND c.part = 'context' AND c.outcome IN ('ok','error') LIMIT 1`,
+    ).get(changeUnitId) !== undefined;
+    const firstJob = this.db.prepare(
+      `SELECT id FROM explain_job WHERE repo_id = ? AND kind = 'explain' ORDER BY started_at, id LIMIT 1`,
     ).get(repoId) as { id: number } | undefined;
-    const includedContext = job !== undefined && earliestExplainJob?.id === job.id;
-    let context: PartStatus = 'skipped';
-    if (includedContext) {
-      const liveStatus = live?.parts.get('context');
-      if (liveStatus) context = liveStatus;
-      else if (budgeted.has('context')) context = 'budget';
-      else {
-        const pc = this.db.prepare('SELECT status FROM project_context WHERE repo_id = ? ORDER BY created_at DESC, id DESC LIMIT 1')
-          .get(repoId) as { status: PartStatus } | undefined;
-        context = pc?.status ?? 'error';
-      }
+    const first = explainJob !== undefined && firstJob?.id === explainJob.id;
+    if (called || first) {
+      const pc = this.db.prepare(
+        'SELECT status FROM project_context WHERE repo_id = ? AND created_at >= ? ORDER BY created_at DESC, id DESC LIMIT 1',
+      ).get(repoId, explainJob?.startedAt ?? '') as { status: PartStatus } | undefined;
+      if (pc) return pc.status;
     }
-
-    return { summary, areas: areaStatuses, context, startedAt: job?.startedAt ?? null, finishedAt: job?.finishedAt ?? null };
+    const remembered = settled?.get('context');
+    if (remembered) return remembered;
+    if (budgeted.has('context')) return 'budget';
+    return first ? 'error' : 'skipped';
   }
 
   private emitParts(changeUnitId: number): void {
     const state = this.jobs.get(changeUnitId);
+    if (!state || state.listeners.size === 0) return;
     const dto = this.getParts(changeUnitId);
-    if (dto) state?.listeners.forEach((cb) => cb(dto));
+    if (dto) state.listeners.forEach((cb) => cb(dto));
   }
 
-  /** Fires with the current `DigestPartsDto` on every status change of a live job; a no-op
-   * subscription (never fires) when no job is currently running for this digest -- the caller
-   * (the SSE route) reads `getParts` once for the initial snapshot regardless. */
+  /** Fires with the current `DigestPartsDto` on every part status change of a live job; never
+   * fires when no job is running for this digest (the SSE route sends its own initial snapshot). */
   subscribeParts(changeUnitId: number, cb: (dto: DigestPartsDto) => void): () => void {
     const state = this.jobs.get(changeUnitId);
     if (!state) return () => {};
@@ -414,8 +493,61 @@ export class ExplainJobRunner {
     const set = this.areaListeners.get(digestId) ?? new Set();
     set.add(cb);
     this.areaListeners.set(digestId, set);
-    return () => set.delete(cb);
+    return () => {
+      set.delete(cb);
+      if (set.size === 0 && this.areaListeners.get(digestId) === set) this.areaListeners.delete(digestId);
+    };
   }
 }
 
 export type { ExplainJobKind };
+
+export interface ExplainProjectResult {
+  noChanges: boolean;
+  digestId: number | null;
+  /** `budget` when the job was refused; else the worst part status (`error` > `truncated` > `ok`). */
+  outcome: 'ok' | 'truncated' | 'error' | 'budget' | null;
+  calls: number;
+  detail?: string;
+  report: JobReport | null;
+}
+
+export interface ExplainNowOptions {
+  budget?: number;
+  now?: () => Date;
+  maxInFlight?: number;
+}
+
+function summarize(digestId: number, report: JobReport): ExplainProjectResult {
+  const statuses = report.parts.map((p) => p.status);
+  const outcome = report.jobId === null ? 'budget'
+    : statuses.includes('error') ? 'error'
+      : statuses.includes('truncated') ? 'truncated' : 'ok';
+  const failed = report.parts.find((p) => p.status === 'error' && p.detail);
+  return {
+    noChanges: false, digestId, outcome, calls: report.parts.reduce((n, p) => n + p.calls, 0),
+    detail: failed ? `${failed.part}: ${failed.detail}` : undefined, report,
+  };
+}
+
+/** `digest explain`: the same job the server runs, awaited to the end (the CLI prints per-part timing). */
+export async function explainProject(
+  db: DatabaseSync, home: string, project: ProjectRow, provider: ExplanationProvider, opts: ExplainNowOptions = {},
+): Promise<ExplainProjectResult> {
+  const r = await new ExplainJobRunner(db, home, opts).start(project, provider);
+  const report = await r.settled;
+  if (r.noChanges) return { noChanges: true, digestId: null, outcome: null, calls: 0, report: null };
+  return summarize(r.digestId!, report);
+}
+
+/** `digest explain --retry <digestId>`: re-runs the digest's `error`/`truncated`/`budget` parts, awaited. */
+export async function retryDigest(
+  db: DatabaseSync, home: string, digestId: number, provider: ExplanationProvider, opts: ExplainNowOptions = {},
+): Promise<ExplainProjectResult> {
+  const repo = db.prepare('SELECT repo_id AS repoId FROM digest WHERE change_unit_id = ?').get(digestId) as { repoId: number } | undefined;
+  const row = repo ? listProjects(db).find((p) => p.id === repo.repoId) : undefined;
+  if (!row) throw new Error(`no digest ${digestId}`);
+  const { settled } = await new ExplainJobRunner(db, home, opts).retry(row, digestId, provider);
+  if (!settled) return { noChanges: false, digestId, outcome: 'ok', calls: 0, report: { jobId: null, prepMs: 0, parts: [] } };
+  return summarize(digestId, await settled);
+}

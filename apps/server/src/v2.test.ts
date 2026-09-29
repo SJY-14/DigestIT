@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
-import { createProvider } from '@digestit/explain';
+import { createProvider, type ExplanationProvider } from '@digestit/explain';
 import { ensureDir0700, initProject, projectDataDir } from '@digestit/ingest';
 import { buildApp } from './app.js';
 import { SESSION_COOKIE } from './auth.js';
@@ -63,17 +63,20 @@ const post = (app: App, url: string, body: unknown = {}, headers: Record<string,
 const patch = (app: App, url: string, body: unknown = {}, headers: Record<string, string> = auth) =>
   app.inject({ method: 'PATCH', url, headers, payload: JSON.stringify(body) });
 
+/** `inner` with some methods replaced; the rest (a class's prototype methods too) still reach it. */
+const spy = (inner: ExplanationProvider, overrides: Partial<ExplanationProvider>): ExplanationProvider =>
+  Object.assign(Object.create(inner) as ExplanationProvider, overrides);
+
 /** DIG-75: POST /explain (and retry) return before the LLM parts finish. Tests that need the
  * final digest content poll GET /api/digests/:id until every part has a terminal status. */
 async function waitForDigestSettled(app: App, digestId: number, timeoutMs = 2000): Promise<Record<string, unknown>> {
   const start = Date.now();
   for (;;) {
     const body = (await get(app, `/api/digests/${digestId}`)).json();
-    const parts = body.parts as { summary: string; areas: Record<string, string>; context: string } | undefined;
-    const running = !parts || parts.summary === 'pending' || parts.summary === 'running'
-      || parts.context === 'pending' || parts.context === 'running'
-      || Object.values(parts.areas).some((s) => s === 'pending' || s === 'running');
-    if (!running) return body;
+    // `finishedAt` is set when the job ends, which is also when the project lock is released; part
+    // statuses alone can all be terminal a moment earlier (or while a background context refresh runs).
+    const parts = body.parts as { finishedAt: string | null } | undefined;
+    if (parts?.finishedAt) return body;
     if (Date.now() - start > timeoutMs) throw new Error(`digest ${digestId} did not settle within ${timeoutMs}ms`);
     await new Promise((r) => setTimeout(r, 5));
   }
@@ -84,7 +87,7 @@ async function waitForAreaSettled(app: App, digestId: number, areaId: string, ti
   const start = Date.now();
   for (;;) {
     const body = (await get(app, `/api/digests/${digestId}/areas/${areaId}`)).json();
-    if (body.status !== 'none') return body;
+    if (body.status !== 'none' && body.status !== 'pending') return body;
     if (Date.now() - start > timeoutMs) throw new Error(`area ${digestId}/${areaId} did not settle within ${timeoutMs}ms`);
     await new Promise((r) => setTimeout(r, 5));
   }
@@ -652,12 +655,11 @@ describe('explanation language wiring (DIG-49)', () => {
     const app = makeApp(db, {
       providerFactory: (allow) => {
         const inner = createProvider({ provider: 'stub', repoAllowlist: allow });
-        return {
-          ...inner,
-          digest: async (input) => (seen.push(`digest:${input.language}`), inner.digest!(input)),
+        return spy(inner, {
+          explainDigestSummary: async (input) => (seen.push(`digest:${input.language}`), inner.explainDigestSummary!(input)),
           explainContext: async (input) => (seen.push(`context:${input.language}`), inner.explainContext!(input)),
           explainArea: async (input) => (seen.push(`area:${input.language}`), inner.explainArea!(input)),
-        };
+        });
       },
     });
     expect((await patch(app, `/api/projects/${repoId}`, { language: 'ko' })).statusCode).toBe(200);
@@ -676,14 +678,13 @@ describe('explanation language wiring (DIG-49)', () => {
     await waitForAreaSettled(app, first, 'src');
     expect(seen).toEqual(['area:ko']);
 
-    // The next Explain writes the new digest in English. Context only runs inline on a project's
-    // first-ever Explain (DIG-75, docs/explain-speed.md §4); a language change no longer rebuilds
-    // it automatically on the next Explain -- POST /api/projects/:id/context/refresh does that.
+    // The next Explain writes the new digest in English, and (in the background of the same job)
+    // rebuilds the context in English since the language changed.
     seen.length = 0;
     write('src/c.ts', 'c\n');
     const second = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId as number;
     await waitForDigestSettled(app, second);
-    expect(seen).toEqual(['digest:en']);
+    expect(new Set(seen)).toEqual(new Set(['digest:en', 'context:en']));
     expect((await get(app, `/api/digests/${second}`)).json().language).toBe('en');
     expect((await get(app, `/api/digests/${first}`)).json().language).toBe('ko');
   });
@@ -697,7 +698,7 @@ describe('one-at-a-time in-process guards (area explain, context refresh)', () =
     const app = makeApp(db, {
       providerFactory: (allow) => {
         const inner = createProvider({ provider: 'stub', repoAllowlist: allow });
-        return { ...inner, explainArea: async (input) => (await gate.promise, inner.explainArea!(input)) };
+        return spy(inner, { explainArea: async (input) => (await gate.promise, inner.explainArea!(input)) });
       },
     });
     const digestId = (await post(app, `/api/projects/${repoId}/explain`)).json().digestId;
@@ -717,7 +718,7 @@ describe('one-at-a-time in-process guards (area explain, context refresh)', () =
     const app = makeApp(db, {
       providerFactory: (allow) => {
         const inner = createProvider({ provider: 'stub', repoAllowlist: allow });
-        return { ...inner, explainContext: async (input) => (await gate.promise, inner.explainContext!(input)) };
+        return spy(inner, { explainContext: async (input) => (await gate.promise, inner.explainContext!(input)) });
       },
     });
     const first = post(app, `/api/projects/${repoId}/context/refresh`);
