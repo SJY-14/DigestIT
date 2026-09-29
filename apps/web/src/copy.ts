@@ -83,9 +83,9 @@ export function levelsCopy(lang: Lang = 'en') {
   return lang === 'ko' ? LEVELS_KO : LEVELS_EN;
 }
 
-// --- Setup form and project-list guards (DIG-40/49): shown before any project is selected, so
-// there is no project language yet — these are always English (see the `lang` comment on MainV2's
-// `lang` const) and the calls below never pass one, matching every other lang-less call site.
+// --- Setup form and project-list guards (DIG-40/49): shown before a project is selected. The setup
+// form has no project language yet and renders English; MainV2's guards pass its `lang`, which is
+// 'en' until the project list has loaded.
 
 const SETUP_EN = {
   projectFolderLabel: 'Project folder',
@@ -156,6 +156,7 @@ export function headerCopy(lang: Lang = 'en') {
 // --- Top nav and History menu (DIG-60): follows the current project's language, so a Korean
 // project never shows an English "DigestIT | Home | History" bar (see App.tsx's `lang` state).
 const NAV_EN = {
+  pagesLabel: 'Pages',
   home: 'Home',
   history: 'History',
   otherViews: 'Other views',
@@ -169,6 +170,7 @@ const NAV_EN = {
   insightsDesc: 'Charts and trends across digests',
 } as const;
 const NAV_KO = {
+  pagesLabel: '페이지',
   home: '홈',
   history: '기록',
   otherViews: '다른 보기',

@@ -20,7 +20,9 @@ const MARKETING_WORDS = [
   'supercharge', 'delve', 'elevate', 'magic', 'smart', 'intelligent',
 ];
 const CHIRPY_PHRASES = ['welcome back!', "let's", 'great news', 'awesome', 'oops'];
-const THINKING_PHRASES = ['thinking…', 'analyzing…', 'generating…', 'working…', 'hang tight', '생각 중', '분석 중'];
+// Bare progress verbs with no object. Matched against the whole string (minus a trailing ellipsis),
+// so copy that names the action — "Writing the walkthrough…", "Explaining… 12s" — passes.
+const THINKING_PHRASES = ['thinking', 'analyzing', 'generating', 'working', 'processing', 'hang tight', '생각 중', '분석 중', '처리 중'];
 const KO_BANNED_WORDS = ['다양한', '전반적으로', '원활', '효율적으로'];
 const KO_HAPSIYO_ENDINGS = ['하십시오', '바랍니다'];
 
@@ -55,8 +57,8 @@ function findChirpyPhrase(text: string): string | null {
   return CHIRPY_PHRASES.find((p) => lower.includes(p)) ?? null;
 }
 function findThinkingPhrase(text: string): string | null {
-  const lower = text.toLowerCase();
-  return THINKING_PHRASES.find((p) => lower.includes(p.toLowerCase())) ?? null;
+  const bare = text.trim().replace(/(?:…|\.{3})$/u, '').trim().toLowerCase();
+  return THINKING_PHRASES.find((p) => bare === p) ?? null;
 }
 function hasUnlistedAiMention(text: string): boolean {
   return /\bAI\b/.test(text) && !AI_MENTION_ALLOWLIST.has(text);
@@ -90,6 +92,21 @@ function addStrings(out: Entry[], source: string, lang: Lang, value: unknown, pa
   if (Array.isArray(value)) { value.forEach((v, i) => addStrings(out, source, lang, v, `${path}[${i}]`)); return; }
   if (value !== null && typeof value === 'object') {
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) addStrings(out, source, lang, v, path ? `${path}.${k}` : k);
+  }
+}
+
+/** One sample call per function-valued key of a copy table (required by the type checker too). */
+type Calls<T> = { [K in keyof T as T[K] extends (...args: never[]) => unknown ? K : never]: (fn: T[K]) => unknown };
+
+/** Walks a copy table: every plain string (nested objects/arrays included) is collected
+ * automatically, and every function-valued key must have an entry in `calls`, so a new function
+ * added to a table fails here instead of silently skipping the lint. */
+function addTable<T extends object>(out: Entry[], source: string, lang: Lang, table: T, calls: Calls<T>): void {
+  for (const [k, v] of Object.entries(table)) {
+    if (typeof v !== 'function') { addStrings(out, source, lang, v, k); continue; }
+    const call = (calls as Record<string, ((fn: unknown) => unknown) | undefined>)[k];
+    if (!call) throw new Error(`${source}.${k} is a function with no sample call in copy.lint.test.ts`);
+    addStrings(out, source, lang, call(v), k);
   }
 }
 
@@ -168,96 +185,40 @@ function collectAll(): Entry[] {
 
     for (const reason of NOT_TRACKED_REASONS) addStrings(out, 'notTrackedReasonLabel', lang, notTrackedReasonLabel(reason, lang), reason);
 
-    const h = headerCopy(lang);
-    addStrings(out, 'headerCopy', lang, {
-      projectLabel: h.projectLabel, loadingStatus: h.loadingStatus, statusError: h.statusError(SAMPLE.msg),
-      infoLabel: h.infoLabel, refreshContext: h.refreshContext, refreshingContext: h.refreshingContext,
-      languageLabel: h.languageLabel, languageHint: h.languageHint, languageError: h.languageError(SAMPLE.msg),
-      nothingPendingHint: h.nothingPendingHint, noCallsHint: h.noCallsHint, resets: h.resets(SAMPLE.when),
+    const n4 = <R>(fn: (n: number) => R) => COUNTS.map(fn);
+
+    addTable(out, 'headerCopy', lang, headerCopy(lang), {
+      statusError: (fn) => fn(SAMPLE.msg), languageError: (fn) => fn(SAMPLE.msg), resets: (fn) => fn(SAMPLE.when),
     });
-
-    addStrings(out, 'navCopy', lang, navCopy(lang));
-
-    const ig = ignoreCopy(lang);
-    addStrings(out, 'ignoreCopy', lang, {
-      heading: ig.heading, hint: ig.hint, placeholder: ig.placeholder, add: ig.add, adding: ig.adding, empty: ig.empty,
-      remove: ig.remove(SAMPLE.pattern), addError: ig.addError(SAMPLE.msg), removeError: ig.removeError(SAMPLE.msg),
-      notTrackedHeading: ig.notTrackedHeading, notTrackedEmpty: ig.notTrackedEmpty,
-      notTrackedExamples: ig.notTrackedExamples(SAMPLE.examples),
-      suggestionsHeading: ig.suggestionsHeading, suggestionsHint: ig.suggestionsHint,
-      suggestionAdd: ig.suggestionAdd(SAMPLE.pattern), suggestionAdded: ig.suggestionAdded, continueLabel: ig.continueLabel,
+    addTable(out, 'navCopy', lang, navCopy(lang), {});
+    addTable(out, 'ignoreCopy', lang, ignoreCopy(lang), {
+      remove: (fn) => fn(SAMPLE.pattern), addError: (fn) => fn(SAMPLE.msg), removeError: (fn) => fn(SAMPLE.msg),
+      notTrackedExamples: (fn) => fn(SAMPLE.examples), suggestionAdd: (fn) => fn(SAMPLE.pattern),
     });
-
-    const pk = pickerCopy(lang);
-    addStrings(out, 'pickerCopy', lang, {
-      label: pk.label, choose: pk.choose, listLabel: pk.listLabel, loading: pk.loading, loadError: pk.loadError(SAMPLE.msg),
-      startOfHistory: pk.startOfHistory, retry: pk.retry, retrying: pk.retrying, retryNoBudget: pk.retryNoBudget, status: pk.status,
+    addTable(out, 'pickerCopy', lang, pickerCopy(lang), { loadError: (fn) => fn(SAMPLE.msg) });
+    addTable(out, 'emptyCopy', lang, emptyCopy(lang), {
+      noDigests: (fn) => n4((n) => fn(SAMPLE.projectName, n)),
     });
-
-    const em = emptyCopy(lang);
-    addStrings(out, 'emptyCopy', lang, { noProjectsHeading: em.noProjects.heading, noProjectsSteps: em.noProjects.steps, digestNoChanges: em.digestNoChanges });
-    for (const n of COUNTS) {
-      const nd = em.noDigests(SAMPLE.projectName, n);
-      addStrings(out, 'emptyCopy', lang, { heading: nd.heading, body: nd.body }, `noDigests(${n})`);
-    }
-
     const lv = levelsCopy(lang);
     addStrings(out, 'levelsCopy', lang, lv);
-
-    const rd = readerCopy(lang);
-    addStrings(out, 'readerCopy', lang, {
-      switcherLabel: rd.switcherLabel, switcherHint: rd.switcherHint, breadcrumbLabel: rd.breadcrumbLabel,
-      digestCrumb: rd.digestCrumb(SAMPLE.when), loadingDigest: rd.loadingDigest, digestLoadError: rd.digestLoadError(SAMPLE.msg),
-      digestPending: rd.digestPending, digestError: rd.digestError, digestTruncated: rd.digestTruncated,
-      retry: rd.retry, retrying: rd.retrying, retryNoBudget: rd.retryNoBudget,
-      noHeadline: rd.noHeadline, period: rd.period(SAMPLE.when, SAMPLE.when),
-      fileCount0: rd.fileCount(0), fileCount1: rd.fileCount(1), fileCount2: rd.fileCount(2), fileCount12: rd.fileCount(12),
-      noImpact: rd.noImpact, internalOnly: rd.internalOnly,
-      noAreas: rd.noAreas, areaHow: rd.areaHow, areaWhy: rd.areaWhy, openArea: rd.openArea,
-      filteredTo: rd.filteredTo(2, 5), noAreaForNode: rd.noAreaForNode, clearFilter: rd.clearFilter,
-      filterAnnounce: rd.filterAnnounce(SAMPLE.path), filterCleared: rd.filterCleared, notAnalysed: rd.notAnalysed,
-      pickArea: rd.pickArea, nextLevel: rd.nextLevel(lv[1].key, lv[1].label),
-      areasGlanceHeading: rd.areasGlanceHeading, openAreaCard: rd.openAreaCard,
+    addTable(out, 'readerCopy', lang, readerCopy(lang), {
+      digestCrumb: (fn) => fn(SAMPLE.when), digestLoadError: (fn) => fn(SAMPLE.msg), period: (fn) => fn(SAMPLE.when, SAMPLE.when),
+      fileCount: (fn) => n4(fn), filteredTo: (fn) => fn(2, 5), filterAnnounce: (fn) => fn(SAMPLE.path),
+      nextLevel: (fn) => lv.map((l) => fn(l.key, l.label)),
     });
-
-    const wb = welcomeBackCopy(lang);
-    for (const n of COUNTS) addStrings(out, 'welcomeBackCopy', lang, wb.strip(n, SAMPLE.when, n * 3), `strip(${n})`);
-    addStrings(out, 'welcomeBackCopy', lang, wb.openDigestList, 'openDigestList');
-
-    addStrings(out, 'reviewedCopy', lang, reviewedCopy(lang));
-
-    const wt = walkthroughCopy(lang);
-    addStrings(out, 'walkthroughCopy', lang, {
-      regionLabel: wt.regionLabel(SAMPLE.title), loading: wt.loading, loadError: wt.loadError(SAMPLE.msg),
-      generate: wt.generate,
-      generateCost0: wt.generateCost(0), generateCost1: wt.generateCost(1), generateCost2: wt.generateCost(2), generateCost12: wt.generateCost(12),
-      noBudget: wt.noBudget, notGenerated: wt.notGenerated, generating: wt.generating, generateError: wt.generateError,
-      retry: wt.retry, truncated: wt.truncated, overview: wt.overview,
-      stepLabel0: wt.stepLabel(0), stepLabel1: wt.stepLabel(1), stepLabel2: wt.stepLabel(2), stepLabel12: wt.stepLabel(12),
-      stepOf: wt.stepOf(2, 5), mechanical: wt.mechanical, stepsNav: wt.stepsNav, previous: wt.previous, next: wt.next,
-      stepKeysHint: wt.stepKeysHint, check: wt.check, uncovered: wt.uncovered, uncoveredNote: wt.uncoveredNote,
-      fullDiff: wt.fullDiff, missingHunk: wt.missingHunk(SAMPLE.path, 3),
-      showAll0: wt.showAll(0), showAll1: wt.showAll(1), showAll2: wt.showAll(2), showAll12: wt.showAll(12),
-      showLess: wt.showLess, noTextChange: wt.noTextChange, notAnalysed: wt.notAnalysed,
+    addTable(out, 'welcomeBackCopy', lang, welcomeBackCopy(lang), {
+      strip: (fn) => n4((n) => fn(n, SAMPLE.when, n * 3)),
     });
-
-    const gp = graphCopy(lang);
-    addStrings(out, 'graphCopy', lang, {
-      label: gp.label, legendChanged: gp.legendChanged, legendSelected: gp.legendSelected, fitChanges: gp.fitChanges,
-      fitAll: gp.fitAll, zoomIn: gp.zoomIn, zoomOut: gp.zoomOut, loading: gp.loading, loadError: gp.loadError(SAMPLE.msg),
-      folded: gp.folded, keysHint: gp.keysHint, show: gp.show, hide: gp.hide,
-      nodeFiles0: gp.nodeFiles(0), nodeFiles1: gp.nodeFiles(1), nodeFiles2: gp.nodeFiles(2), nodeFiles12: gp.nodeFiles(12),
-      summaryNone: gp.summaryNone, summaryNoFolders: gp.summary(5, 0), summaryWithFolders: gp.summary(5, 2),
-      openHint0: gp.openHint(0), openHint1: gp.openHint(1), openHint2: gp.openHint(2), expandHint: gp.expandHint,
+    addTable(out, 'reviewedCopy', lang, reviewedCopy(lang), {});
+    addTable(out, 'walkthroughCopy', lang, walkthroughCopy(lang), {
+      regionLabel: (fn) => fn(SAMPLE.title), loadError: (fn) => fn(SAMPLE.msg), generateCost: (fn) => n4(fn),
+      stepLabel: (fn) => n4(fn), stepOf: (fn) => fn(2, 5), missingHunk: (fn) => fn(SAMPLE.path, 3), showAll: (fn) => n4(fn),
     });
-
-    const su = setupCopy(lang);
-    addStrings(out, 'setupCopy', lang, {
-      projectFolderLabel: su.projectFolderLabel, projectFolderPlaceholder: su.projectFolderPlaceholder,
-      contextFileLabel: su.contextFileLabel, contextFilePlaceholder: su.contextFilePlaceholder,
-      starting: su.starting, start: su.start, projectsLoadError: su.projectsLoadError(SAMPLE.msg),
-      noApiHintBefore: su.noApiHint.before, noApiHintHistoryWord: su.noApiHint.historyWord, noApiHintAfter: su.noApiHint.after,
+    addTable(out, 'graphCopy', lang, graphCopy(lang), {
+      loadError: (fn) => fn(SAMPLE.msg), nodeFiles: (fn) => n4(fn), summary: (fn) => [fn(5, 0), fn(5, 2)],
+      openHint: (fn) => [0, 1, 2].map(fn),
     });
+    addTable(out, 'setupCopy', lang, setupCopy(lang), { projectsLoadError: (fn) => fn(SAMPLE.msg) });
   }
 
   return out;
@@ -327,9 +288,19 @@ describe('lint rules actually bite (self-test, run against fake strings)', () =>
     expect(rules('Welcome back, great news')).toContain('chirpy-phrase');
   });
 
-  it('flags thinking-style progress copy, in en and ko', () => {
+  it('flags a bare thinking verb, in en and ko, but not progress copy that names the action', () => {
     expect(rules('Thinking…')).toContain('thinking-progress');
+    expect(rules('Hang tight')).toContain('thinking-progress');
     expect(rules('생각 중…', 'ko')).toContain('thinking-progress');
+    for (const ok of ['Writing the walkthrough…', 'Explaining… 12s', 'Keep working', 'Generating the graph…']) {
+      expect(rules(ok)).not.toContain('thinking-progress');
+    }
+    expect(rules('설명을 작성하는 중…', 'ko')).not.toContain('thinking-progress');
+  });
+
+  it('refuses a copy table whose function has no sample call', () => {
+    const table = { plain: 'Fine', later: (n: number) => `${n} files` };
+    expect(() => addTable([], 'fake', 'en', table, {} as never)).toThrow(/fake\.later/);
   });
 
   it('flags an unlisted "AI" mention, but not the allowlisted onboarding line', () => {
