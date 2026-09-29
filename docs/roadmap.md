@@ -1,6 +1,18 @@
 # Roadmap
 
-## Project switching and first-run state (in progress)
+## UX improvement cycle 1 (in progress)
+
+DIG-55 (Board, 2026-09-28): a UX Reviewer audit, a Designer brief and a critique round, followed by a CTO decision
+(`docs/ux/audit-1.md`, `brief-1.md`, `critique-1.md`, `decision-1.md`). The decision: build P1–P4, P6 and P5 option A.
+Server-side reviewed state (P5-B) and v2 instrumentation are deferred.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-60 | Localized nav, History menu descriptions, focus visibility (P1, P3, P4) | Frontend engineer | — |
+| 1 | DIG-61 | L0 areas map, welcome-back strip, per-area reviewed mark (P2, P6, P5-A) | Frontend engineer | DIG-60 |
+| 2 | DIG-62 | Verify with before/after screenshots; `docs/ux/cycle-1-summary.md` | UX reviewer | DIG-60, DIG-61 |
+
+## Project switching and first-run state (done)
 
 Board bug DIG-57 (2026-09-28): switching projects kept the previous project's digest and graph, a
 project with no digests had no graph, and the pending count included files skipped at checkpoint.
