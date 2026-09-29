@@ -16,3 +16,5 @@ export * from './digest.js';
 export * from './area.js';
 export * from './tells.js';
 export * from './lint-report.js';
+export * from './jobs.js';
+export * from './timing-report.js';

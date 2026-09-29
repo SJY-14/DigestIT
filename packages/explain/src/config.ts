@@ -1,5 +1,10 @@
+import type { CheapRunFlags, TaskModelConfig } from './claude-code.js';
 import { ClaudeCodeProvider } from './claude-code.js';
-import type { AreaInput, AreaResult, ContextInput, ContextResult, ExplanationInput, ExplanationProvider, ProviderResult } from './provider.js';
+import type {
+  AreaInput, AreaResult, AreaStreamChunk, ContextInput, ContextResult, Effort, ExplainTask, ExplanationInput,
+  ExplanationProvider, ProviderResult,
+} from './provider.js';
+import { EXPLAIN_TASKS } from './provider.js';
 import { StubProvider } from './stub.js';
 
 export interface ExplainConfig {
@@ -7,8 +12,42 @@ export interface ExplainConfig {
   /** Repo names allowed to be explained; anything else is refused before a provider call. */
   repoAllowlist: string[];
   claudeBin?: string;
+  /** Legacy default model for the un-split commit-history calls. */
   claudeModel?: string;
   timeoutMs?: number;
+  /** Per-task model/effort (docs/explain-speed.md §3); `DIGESTIT_MODEL_<TASK>`/`DIGESTIT_EFFORT_<TASK>` win over this. */
+  tasks?: Partial<Record<ExplainTask, Partial<TaskModelConfig>>>;
+  /** Cheaper CLI run flags (docs/explain-speed.md §2), each independently togglable. */
+  cheapRun?: Partial<CheapRunFlags>;
+  /** Spawn `cwd` for the split parts; see `explainCwd`. */
+  cwd?: string;
+}
+
+const EFFORTS: readonly Effort[] = ['low', 'medium', 'high'];
+
+function isEffort(v: string): v is Effort {
+  return (EFFORTS as readonly string[]).includes(v);
+}
+
+/**
+ * Applies `DIGESTIT_MODEL_<TASK>` / `DIGESTIT_EFFORT_<TASK>` (docs/explain-speed.md §3) over the
+ * config's own per-task defaults; an unrecognised effort value is ignored (kept as configured).
+ */
+export function resolveTaskConfig(
+  tasks: Partial<Record<ExplainTask, Partial<TaskModelConfig>>> | undefined, env: Record<string, string | undefined> = process.env,
+): Partial<Record<ExplainTask, Partial<TaskModelConfig>>> {
+  const out: Partial<Record<ExplainTask, Partial<TaskModelConfig>>> = {};
+  for (const task of EXPLAIN_TASKS) {
+    const base = tasks?.[task] ?? {};
+    const model = env[`DIGESTIT_MODEL_${task.toUpperCase()}`];
+    const effort = env[`DIGESTIT_EFFORT_${task.toUpperCase()}`];
+    out[task] = {
+      ...base,
+      ...(model ? { model } : {}),
+      ...(effort && isEffort(effort) ? { effort } : {}),
+    };
+  }
+  return out;
 }
 
 export class RepoNotAllowedError extends Error {
@@ -48,9 +87,17 @@ export function withAllowlist(
       if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
       return inner.digest!(input);
     }),
-    explainArea: inner.explainArea && ((input: AreaInput): Promise<AreaResult> => {
+    explainDigestSummary: inner.explainDigestSummary && ((input) => {
       if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
-      return inner.explainArea!(input);
+      return inner.explainDigestSummary!(input);
+    }),
+    explainDigestAreaText: inner.explainDigestAreaText && ((input) => {
+      if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
+      return inner.explainDigestAreaText!(input);
+    }),
+    explainArea: inner.explainArea && ((input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult> => {
+      if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
+      return inner.explainArea!(input, onProgress);
     }),
   };
 }
@@ -66,6 +113,9 @@ export function createProvider(config: ExplainConfig): ExplanationProvider {
         bin: config.claudeBin,
         model: config.claudeModel,
         timeoutMs: config.timeoutMs,
+        tasks: resolveTaskConfig(config.tasks),
+        cheapRun: config.cheapRun,
+        cwd: config.cwd,
       });
       break;
     default:

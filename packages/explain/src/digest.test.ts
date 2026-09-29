@@ -1,11 +1,16 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
+import type { DigestAreaSkeleton } from '@digestit/core';
 import { openDb } from '@digestit/core';
 import {
-  DIGEST_PROMPT_VERSION, RepoNotAllowedError, StubProvider, buildDigestPrompt, checkDigestLevels, createProvider,
-  explainDigest, prepareDigestInput,
+  DIGEST_AREA_TEXT_PROMPT_VERSION, DIGEST_PROMPT_VERSION, DIGEST_SUMMARY_PROMPT_VERSION, RepoNotAllowedError, StubProvider,
+  buildDigestPrompt, checkAreaTextContent, checkDigestLevels, checkSummaryLevels, createProvider, explainDigest,
+  explainDigestAreaText, explainDigestSummary, prepareDigestInput, startJob,
 } from './index.js';
-import type { DigestInput, DigestResult, ExplanationProvider, ProviderFile } from './index.js';
+import type {
+  DigestAreaTextInput, DigestAreaTextResult, DigestInput, DigestResult, DigestSummaryInput, DigestSummaryResult,
+  ExplanationProvider, ProviderFile,
+} from './index.js';
 
 function seedDigest(db: DatabaseSync, files: { path: string; status?: 'A' | 'M' | 'D'; additions?: number; deletions?: number; patch?: string | null }[]): number {
   db.prepare("INSERT INTO repo (id, name, path) VALUES (1, 'DigestIT', '/x')").run();
@@ -190,6 +195,174 @@ describe('checkDigestLevels', () => {
     const reply = { ...validReply, l2: { items: [{ ...validReply.l2.items[0], effect: 'See https://example.com for details.' }], notAnalysed: [] } };
     const r = checkDigestLevels(reply, [FILES[0]!]);
     expect(r?.violations.some((v) => v.includes('contains HTML or a link'))).toBe(true);
+  });
+});
+
+describe('checkSummaryLevels (DIG-74 split)', () => {
+  it('accepts a well-formed L0/L1 reply', () => {
+    const r = checkSummaryLevels({ l0: validReply.l0, l1: validReply.l1 });
+    expect(r?.violations).toEqual([]);
+    expect(r?.levels).toEqual({ l0: validReply.l0, l1: validReply.l1 });
+  });
+
+  it('rejects a shape with no l1.bullets', () => {
+    expect(checkSummaryLevels({ l0: { text: 'x' }, l1: {} })).toBeNull();
+  });
+
+  it('flags an l0 that mentions a file name', () => {
+    const r = checkSummaryLevels({ l0: { text: 'Changes packages/core/src/db.ts.' }, l1: validReply.l1 });
+    expect(r?.violations.some((v) => v.includes('file name'))).toBe(true);
+  });
+});
+
+describe('checkAreaTextContent (DIG-74 split)', () => {
+  const item = validReply.l2.items[0]!;
+
+  it('accepts a well-formed title/effect/how/why reply', () => {
+    const r = checkAreaTextContent({ title: item.title, effect: item.effect, how: item.how, why: item.why });
+    expect(r?.violations).toEqual([]);
+    expect(r?.content).toEqual({ title: item.title, effect: item.effect, how: item.how, why: item.why });
+  });
+
+  it('rejects a shape missing a required field', () => {
+    expect(checkAreaTextContent({ title: 'x', effect: 'y', how: 'z' })).toBeNull();
+  });
+
+  it('flags an empty title', () => {
+    const r = checkAreaTextContent({ title: '', effect: item.effect, how: item.how, why: item.why });
+    expect(r?.violations.some((v) => v.includes('title is empty'))).toBe(true);
+  });
+});
+
+const AREAS: DigestAreaSkeleton[] = [
+  { id: 'storage', label: 'packages/core', paths: ['packages/core/src/db.ts'], additions: 10, deletions: 2 },
+  { id: 'settings-ui', label: 'apps/web', paths: ['apps/web/src/App.tsx'], additions: 40, deletions: 0 },
+];
+
+function seedDigestWithAreas(db: DatabaseSync, areas: DigestAreaSkeleton[] = AREAS): number {
+  const changeUnitId = seedDigest(db, [{ path: 'packages/core/src/db.ts' }, { path: 'apps/web/src/App.tsx' }]);
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO checkpoint (id, repo_id, seq, shadow_sha, tree_sha, taken_at, reason) VALUES (1, 1, 1, 's1', 't1', ?, 'init')").run(now);
+  db.prepare("INSERT INTO checkpoint (id, repo_id, seq, shadow_sha, tree_sha, taken_at, reason) VALUES (2, 1, 2, 's2', 't2', ?, 'explain')").run(now);
+  db.prepare('INSERT INTO digest (change_unit_id, repo_id, from_checkpoint_id, to_checkpoint_id, created_at, areas) VALUES (?, 1, 1, 2, ?, ?)')
+    .run(changeUnitId, now, JSON.stringify(areas));
+  return changeUnitId;
+}
+
+class SummaryProvider implements ExplanationProvider {
+  readonly id = 'scripted';
+  readonly model = 'sonnet';
+  inputs: DigestSummaryInput[] = [];
+  constructor(private readonly replies: (unknown | Error)[]) {}
+  async explain(): Promise<never> { throw new Error('unused'); }
+  async explainDigestSummary(input: DigestSummaryInput): Promise<DigestSummaryResult> {
+    this.inputs.push(input);
+    const r = this.replies[Math.min(this.inputs.length - 1, this.replies.length - 1)];
+    if (r instanceof Error) throw r;
+    return { levels: r as DigestSummaryResult['levels'], provider: this.id, model: this.model };
+  }
+}
+
+class AreaTextProvider implements ExplanationProvider {
+  readonly id = 'scripted';
+  readonly model = 'sonnet';
+  inputs: DigestAreaTextInput[] = [];
+  constructor(private readonly replies: (unknown | Error)[]) {}
+  async explain(): Promise<never> { throw new Error('unused'); }
+  async explainDigestAreaText(input: DigestAreaTextInput): Promise<DigestAreaTextResult> {
+    this.inputs.push(input);
+    const r = this.replies[Math.min(this.inputs.length - 1, this.replies.length - 1)];
+    if (r instanceof Error) throw r;
+    return { content: r as DigestAreaTextResult['content'], provider: this.id, model: this.model };
+  }
+}
+
+describe('explainDigestSummary (DIG-74 split)', () => {
+  it('explains L0/L1 over the whole diff and stores them at level 0/1, logged against the job', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'explain', { repoId: 1, changeUnitId: id }, 40)!;
+    const p = new SummaryProvider([{ l0: validReply.l0, l1: validReply.l1 }]);
+    const r = await explainDigestSummary(db, id, p, { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'ok', calls: 1 });
+    const stored = rows(db).filter((row) => row.level === 0 || row.level === 1);
+    expect(stored.map((s) => s.prompt_version)).toEqual([DIGEST_SUMMARY_PROMPT_VERSION, DIGEST_SUMMARY_PROMPT_VERSION]);
+    const calls = db.prepare('SELECT job_id, part, reason FROM explain_call WHERE job_id = ?').all(jobId);
+    expect(calls).toEqual([{ job_id: jobId, part: 'summary', reason: 'digest' }]);
+    expect(p.inputs[0]!.areas).toEqual([{ id: 'storage', label: 'packages/core' }, { id: 'settings-ui', label: 'apps/web' }]);
+  });
+
+  it('is cached on a second call with the same input', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const p = new SummaryProvider([{ l0: validReply.l0, l1: validReply.l1 }]);
+    const jobId1 = startJob(db, 'explain', { changeUnitId: id }, 40)!;
+    await explainDigestSummary(db, id, p, { job: { jobId: jobId1, budget: 40 } });
+    const jobId2 = startJob(db, 'explain', { changeUnitId: id }, 40)!;
+    const r = await explainDigestSummary(db, id, p, { job: { jobId: jobId2, budget: 40 } });
+    expect(r).toEqual({ outcome: 'cached', calls: 0 });
+    expect(p.inputs).toHaveLength(1);
+  });
+
+  it('errors without a call when the digest has no areas yet', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigest(db, [{ path: 'a.ts' }]);
+    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
+    const r = await explainDigestSummary(db, id, new SummaryProvider([]), { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'error', calls: 0, detail: 'digest has no areas yet' });
+  });
+});
+
+describe('explainDigestAreaText (DIG-74 split)', () => {
+  const good = { title: 'Faster settings lookup', effect: 'Nothing changes for users.', how: 'Reads through an index.', why: 'The scan got slow.' };
+
+  it('explains one area and merges it into the shared level-2 blob, in digest.areas order', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 40)!;
+    const p = new AreaTextProvider([good]);
+    const r = await explainDigestAreaText(db, id, 'storage', p, { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'ok', calls: 1 });
+    const level2 = rows(db).find((row) => row.level === 2)!;
+    expect(level2.prompt_version).toBe(DIGEST_AREA_TEXT_PROMPT_VERSION);
+    const content = JSON.parse(level2.content) as { items: { id: string }[] };
+    expect(content.items).toEqual([{ id: 'storage', paths: AREAS[0]!.paths, ...good }]);
+    expect(p.inputs[0]!.files.map((f) => f.path)).toEqual(['packages/core/src/db.ts']);
+  });
+
+  it('keeps other already-explained areas, in digest.areas order, when a second area lands', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const p = new AreaTextProvider([good, { ...good, title: 'Settings screen' }]);
+    const job1 = startJob(db, 'area', { changeUnitId: id }, 40)!;
+    await explainDigestAreaText(db, id, 'storage', p, { job: { jobId: job1, budget: 40 } });
+    const job2 = startJob(db, 'area', { changeUnitId: id }, 40)!;
+    await explainDigestAreaText(db, id, 'settings-ui', p, { job: { jobId: job2, budget: 40 } });
+    const level2 = rows(db).find((row) => row.level === 2)!;
+    const content = JSON.parse(level2.content) as { items: { id: string }[] };
+    expect(content.items.map((it) => it.id)).toEqual(['storage', 'settings-ui']);
+  });
+
+  it('retries once on a hard-invalid area reply, then stores the retry', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 40)!;
+    const invalid = { title: '', effect: good.effect, how: good.how, why: good.why };
+    const p = new AreaTextProvider([invalid, good]);
+    const r = await explainDigestAreaText(db, id, 'storage', p, { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'ok', calls: 2 });
+    expect(p.inputs[1]!.retryFeedback).toBeDefined();
+    const level2 = rows(db).find((row) => row.level === 2)!;
+    const content = JSON.parse(level2.content) as { items: { id: string; title: string }[] };
+    expect(content.items[0]!.title).toBe(good.title);
+  });
+
+  it('errors on an unknown area id', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 40)!;
+    const r = await explainDigestAreaText(db, id, 'no-such-area', new AreaTextProvider([good]), { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'error', calls: 0, detail: 'unknown area' });
   });
 });
 
