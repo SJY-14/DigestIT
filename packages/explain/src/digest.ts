@@ -350,6 +350,12 @@ export async function explainDigest(
   }
 
   const at = now().toISOString();
+  // A hard-valid attempt 1 kept only for its tells stays 'ok' when the retry fails, is unusable or
+  // runs out of budget (DIG-65): 'truncated' is only for output that broke a hard rule.
+  if (best && best.violations.length === 0) {
+    storeDigest(db, changeUnitId, best.levels, 'ok', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
+    return { changeUnitId, outcome: 'ok', calls };
+  }
   if (best) {
     storeDigest(db, changeUnitId, best.levels, 'truncated', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
     return { changeUnitId, outcome: 'truncated', calls, detail: lastError };

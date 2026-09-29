@@ -287,6 +287,64 @@ describe('explainDigest', () => {
   });
 });
 
+describe('explainDigest AI-tell retry (DIG-65)', () => {
+  const warnings = (db: DatabaseSync) =>
+    (db.prepare('SELECT style_warnings FROM explanation ORDER BY level').all() as { style_warnings: number }[]).map((r) => r.style_warnings);
+  const seed = (db: DatabaseSync) => seedDigest(db, [{ path: 'packages/core/src/db.ts' }, { path: 'apps/web/src/App.tsx' }]);
+  const tells = { ...validReply, l0: { text: 'This change introduces a seamless settings screen.' } };
+  const badId = { ...validReply, l2: { items: [{ ...validReply.l2.items[0], id: 'BAD ID' }, validReply.l2.items[1]], notAnalysed: [] } };
+
+  it('retries exactly once on tells alone, with the tells as feedback, and stores 0 when the retry is clean', async () => {
+    const db = openDb(':memory:');
+    const p = new Scripted([tells, validReply]);
+    const r = await explainDigest(db, seed(db), p, { budget: 40 });
+    expect(r).toMatchObject({ outcome: 'ok', calls: 2 });
+    expect(p.inputs[1]!.retryFeedback).toEqual([
+      expect.stringContaining('l0: opens with "This change'), expect.stringContaining('l0: uses the marketing word "seamless'),
+    ]);
+    expect(warnings(db)).toEqual([0, 0, 0]);
+  });
+
+  it('sends hard violations and tells together on the retry', async () => {
+    const db = openDb(':memory:');
+    const p = new Scripted([{ ...badId, l0: tells.l0 }, validReply]);
+    await explainDigest(db, seed(db), p, { budget: 40 });
+    const fb = p.inputs[1]!.retryFeedback!;
+    expect(fb.some((f) => f.includes('not kebab-case'))).toBe(true);
+    expect(fb.some((f) => f.includes('seamless'))).toBe(true);
+  });
+
+  it('accepts a hard-valid retry that still has tells as ok, storing the tells left', async () => {
+    const db = openDb(':memory:');
+    const p = new Scripted([tells, { ...validReply, l0: { text: 'Adds a seamless settings screen.' } }]);
+    const r = await explainDigest(db, seed(db), p, { budget: 40 });
+    expect(r).toMatchObject({ outcome: 'ok', calls: 2 });
+    expect(p.inputs).toHaveLength(2);
+    expect(rows(db).every((x) => x.status === 'ok')).toBe(true);
+    expect(JSON.parse(rows(db)[0]!.content)).toEqual({ text: 'Adds a seamless settings screen.' });
+    expect(warnings(db)).toEqual([1, 1, 1]);
+  });
+
+  it('keeps attempt 1 (ok, with its count) when the retry is hard-invalid', async () => {
+    const db = openDb(':memory:');
+    const p = new Scripted([tells, badId]);
+    const r = await explainDigest(db, seed(db), p, { budget: 40 });
+    expect(r).toMatchObject({ outcome: 'ok', calls: 2 });
+    expect(JSON.parse(rows(db)[0]!.content)).toEqual(tells.l0);
+    expect(warnings(db)).toEqual([2, 2, 2]);
+  });
+
+  it('keeps attempt 1 as ok, not truncated, when the retry throws or is unusable', async () => {
+    for (const second of [new Error('boom'), { nope: true }]) {
+      const db = openDb(':memory:');
+      const r = await explainDigest(db, seed(db), new Scripted([tells, second]), { budget: 40 });
+      expect(r).toMatchObject({ outcome: 'ok', calls: 2 });
+      expect(rows(db).every((x) => x.status === 'ok')).toBe(true);
+      expect(warnings(db)).toEqual([2, 2, 2]);
+    }
+  });
+});
+
 describe('StubProvider.digest', () => {
   it('groups analysed files by top-level directory, deterministically', async () => {
     const db = openDb(':memory:');

@@ -1,4 +1,4 @@
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import type {
   AreaWalkthrough, DigestL2Content, ExplainLanguage, L0Content, L1Content, ProjectContextContent,
@@ -79,8 +79,9 @@ function isObj(v: unknown): v is Record<string, unknown> {
 
 /**
  * Runs the AI-tell lint over every stored digest (L0-L2), area walkthrough
- * (L3) and project context row in `db`. Each row is scanned regardless of its
- * `prompt_version` — this is a diagnostic report, not a production read path.
+ * (L3) and project context row in `db`. Each prompt version's rows are linted
+ * as their own set, so a digest explained under d2 and d3 counts twice and
+ * never mixes levels across versions. Error rows (empty content) are skipped.
  */
 export function lintDb(db: DatabaseSync): LintReport {
   const hits: LevelHit[] = [];
@@ -92,38 +93,43 @@ export function lintDb(db: DatabaseSync): LintReport {
   );
 
   const explanationRows = db.prepare(
-    'SELECT change_unit_id, level, content FROM explanation WHERE level IN (0, 1, 2)',
-  ).all() as { change_unit_id: number; level: number; content: string }[];
-  const byUnit = new Map<number, { l0?: L0Content; l1?: L1Content; l2?: DigestL2Content }>();
+    `SELECT e.change_unit_id, e.level, e.content, e.prompt_version FROM explanation e
+       JOIN change_unit cu ON cu.id = e.change_unit_id
+      WHERE cu.kind = 'digest' AND e.level IN (0, 1, 2) AND e.status IN ('ok', 'truncated')`,
+  ).all() as { change_unit_id: number; level: number; content: string; prompt_version: string }[];
+  const byUnit = new Map<string, { changeUnitId: number; l0?: L0Content; l1?: L1Content; l2?: DigestL2Content }>();
   for (const r of explanationRows) {
-    const entry = byUnit.get(r.change_unit_id) ?? {};
+    const key = `${r.change_unit_id}:${r.prompt_version}`;
+    const entry = byUnit.get(key) ?? { changeUnitId: r.change_unit_id };
     const parsed = JSON.parse(r.content) as unknown;
     if (r.level === 0) entry.l0 = parsed as L0Content;
     else if (r.level === 1) entry.l1 = parsed as L1Content;
     else if (r.level === 2) entry.l2 = parsed as DigestL2Content;
-    byUnit.set(r.change_unit_id, entry);
+    byUnit.set(key, entry);
   }
-  for (const [changeUnitId, entry] of byUnit) {
+  for (const entry of byUnit.values()) {
     if (!entry.l0 || !entry.l1 || !entry.l2) continue;
-    const language = digestLanguage.get(changeUnitId) ?? 'en';
+    const language = digestLanguage.get(entry.changeUnitId) ?? 'en';
     hits.push(...lintDigestLevels(entry.l0, entry.l1, entry.l2, language));
   }
 
-  const areaRows = db.prepare('SELECT change_unit_id, content FROM area_explanation').all() as
-    { change_unit_id: number; content: string }[];
-  const overviewsByUnit = new Map<number, string[]>();
+  const areaRows = db.prepare(
+    "SELECT change_unit_id, content, prompt_version FROM area_explanation WHERE status IN ('ok', 'truncated')",
+  ).all() as { change_unit_id: number; content: string; prompt_version: string }[];
+  const overviewsByUnit = new Map<string, string[]>();
   for (const r of areaRows) {
     const language = digestLanguage.get(r.change_unit_id) ?? 'en';
     const content = JSON.parse(r.content) as AreaWalkthrough;
     hits.push(...lintAreaWalkthrough(content, language));
-    if (content.overview !== '') overviewsByUnit.set(r.change_unit_id, [...(overviewsByUnit.get(r.change_unit_id) ?? []), content.overview]);
+    const key = `${r.change_unit_id}:${r.prompt_version}`;
+    if (content.overview !== '') overviewsByUnit.set(key, [...(overviewsByUnit.get(key) ?? []), content.overview]);
   }
   for (const overviews of overviewsByUnit.values()) repeatedOpeners += repeatedOpenerCount(overviews);
 
   const repoLanguage = new Map<number, ExplainLanguage>(
     (db.prepare('SELECT id, language FROM repo').all() as { id: number; language: ExplainLanguage }[]).map((r) => [r.id, r.language]),
   );
-  const contextRows = db.prepare('SELECT repo_id, content FROM project_context').all() as { repo_id: number; content: string }[];
+  const contextRows = db.prepare("SELECT repo_id, content FROM project_context WHERE status IN ('ok', 'truncated')").all() as { repo_id: number; content: string }[];
   for (const r of contextRows) {
     const language = repoLanguage.get(r.repo_id) ?? 'en';
     hits.push(...lintProjectContext(JSON.parse(r.content) as ProjectContextContent, language));
@@ -174,8 +180,8 @@ export async function runLintReportCli(argv: string[]): Promise<number> {
       console.error(LINT_REPORT_USAGE);
       return 2;
     }
-    const { openDb } = await import('@digestit/core');
-    const db = openDb(path);
+    // Read-only: a report must not migrate or otherwise write to the file it scans.
+    const db = new DatabaseSync(path, { readOnly: true });
     try {
       printReport(path, lintDb(db));
     } finally {

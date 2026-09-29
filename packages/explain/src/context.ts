@@ -482,6 +482,11 @@ export async function explainContext(
       feedback = undefined;
     }
   }
+  // A hard-valid attempt 1 kept only for its tells stays 'ok' when the retry fails, is unusable or
+  // runs out of budget (DIG-65): 'truncated' is only for output that broke a hard rule.
+  if (best && best.violations.length === 0) {
+    return { outcome: 'ok', content: best.content, calls, attempts, provider: used, styleWarnings: best.styleWarnings.length };
+  }
   if (best) return { outcome: 'truncated', content: best.content, calls, attempts, provider: used, detail: lastError, styleWarnings: best.styleWarnings.length };
   return { outcome: 'error', content: null, calls, attempts, provider: used, detail: lastError, styleWarnings: 0 };
 }

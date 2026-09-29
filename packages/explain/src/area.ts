@@ -427,6 +427,12 @@ export async function explainArea(
   }
 
   const at = now().toISOString();
+  // A hard-valid attempt 1 kept only for its tells stays 'ok' when the retry fails, is unusable or
+  // runs out of budget (DIG-65): 'truncated' is only for output that broke a hard rule.
+  if (best && best.violations.length === 0) {
+    storeArea(db, changeUnitId, areaId, best.content, 'ok', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
+    return { changeUnitId, areaId, outcome: 'ok', calls };
+  }
   if (best) {
     storeArea(db, changeUnitId, areaId, best.content, 'truncated', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
     return { changeUnitId, areaId, outcome: 'truncated', calls, detail: lastError };

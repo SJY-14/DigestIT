@@ -83,10 +83,10 @@ const EN_MARKETING: Rule[] = [
   { id: 'marketing-comprehensive', re: /\bcomprehensive\b/i, reason: 'uses the marketing word "comprehensive": name what is actually covered instead' },
   { id: 'marketing-streamline', re: /\bstreamlin(?:e|es|ed|ing)\b/i, reason: 'uses the marketing word "streamline(d)": name the concrete steps that changed instead' },
   { id: 'marketing-leverage', re: /\bleverag(?:e|es|ed|ing)\b/i, reason: 'uses the marketing word "leverage(s)": name what it uses instead' },
-  { id: 'marketing-unlock', re: /\bunlocks?\b/i, reason: 'uses the marketing word "unlock(s)": name what becomes possible instead' },
+  { id: 'marketing-unlock', re: /\bunlocks?\b(?![^.!?]*\b(?:mutex|locks?|semaphore)\b)/i, reason: 'uses the marketing word "unlock(s)": name what becomes possible instead' },
   { id: 'marketing-supercharge', re: /\bsupercharg(?:e|es|ed|ing)\b/i, reason: 'uses the marketing word "supercharge": name the concrete improvement instead' },
   { id: 'marketing-delve', re: /\bdelv(?:e|es|ed|ing)\b/i, reason: 'uses the marketing word "delve": say what it does instead' },
-  { id: 'marketing-elevate', re: /\belevat(?:e|es|ed|ing)\b/i, reason: 'uses the marketing word "elevate": name the concrete improvement instead' },
+  { id: 'marketing-elevate', re: /\belevat(?:e|es|ed|ing)\b(?!\s+(?:privileges?|permissions?|rights|access|shell|prompt)\b)/i, reason: 'uses the marketing word "elevate": name the concrete improvement instead' },
   {
     id: 'marketing-enhance-bare',
     re: /\benhance[sd]?\b(?=\s*(?:[.,;:]|$))/i,
@@ -98,16 +98,19 @@ const VAGUE_NOUNS = ['maintainability', 'readability', 'user experience', 'relia
 const VAGUE_RE = new RegExp(`\\b(?:improves?|enhances?)\\s+(?:the\\s+)?(?:overall\\s+)?(${VAGUE_NOUNS.join('|')})\\b`, 'i');
 const CONCRETE_SIGNAL = /\d|`[^`]*`|\b[a-z][a-z0-9]*[A-Z]\w*\b|\b[A-Z][a-zA-Z0-9]*[A-Z]\w*\b|[\w-]+\/[\w./-]+|\w+\([^()]*\)/;
 
+// A closed list, not any "-er" word or "more <noun>": "parser, lexer, and printer" or
+// "more tests, more logs, and more retries" are concrete and must not trip the triplet.
 const EN_ADJ = ['fast', 'safe', 'simple', 'easy', 'clean', 'secure', 'reliable', 'scalable', 'flexible', 'efficient', 'quick', 'strong', 'smooth'];
-const TRIPLET_RE = new RegExp(
-  `\\b(?:\\w+er|more\\s+\\w+|${EN_ADJ.join('|')})\\s*,\\s*(?:\\w+er|more\\s+\\w+|${EN_ADJ.join('|')})\\s*,?\\s*(?:and|&)\\s*(?:\\w+er|more\\s+\\w+|${EN_ADJ.join('|')})\\b`,
-  'i',
-);
+const EN_COMPARATIVES = ['faster', 'safer', 'simpler', 'easier', 'cleaner', 'quicker', 'stronger', 'smoother', 'better', 'clearer', 'leaner', 'lighter', 'smaller', 'tighter'];
+const EN_MORE_ADJ = [...EN_ADJ, 'robust', 'readable', 'maintainable', 'stable', 'consistent', 'predictable', 'intuitive', 'responsive', 'resilient', 'accessible', 'performant', 'powerful'];
+const TRIPLET_TERM = `(?:${EN_COMPARATIVES.join('|')}|more\\s+(?:${EN_MORE_ADJ.join('|')})|${EN_ADJ.join('|')})`;
+const TRIPLET_RE = new RegExp(`\\b${TRIPLET_TERM}\\s*,\\s*${TRIPLET_TERM}\\s*,?\\s*(?:and|&)\\s*${TRIPLET_TERM}\\b`, 'i');
 const BOLD_RE = /\*\*(?!\s)[^*\n]+?(?<!\s)\*\*/;
 const ITALIC_RE = /__(?!\s)[^_\n]+?(?<!\s)__/;
 
 function hasBareExclamation(strippedSentence: string): boolean {
-  return /!/.test(strippedSentence.replace(/!==?/g, ' '));
+  // Only a "!" that ends a word ("great!"), not an operator ("!ready", "!==").
+  return /[\p{L}\p{N})"'”]!+(?=\s|$)/u.test(strippedSentence.replace(/!==?/g, ' '));
 }
 
 /** Bare "!", markdown bold/italics and em-dash chains: shared by both languages. */

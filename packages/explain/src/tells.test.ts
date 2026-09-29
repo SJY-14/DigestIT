@@ -113,6 +113,16 @@ describe('aiTells: stripping code spans, identifiers and paths', () => {
   it('does not treat "!=" / "!==" as a bare exclamation mark', () => {
     expect(has('The check now compares retries !== 0 before looping.', 'en', 'structure-exclamation')).toBe(false);
     expect(has('The check now compares retries !== 0 before looping!', 'en', 'structure-exclamation')).toBe(true);
+    expect(has('Returns early when !ready is true.', 'en', 'structure-exclamation')).toBe(false);
+  });
+
+  it('leaves concrete lists and the technical senses of unlock/elevated alone', () => {
+    expect(has('Splits the parser, lexer, and printer into separate modules.', 'en', 'structure-triplet')).toBe(false);
+    expect(has('The consumer, producer, and worker share one queue.', 'en', 'structure-triplet')).toBe(false);
+    expect(has('Adds more tests, more logs, and more retries.', 'en', 'structure-triplet')).toBe(false);
+    expect(has('Makes startup simpler, cleaner, and more robust.', 'en', 'structure-triplet')).toBe(true);
+    expect(has('Calls unlock on the mutex before returning.', 'en', 'marketing-unlock')).toBe(false);
+    expect(has('Runs the installer with elevated privileges.', 'en', 'marketing-elevate')).toBe(false);
   });
 });
 
