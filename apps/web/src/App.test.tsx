@@ -216,6 +216,20 @@ describe('DIG-60: localized nav chrome follows the project language', () => {
     expect(host.querySelector('.history-menu-label')?.textContent).toBe('다른 보기');
   });
 
+  it('on a History page, follows the language of the repo that page shows, not the last Home project', async () => {
+    const koElsewhere = { ...fixtureProject, id: 2, language: 'ko' as const };
+    history.replaceState(null, '', '/?project=2');
+    vi.stubGlobal('fetch', makeFetchMock([{ ...fixtureProject, id: 1 }, koElsewhere]));
+    await render(<App />);
+    await waitFor(() => host.querySelector('a[href="/"]')?.textContent === '홈');
+
+    const menu = host.querySelector('.history-menu') as HTMLDetailsElement;
+    await click(menu.querySelector('a[href="/units"]'));
+    // The Units page shows repo 1, an English project.
+    await waitFor(() => host.querySelector('.history-menu > summary')?.textContent === 'History');
+    expect(host.querySelector('.history-menu-list')?.getAttribute('aria-label')).toBe('Other views');
+  });
+
   it('fetches the project language directly on a cold load of a History page (no Home visit this session)', async () => {
     history.replaceState(null, '', '/timeline');
     vi.stubGlobal('fetch', makeFetchMock([koProject]));

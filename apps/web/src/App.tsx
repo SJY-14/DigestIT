@@ -67,32 +67,22 @@ function usePage(): [Page, (p: Page) => void] {
 export function App() {
   const { repos, repoId, setRepoId, rows, done, loading, error, loadMore } = useTimeline();
   const [page, setPage] = usePage();
-  // The last-known project language, for the nav/History-menu chrome (DIG-60): MainV2 (mounted
-  // only on the "main" page) reports it here via `onLanguage`, so it survives switching to a
-  // History page even after MainV2 unmounts. `langKnown` tracks whether a real value (from
-  // MainV2 or the cold-load fetch below) has replaced the 'en' default, so the fetch fires at
-  // most once and never overrides a value MainV2 already reported.
+  // The chrome's language (DIG-60). On Home, MainV2 reports the current project's language via
+  // `onLanguage`. A History page shows a repo of its own (`repoId`), which may be the first page
+  // opened this session, so it looks that repo up in the existing v2 projects list: `repoId` and a
+  // v2 project's id are the same underlying row (see `findProjectRow`, apps/server/src/v2.ts). If
+  // that fetch fails, the last-known value (or the 'en' default) stays.
   const [lang, setLang] = useState<Lang>('en');
-  const langKnown = useRef(false);
-  const onLanguage = useCallback((l: Lang) => {
-    langKnown.current = true;
-    setLang(l);
-  }, []);
-  // Cold-load fallback (critique of brief-1, P1): a History page can be the first page opened
-  // this session, in which case MainV2 never mounts to report a language at all. `repoId` and a
-  // v2 project's id are the same underlying row (see `findProjectRow`, apps/server/src/v2.ts), so
-  // the repo this History page is showing can be looked up in the existing v2 projects list with
-  // no new endpoint.
+  const onLanguage = useCallback((l: Lang) => setLang(l), []);
   useEffect(() => {
-    if (langKnown.current || page === 'main' || repoId === null) return;
-    langKnown.current = true;
+    if (page === 'main' || repoId === null) return;
     const ac = new AbortController();
     fetchProjects(ac.signal).then(
       (projects) => {
         const p = projects.find((pr) => pr.id === repoId);
         if (p) setLang(p.language);
       },
-      () => undefined, // stays at the 'en' default
+      () => undefined,
     );
     return () => ac.abort();
   }, [page, repoId]);
@@ -239,8 +229,8 @@ export function App() {
           </a>
           <details className="history-menu" ref={historyMenu}>
             <summary>{T.history}</summary>
-            <div className="history-menu-list" role="menu">
-              <span className="history-menu-label">{T.otherViews}</span>
+            <div className="history-menu-list" role="menu" aria-label={T.otherViews}>
+              <span className="history-menu-label" aria-hidden="true">{T.otherViews}</span>
               {HISTORY_PAGES.map((p) => (
                 <a
                   key={p}
