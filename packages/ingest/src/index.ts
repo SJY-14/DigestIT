@@ -11,3 +11,4 @@ export * from './project.js';
 export * from './project-cli.js';
 export * from './project-context.js';
 export * from './route.js';
+export * from './workspace.js';
