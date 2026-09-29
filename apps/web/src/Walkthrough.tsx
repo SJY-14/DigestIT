@@ -3,11 +3,12 @@
 // covers (cut by the token budget). Before a walkthrough exists (or while it is being written)
 // the area's full diff is shown instead, so the code is always one click away.
 import { useEffect, useMemo, useState } from 'react';
-import type { AreaDetailDto, AreaWalkthrough, DigestL2Item, HunkRef } from '@digestit/core';
+import type { AreaDetailDto, AreaProgressEvent, AreaWalkthrough, HunkRef } from '@digestit/core';
 import { lineDelta, reviewedCopy, walkthroughCopy, type Lang } from './copy.js';
 import { splitPatch, uncoveredHunks, type PatchHunk } from './hunks.js';
 import type { DiffLine } from './diff.js';
 import { proseLabel, renderProse } from './prose.js';
+import type { AreaHeading } from './Reader.js';
 
 /** Hunks longer than this fold to their first `FOLD_PREVIEW` lines, with "Show all". */
 export const FOLD_THRESHOLD = 20;
@@ -95,7 +96,7 @@ function StepNav({ step, total, onStep, lang = 'en' }: { step: number | null; to
 
 export interface WalkthroughViewProps {
   area: AreaDetailDto;
-  item: DigestL2Item;
+  item: AreaHeading;
   /** 1-based current step, or null (at the overview). */
   step: number | null;
   onStep: (n: number) => void;
@@ -107,16 +108,20 @@ export interface WalkthroughViewProps {
   reviewed?: boolean;
   /** Toggles the reviewed mark for the current area; absent when there is nothing to mark yet. */
   onToggleReviewed?: () => void;
+  /** The walkthrough as it streams in (`area-progress`, DIG-76), while `area.l3` is still null and
+   * `area.status` is `pending`. Ignored once the real, validated `l3` lands. */
+  streaming?: Pick<AreaProgressEvent, 'overview' | 'steps'> | null;
   /** The UI chrome's language; defaults to English for callers (mostly tests) that don't care. */
   lang?: Lang;
 }
 
 export function WalkthroughView({
-  area, item, step, onStep, onGenerate, callsRemaining, reviewed = false, onToggleReviewed, lang = 'en',
+  area, item, step, onStep, onGenerate, callsRemaining, reviewed = false, onToggleReviewed, streaming = null, lang = 'en',
 }: WalkthroughViewProps) {
   const T = walkthroughCopy(lang);
   const TR = reviewedCopy(lang);
   const walkthrough = walkthroughOf(area);
+  const heading = item.title ?? item.label;
   const shown = useMemo(() => area.files.filter((f) => !f.filteredReason), [area.files]);
   const filtered = area.files.filter((f) => f.filteredReason);
   const index: HunkIndex = useMemo(() => new Map(shown.map((f) => [f.path, splitPatch(f.patch ?? '')])), [shown]);
@@ -159,10 +164,10 @@ export function WalkthroughView({
   })();
 
   return (
-    <article className="walkthrough" aria-label={T.regionLabel(proseLabel(item.title))}>
+    <article className="walkthrough" aria-label={T.regionLabel(proseLabel(heading))}>
       <header className="walkthrough-head">
         <div className="walkthrough-head-row">
-          <h2>{renderProse(item.title)}</h2>
+          <h2>{renderProse(heading)}</h2>
           {onToggleReviewed && (
             <button type="button" className="btn reviewed-toggle" aria-pressed={reviewed} onClick={onToggleReviewed}>
               <span aria-hidden="true">{reviewed ? '✓' : '○'}</span> {reviewed ? TR.reviewed : TR.mark}
@@ -170,7 +175,8 @@ export function WalkthroughView({
           )}
         </div>
         <p className="muted">
-          {renderProse(item.effect)} <span className="stats"><span className="add">+{stats.a}</span> <span className="del">−{stats.d}</span></span>
+          {item.effect !== null ? renderProse(item.effect) : <span className="placeholder">{T.areaWriting}</span>}{' '}
+          <span className="stats"><span className="add">+{stats.a}</span> <span className="del">−{stats.d}</span></span>
           <span className="visually-hidden"> ({lineDelta(stats.a, stats.d)})</span>
         </p>
       </header>
@@ -233,6 +239,30 @@ export function WalkthroughView({
             </div>
           </div>
         </>
+      ) : streaming && (streaming.overview !== null || streaming.steps.length > 0) ? (
+        // The walkthrough streaming in (DIG-76 scope 5): steps appear one by one from
+        // `area-progress`. Same step/section ids as the final render above, so when the real,
+        // validated `l3` replaces this branch the reader's scroll position does not jump.
+        <div className="walkthrough-body streaming">
+          <div className="walkthrough-main">
+            {streaming.overview !== null && (
+              <section className="overview" aria-labelledby="wt-overview">
+                <h3 id="wt-overview">{T.overview}</h3>
+                <p>{renderProse(streaming.overview)}</p>
+              </section>
+            )}
+            {streaming.steps.map((s, i) => (
+              <section key={i} id={`step-${i + 1}`} className={s.mechanical ? 'step mechanical' : 'step'} aria-labelledby={`step-${i + 1}-title`}>
+                <h3 id={`step-${i + 1}-title`}>
+                  <span className="step-n">{T.stepLabel(i + 1)}</span> {renderProse(s.title)}
+                  {s.mechanical && <span className="badge step-mech">{T.mechanical}</span>}
+                </h3>
+                <p className="step-body">{renderProse(s.body)}</p>
+                <StepHunks refs={s.hunks} index={index} lang={lang} />
+              </section>
+            ))}
+          </div>
+        </div>
       ) : (
         <section className="full-diff" aria-labelledby="wt-diff">
           <h3 id="wt-diff">{T.fullDiff}</h3>
