@@ -2,8 +2,8 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AreaPicker, Breadcrumb, LevelSwitcher, readerKey, StructureView, SummaryView } from './Reader.js';
-import { fixtureDigest } from './v2Fixtures.js';
+import { AreaPicker, Breadcrumb, digestAreaRows, LevelSwitcher, partsSettled, readerKey, StructureView, SummaryView } from './Reader.js';
+import { fixtureDigest, fixtureDigestDone, fixtureDigestPartial, fixtureDigestPending } from './v2Fixtures.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -79,7 +79,7 @@ describe('Breadcrumb', () => {
     const onDigest = vi.fn();
     const onArea = vi.fn();
     const onLevel = vi.fn();
-    const item = fixtureDigest.l2!.items[0]!;
+    const item = { ...fixtureDigest.l2!.items[0]!, label: fixtureDigest.l2!.items[0]!.title };
     await render(<Breadcrumb digest={{ toAt: new Date().toISOString() }} level={3} area={item} onDigest={onDigest} onArea={onArea} onLevel={onLevel} />);
     const crumbs = [...host.querySelectorAll('.breadcrumb button')];
     expect(crumbs.map((c) => c.textContent)).toEqual([expect.stringMatching(/^Digest · Today, \d\d:\d\d$/), item.title, 'L3 Code']);
@@ -89,7 +89,8 @@ describe('Breadcrumb', () => {
     expect([onDigest, onArea, onLevel].map((f) => f.mock.calls.length)).toEqual([1, 1, 1]);
   });
   it('leaves the area out below L3', async () => {
-    await render(<Breadcrumb digest={fixtureDigest} level={1} area={fixtureDigest.l2!.items[0]!} onDigest={vi.fn()} onArea={vi.fn()} onLevel={vi.fn()} />);
+    const item = { ...fixtureDigest.l2!.items[0]!, label: fixtureDigest.l2!.items[0]!.title };
+    await render(<Breadcrumb digest={fixtureDigest} level={1} area={item} onDigest={vi.fn()} onArea={vi.fn()} onLevel={vi.fn()} />);
     expect(host.querySelectorAll('.breadcrumb button')).toHaveLength(2);
   });
 });
@@ -166,5 +167,73 @@ describe('level views', () => {
     const picks = [...host.querySelectorAll('.area-pick')];
     expect(picks[0]!.querySelector('.reviewed-indicator')?.textContent).toContain('Reviewed');
     expect(picks[1]!.querySelector('.reviewed-indicator')).toBeNull();
+  });
+});
+
+describe('digestAreaRows (DIG-76 Fast Explain)', () => {
+  it('an old-contract digest (no `areas`) reads every area as settled, from `l2.items` alone', () => {
+    const rows = digestAreaRows(fixtureDigest);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.status === 'ok')).toBe(true);
+    expect(rows[0]!.title).toBe(fixtureDigest.l2!.items[0]!.title);
+    expect(rows[0]!.label).toBe(fixtureDigest.l2!.items[0]!.title);
+  });
+
+  it('a pending Fast Explain digest shows the skeleton with no text yet, status from `parts`', () => {
+    const rows = digestAreaRows(fixtureDigestPending);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.title === null)).toBe(true);
+    expect(rows.map((r) => r.label)).toEqual(['apps/web', 'packages/core']);
+    expect(rows.map((r) => r.status)).toEqual(['pending', 'pending']);
+  });
+
+  it('a partially landed digest mixes settled and pending/failed rows', () => {
+    const rows = digestAreaRows(fixtureDigestPartial);
+    expect(rows[0]!.status).toBe('ok');
+    expect(rows[0]!.title).toBe(fixtureDigestPartial.l2!.items[0]!.title);
+    expect(rows[1]!.status).toBe('error');
+    expect(rows[1]!.title).toBeNull();
+  });
+});
+
+describe('partsSettled', () => {
+  it('is false while any part is pending or running, true once every part has settled', () => {
+    expect(partsSettled(fixtureDigestPending.parts!)).toBe(false);
+    // A failed part (`packages-core`: 'error') has settled, just unsuccessfully — it does not
+    // keep the digest "still in flight".
+    expect(partsSettled(fixtureDigestPartial.parts!)).toBe(true);
+    expect(partsSettled(fixtureDigestDone.parts!)).toBe(true);
+  });
+});
+
+describe('SummaryView / ImpactView / StructureView placeholders (DIG-76 Fast Explain)', () => {
+  it('L0: a placeholder headline while the summary part is still running, not the "no summary" message', async () => {
+    await render(<SummaryView digest={fixtureDigestPending} onLevel={vi.fn()} onOpenArea={vi.fn()} onHoverArea={vi.fn()} />);
+    expect(host.querySelector('.l0-headline')?.textContent).toBe('Writing the summary…');
+    expect(host.querySelector('.area-glance-card')).toBeTruthy(); // the area map still shows from the skeleton
+  });
+
+  it('L0: a failed summary part shows its own retry, calling the passed-in handler', async () => {
+    const failed = { ...fixtureDigestPending, parts: { ...fixtureDigestPending.parts!, summary: 'error' as const } };
+    const onRetryPart = vi.fn();
+    await render(<SummaryView digest={failed} onLevel={vi.fn()} onOpenArea={vi.fn()} onHoverArea={vi.fn()} onRetryPart={onRetryPart} />);
+    expect(host.querySelector('.l0-headline .part-failed')?.textContent).toContain("Couldn't write this part.");
+    await click(host.querySelector('.l0-headline .retry'));
+    expect(onRetryPart).toHaveBeenCalled();
+  });
+
+  it('L2: each area card shows its own placeholder or failure independent of the others', async () => {
+    await render(
+      <StructureView
+        digest={fixtureDigestPartial} filter={null} selectedAreaId={null} onOpenArea={vi.fn()} onClearFilter={vi.fn()}
+        onHoverArea={vi.fn()} onLevel={vi.fn()} onRetryPart={vi.fn()}
+      />,
+    );
+    const cards = [...host.querySelectorAll('.area-card')];
+    expect(cards).toHaveLength(2);
+    expect(cards[0]!.querySelector('.area-card-effect')?.textContent).toBe(fixtureDigestPartial.l2!.items[0]!.effect);
+    expect(cards[0]!.querySelector('.part-failed')).toBeNull();
+    expect(cards[1]!.querySelector('.part-failed')?.textContent).toContain("Couldn't write this part.");
+    expect(cards[1]!.querySelector('h3')?.textContent).toContain('packages/core'); // the skeleton label, no title yet
   });
 });
