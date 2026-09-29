@@ -353,10 +353,12 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .history-menu > summary::-webkit-details-marker { display: none; }
 .history-menu > summary:hover { background: var(--hover); color: var(--fg); }
 .history-menu[open] > summary { background: var(--selected); color: var(--fg); }
-.history-menu-list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; display: flex; flex-direction: column; min-width: 140px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); padding: 4px; }
-.history-menu-list a { padding: 6px 10px; border-radius: 4px; text-decoration: none; color: var(--fg); }
+.history-menu-list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; display: flex; flex-direction: column; min-width: 220px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); padding: 4px; }
+.history-menu-label { padding: 4px 10px 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; color: var(--muted); }
+.history-menu-list a { display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; border-radius: 4px; text-decoration: none; color: var(--fg); }
 .history-menu-list a:hover { background: var(--hover); }
 .history-menu-list a[aria-current='page'] { background: var(--selected); font-weight: 600; }
+.menu-item-desc { font-size: 12px; font-weight: 400; color: var(--muted); }
 
 .setup { max-width: 480px; margin: 48px auto; }
 .setup-form { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
@@ -432,7 +434,7 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .digest-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--border-muted); }
 .digest-row:last-child { border-bottom: 0; }
 .digest-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit; color: var(--fg); background: none; border: 0; padding: 8px 12px; cursor: pointer; }
-.digest-row-main:hover, .digest-row-main:focus-visible { background: var(--hover); outline: none; }
+.digest-row-main:hover, .digest-row-main:focus-visible { background: var(--hover); }
 .digest-row-main[aria-current='true'] { background: var(--selected); }
 /* The trigger (.digest-picker-current) truncates to one line; a row in the open list has room to
    wrap, so it always shows the whole L0 headline instead of cutting it off. */

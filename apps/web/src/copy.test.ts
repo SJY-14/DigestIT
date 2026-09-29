@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   apiErrorMessage, callsLeftLabel, contextSummary, digestRowLabel, elapsedLabel, emptyCopy, explainButtonLabel, explainingLabel,
-  explainOutcomeMessage, graphCopy, headerCopy, humanDateTime, levelsCopy, lineDelta, pickerCopy, plural, readerCopy, resetsLabel,
-  walkthroughCopy, type Lang,
+  explainOutcomeMessage, graphCopy, headerCopy, humanDateTime, levelsCopy, lineDelta, navCopy, pickerCopy, plural, readerCopy,
+  resetsLabel, walkthroughCopy, type Lang,
 } from './copy.js';
 
 describe('plural', () => {
@@ -196,6 +196,7 @@ describe('every English chrome table has a matching Korean entry (DIG-52)', () =
     ['walkthroughCopy', walkthroughCopy],
     ['graphCopy', graphCopy],
     ['levelsCopy', levelsCopy],
+    ['navCopy', navCopy],
   ];
 
   it.each(tables)('%s: ko has the same keys as en, and every string leaf is actually translated', (_name, table) => {

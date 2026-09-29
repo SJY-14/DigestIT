@@ -117,6 +117,38 @@ export function headerCopy(lang: Lang = 'en') {
   return lang === 'ko' ? HEADER_KO : HEADER_EN;
 }
 
+// --- Top nav and History menu (DIG-60): follows the current project's language, so a Korean
+// project never shows an English "DigestIT | Home | History" bar (see App.tsx's `lang` state).
+const NAV_EN = {
+  home: 'Home',
+  history: 'History',
+  otherViews: 'Other views',
+  units: 'Units',
+  unitsDesc: 'Group changes by ticket/issue',
+  timeline: 'Timeline',
+  timelineDesc: 'Changes in chronological order',
+  briefing: 'Briefing',
+  briefingDesc: 'Narrative summary over a date range',
+  insights: 'Insights',
+  insightsDesc: 'Charts and trends across digests',
+} as const;
+const NAV_KO = {
+  home: '홈',
+  history: '기록',
+  otherViews: '다른 보기',
+  units: '단위',
+  unitsDesc: '티켓/이슈별로 변경 사항을 묶어서 봅니다',
+  timeline: '타임라인',
+  timelineDesc: '변경 사항을 시간 순서대로 봅니다',
+  briefing: '브리핑',
+  briefingDesc: '기간별 서술형 요약입니다',
+  insights: '인사이트',
+  insightsDesc: '다이제스트 전반의 차트와 추세입니다',
+} as const;
+export function navCopy(lang: Lang = 'en') {
+  return lang === 'ko' ? NAV_KO : NAV_EN;
+}
+
 /** The primary Explain button's label: the pending count, or a plain "nothing to do" state
  * that must not look like a broken primary action. */
 export function explainButtonLabel(pendingFiles: number, lang: Lang = 'en'): string {
