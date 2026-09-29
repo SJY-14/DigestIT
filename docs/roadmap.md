@@ -12,7 +12,7 @@ a guard that keeps them that way.
 | 0 | DIG-66 | UI-copy lint test over evaluated `copy.ts`; string sweep (done) | Frontend engineer | — |
 | 1 | DIG-67 | Verify: before/after screens, lint counts, blind read; `docs/ux/ai-look-summary.md` (done) | UX reviewer | DIG-65, DIG-66 |
 | 2 | DIG-69 | Operator real-provider acceptance run (en and ko): 0 AI-tell hits (done) | Board operator | DIG-65 |
-| 3 | DIG-70 | Follow-up: render inline code in explanation prose | Frontend engineer | — |
+| 3 | DIG-70 | Follow-up: render inline code in explanation prose (done) | Frontend engineer | — |
 
 ## UX improvement cycle 1 (done)
 
