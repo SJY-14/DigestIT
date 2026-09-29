@@ -4,7 +4,7 @@
 // the area's full diff is shown instead, so the code is always one click away.
 import { useEffect, useMemo, useState } from 'react';
 import type { AreaDetailDto, AreaWalkthrough, DigestL2Item, HunkRef } from '@digestit/core';
-import { lineDelta, walkthroughCopy, type Lang } from './copy.js';
+import { lineDelta, reviewedCopy, walkthroughCopy, type Lang } from './copy.js';
 import { splitPatch, uncoveredHunks, type PatchHunk } from './hunks.js';
 import type { DiffLine } from './diff.js';
 
@@ -102,12 +102,19 @@ export interface WalkthroughViewProps {
   onGenerate: () => void;
   /** Remaining daily LLM calls; null when unknown. */
   callsRemaining: number | null;
+  /** Whether the current area is marked reviewed (DIG-61 P5-A, client-only, per project:digest:area). */
+  reviewed?: boolean;
+  /** Toggles the reviewed mark for the current area; absent when there is nothing to mark yet. */
+  onToggleReviewed?: () => void;
   /** The UI chrome's language; defaults to English for callers (mostly tests) that don't care. */
   lang?: Lang;
 }
 
-export function WalkthroughView({ area, item, step, onStep, onGenerate, callsRemaining, lang = 'en' }: WalkthroughViewProps) {
+export function WalkthroughView({
+  area, item, step, onStep, onGenerate, callsRemaining, reviewed = false, onToggleReviewed, lang = 'en',
+}: WalkthroughViewProps) {
   const T = walkthroughCopy(lang);
+  const TR = reviewedCopy(lang);
   const walkthrough = walkthroughOf(area);
   const shown = useMemo(() => area.files.filter((f) => !f.filteredReason), [area.files]);
   const filtered = area.files.filter((f) => f.filteredReason);
@@ -153,7 +160,14 @@ export function WalkthroughView({ area, item, step, onStep, onGenerate, callsRem
   return (
     <article className="walkthrough" aria-label={T.regionLabel(item.title)}>
       <header className="walkthrough-head">
-        <h2>{item.title}</h2>
+        <div className="walkthrough-head-row">
+          <h2>{item.title}</h2>
+          {onToggleReviewed && (
+            <button type="button" className="btn reviewed-toggle" aria-pressed={reviewed} onClick={onToggleReviewed}>
+              <span aria-hidden="true">{reviewed ? '✓' : '○'}</span> {reviewed ? TR.reviewed : TR.mark}
+            </button>
+          )}
+        </div>
         <p className="muted">
           {item.effect} <span className="stats"><span className="add">+{stats.a}</span> <span className="del">−{stats.d}</span></span>
           <span className="visually-hidden"> ({lineDelta(stats.a, stats.d)})</span>

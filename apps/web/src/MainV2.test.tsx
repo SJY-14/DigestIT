@@ -2,7 +2,7 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeFilter, defaultProject, MainV2, nodeTarget } from './MainV2.js';
+import { computeFilter, defaultProject, MainV2, nodeTarget, unseenDigests } from './MainV2.js';
 import { humanDateTime, plural } from './copy.js';
 import {
   fixtureArea, fixtureDigest, fixtureDigestPage, fixtureGraph, fixtureProject, fixtureProject2, fixtureProjectGraph, fixtureStatus, fixtureStatus2,
@@ -447,6 +447,96 @@ describe('MainV2: reading flow', () => {
   });
 });
 
+describe('MainV2: DIG-61 UX cycle 1B (P2 areas map, P6 welcome-back, P5-A reviewed mark)', () => {
+  it('P2: an "Open area" card on L0 lands on L2 with that area selected and scrolled into view, not L3', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    await render(<MainV2 />);
+    await ready();
+    await click(host.querySelector('.area-glance-card'));
+    expect(params().get('level')).toBe('2');
+    expect(params().get('area')).toBe('graph-pane');
+    await waitFor(() => host.querySelector('.area-card.selected') !== null);
+    expect(host.querySelector('.area-card.selected')?.getAttribute('data-area-id')).toBe('graph-pane');
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('P2: the reading pane stops stretching at L0 and the no-area L3 picker only', async () => {
+    await render(<MainV2 />);
+    await ready();
+    const pane = () => host.querySelector('.reading-pane')!;
+    expect(pane().hasAttribute('data-short-view')).toBe(true); // L0
+    await pressKey('1');
+    expect(pane().hasAttribute('data-short-view')).toBe(false); // L1
+    await pressKey('2');
+    expect(pane().hasAttribute('data-short-view')).toBe(false); // L2
+    await pressKey('3');
+    await waitFor(() => host.querySelector('.area-picker') !== null);
+    expect(pane().hasAttribute('data-short-view')).toBe(true); // L3, no area
+    await click(host.querySelector('.area-pick'));
+    await waitFor(() => host.querySelector('.walkthrough') !== null);
+    expect(pane().hasAttribute('data-short-view')).toBe(false); // L3 walkthrough
+  });
+
+  it('P6: shows "N digests since you last looked" only while viewing the newest, and its CTA opens the digest picker', async () => {
+    localStorage.setItem('digestit.lastSeen.1', JSON.stringify({ digestId: 39, at: new Date(Date.now() - 2 * 3600_000).toISOString() }));
+    await render(<MainV2 />);
+    await ready();
+    await waitFor(() => host.querySelector('.welcome-back') !== null);
+    const text = host.querySelector('.welcome-back-text')?.textContent ?? '';
+    // Newer than digest 39: both 41 (current, 12 files) and 40 (4 files) from fixtureDigestPage.
+    expect(text).toContain('2 digests since you last looked');
+    expect(text).toContain('2 hours ago');
+    expect(text).toContain('16 files total');
+    expect(host.querySelector('.digest-picker-panel')).toBeNull();
+    await click(host.querySelector('.welcome-back-cta'));
+    expect(host.querySelector('.digest-picker-panel')).toBeTruthy();
+  });
+
+  it('P6: never shows on a first visit (no last-seen marker stored)', async () => {
+    await render(<MainV2 />);
+    await ready();
+    expect(host.querySelector('.welcome-back')).toBeNull();
+  });
+
+  it('P6: clears once the newest digest has been viewed (nothing new to report on the next landing)', async () => {
+    localStorage.setItem('digestit.lastSeen.1', JSON.stringify({ digestId: 39, at: new Date().toISOString() }));
+    await render(<MainV2 />);
+    await ready();
+    await waitFor(() => host.querySelector('.welcome-back') !== null);
+    await waitFor(() => JSON.parse(localStorage.getItem('digestit.lastSeen.1')!).digestId === fixtureDigest.id);
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await render(<MainV2 />);
+    await ready();
+    expect(host.querySelector('.welcome-back')).toBeNull();
+  });
+
+  it('P5-A: the L3 header toggle marks/unmarks the area reviewed, persists it, and the L2 card reflects it', async () => {
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=3&area=graph-pane`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.reviewed-toggle') !== null);
+    const toggle = () => host.querySelector('.reviewed-toggle') as HTMLButtonElement;
+    expect(toggle().textContent).toContain('Mark as reviewed');
+    expect(toggle().getAttribute('aria-pressed')).toBe('false');
+
+    await click(toggle());
+    expect(toggle().textContent).toContain('Reviewed');
+    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    expect(JSON.parse(localStorage.getItem(`digestit.reviewed.1.${fixtureDigest.id}.graph-pane`)!)).toBe(true);
+
+    await pressKey('2');
+    await waitFor(() => host.querySelector('.area-card') !== null);
+    expect(host.querySelector('.area-card .reviewed-indicator')?.textContent).toContain('Reviewed');
+
+    await pressKey('3');
+    await waitFor(() => host.querySelector('.reviewed-toggle') !== null);
+    await click(toggle());
+    expect(toggle().textContent).toContain('Mark as reviewed');
+    expect(localStorage.getItem(`digestit.reviewed.1.${fixtureDigest.id}.graph-pane`)).toBeNull();
+  });
+});
+
 describe('nodeTarget', () => {
   it('follows docs/ux-v3.md §1', () => {
     expect(nodeTarget({ id: 'f:a.ts', areaIds: ['x'] })).toEqual({ level: 3, area: 'x', step: null, node: null });
@@ -674,5 +764,20 @@ describe('computeFilter', () => {
     const item = fixtureDigest.l2!.items[0]!;
     const f = computeFilter(`f:${item.paths[0]}`, null, fixtureDigest);
     expect(f.areaIds.has(item.id)).toBe(true);
+  });
+});
+
+describe('unseenDigests (DIG-61 P6)', () => {
+  it('returns the digests newer than the last-seen one', () => {
+    expect(unseenDigests(fixtureDigestPage.items, fixtureDigestPage.items[2]!.id)).toEqual(fixtureDigestPage.items.slice(0, 2));
+    expect(unseenDigests(fixtureDigestPage.items, fixtureDigestPage.items[0]!.id)).toEqual([]);
+  });
+
+  it('treats a last-seen id outside the loaded page as older than everything loaded', () => {
+    expect(unseenDigests(fixtureDigestPage.items, 1)).toEqual(fixtureDigestPage.items);
+  });
+
+  it('is empty for an empty list', () => {
+    expect(unseenDigests([], 1)).toEqual([]);
   });
 });

@@ -472,6 +472,10 @@ const READER_EN = {
   pickArea: 'Pick an area to walk through its code.',
   // "Next level" link at the bottom of L0–L2
   nextLevel: (key: string, label: string) => `Next: ${key} ${label}`,
+  // L0 "Areas in this digest" cards (DIG-61 P2): land on L2 with the area selected, not L3, so
+  // the label is deliberately not "Walk through the code" (openArea above).
+  areasGlanceHeading: 'Areas in this digest',
+  openAreaCard: 'Open area',
 } as const;
 const READER_KO = {
   switcherLabel: '설명 단계',
@@ -503,9 +507,44 @@ const READER_KO = {
   notAnalysed: '분석되지 않음',
   pickArea: '코드를 살펴볼 영역을 선택하세요.',
   nextLevel: (key: string, label: string) => `다음: ${key} ${label}`,
+  areasGlanceHeading: '이 다이제스트의 영역',
+  openAreaCard: '영역 열기',
 } as const;
 export function readerCopy(lang: Lang = 'en') {
   return lang === 'ko' ? READER_KO : READER_EN;
+}
+
+// --- Welcome-back strip (DIG-61 P6): client-only "N digests since you last looked" ---------------
+
+const WELCOME_BACK_EN = {
+  strip: (digests: number, sinceLabel: string, files: number) =>
+    `${plural(digests, 'digest')} since you last looked, ${sinceLabel} · ${plural(files, 'file')} total`,
+  openDigestList: 'Open digest list',
+} as const;
+const WELCOME_BACK_KO = {
+  strip: (digests: number, sinceLabel: string, files: number) =>
+    `마지막으로 본 이후 다이제스트 ${digests}개, ${sinceLabel} · 파일 ${files}개`,
+  openDigestList: '다이제스트 목록 열기',
+} as const;
+export function welcomeBackCopy(lang: Lang = 'en') {
+  return lang === 'ko' ? WELCOME_BACK_KO : WELCOME_BACK_EN;
+}
+
+// --- Per-area reviewed mark (DIG-61 P5 option A): shared by the L3 header toggle and the small
+// L2/L3-picker indicator ---------------------------------------------------------------------------
+
+const REVIEWED_EN = {
+  mark: 'Mark as reviewed',
+  reviewed: 'Reviewed',
+  badge: 'Reviewed',
+} as const;
+const REVIEWED_KO = {
+  mark: '검토됨으로 표시',
+  reviewed: '검토됨',
+  badge: '검토됨',
+} as const;
+export function reviewedCopy(lang: Lang = 'en') {
+  return lang === 'ko' ? REVIEWED_KO : REVIEWED_EN;
 }
 
 // --- L3 walkthrough (DIG-50/52) -------------------------------------------------------------------
