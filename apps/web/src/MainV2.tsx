@@ -19,8 +19,8 @@ import {
   AreaPicker, Breadcrumb, ImpactView, LEVEL_TAB_ID, LevelSwitcher, READING_PANE_ID, readerKey, StructureView, SummaryView,
 } from './Reader.js';
 import {
-  apiErrorMessage, emptyCopy, explainOutcomeMessage, graphCopy, ignoreCopy, levelsCopy, readerCopy, resetsLabel,
-  walkthroughCopy, welcomeBackCopy,
+  apiErrorMessage, emptyCopy, explainOutcomeMessage, graphCopy, headerCopy, ignoreCopy, levelsCopy, readerCopy, resetsLabel,
+  setupCopy, walkthroughCopy, welcomeBackCopy,
 } from './copy.js';
 import { relativeTime } from './format.js';
 import { getLastSeen, getReviewed, setLastSeen, setReviewed, type LastSeen } from './storage.js';
@@ -99,6 +99,7 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
   if (created) return <IgnoreSuggestionsStep project={created} onContinue={() => onCreated(created)} />;
 
   const T = emptyCopy();
+  const TS = setupCopy();
   return (
     <div className="box setup">
       <h2 className="box-head">{T.noProjects.heading}</h2>
@@ -107,28 +108,28 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
       </ol>
       <form className="setup-form" onSubmit={(e) => void submit(e)}>
         <label className="field">
-          <span>Project folder</span>
+          <span>{TS.projectFolderLabel}</span>
           <input
             type="text"
             value={rootPath}
             onChange={(e) => setRootPath(e.target.value)}
-            placeholder="/path/to/project"
+            placeholder={TS.projectFolderPlaceholder}
             required
             autoFocus
           />
         </label>
         <label className="field">
-          <span>Context file (optional)</span>
+          <span>{TS.contextFileLabel}</span>
           <input
             type="text"
             value={contextPath}
             onChange={(e) => setContextPath(e.target.value)}
-            placeholder="/path/to/context.md"
+            placeholder={TS.contextFilePlaceholder}
           />
         </label>
         {error && <p role="alert" className="error">{error}</p>}
         <button type="submit" className="btn primary" disabled={submitting || rootPath.trim() === ''}>
-          {submitting ? 'Starting…' : 'Start'}
+          {submitting ? TS.starting : TS.start}
         </button>
       </form>
     </div>
@@ -642,17 +643,18 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     });
   }, [currentDigestId, digests, push, refreshStatus]);
 
+  const TS = setupCopy(lang);
   if (projectsNotFound) {
     return (
       <div className="box setup">
         <p className="muted">
-          This server doesn't have the v2 project API yet. Use <strong>History</strong> above for the existing commit timeline and insights.
+          {TS.noApiHint.before}<strong>{TS.noApiHint.historyWord}</strong>{TS.noApiHint.after}
         </p>
       </div>
     );
   }
-  if (projectsError) return <p role="alert" className="error">Could not load projects: {projectsError}</p>;
-  if (projects === null) return <p className="muted">Loading…</p>;
+  if (projectsError) return <p role="alert" className="error">{TS.projectsLoadError(projectsError)}</p>;
+  if (projects === null) return <p className="muted">{headerCopy(lang).loadingStatus}</p>;
   if (projects.length === 0) {
     return <SetupForm onCreated={(p) => { setProjects([p]); replace({ project: p.id }); }} />;
   }
@@ -775,7 +777,7 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
         {explainError && <p role="alert" className="notice error">{explainError}</p>}
         {explainNotice && <p role="status" className="notice muted">{explainNotice}</p>}
         {digestError && <p role="alert" className="error">{T.digestLoadError(digestError)}</p>}
-        {!digestError && currentDigestId === null && !digests.done && <p className="muted">Loading…</p>}
+        {!digestError && currentDigestId === null && !digests.done && <p className="muted">{headerCopy(lang).loadingStatus}</p>}
         {!digestError && currentDigestId !== null && !digest && <p className="muted">{T.loadingDigest}</p>}
         {digest && (
           <>

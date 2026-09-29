@@ -223,7 +223,7 @@ export function App() {
           </select>
         )}
         {page !== 'main' && repos.length === 1 && <span className="repo-name">{repos[0]?.name}</span>}
-        <nav className="nav" aria-label="Pages">
+        <nav className="nav" aria-label={T.pagesLabel}>
           <a href={PATH_FOR.main} aria-current={page === 'main' ? 'page' : undefined} onClick={(e) => { e.preventDefault(); setPage('main'); }}>
             {T.home}
           </a>

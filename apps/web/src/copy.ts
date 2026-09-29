@@ -83,6 +83,42 @@ export function levelsCopy(lang: Lang = 'en') {
   return lang === 'ko' ? LEVELS_KO : LEVELS_EN;
 }
 
+// --- Setup form and project-list guards (DIG-40/49): shown before a project is selected. The setup
+// form has no project language yet and renders English; MainV2's guards pass its `lang`, which is
+// 'en' until the project list has loaded.
+
+const SETUP_EN = {
+  projectFolderLabel: 'Project folder',
+  projectFolderPlaceholder: '/path/to/project',
+  contextFileLabel: 'Context file (optional)',
+  contextFilePlaceholder: '/path/to/context.md',
+  starting: 'Starting…',
+  start: 'Start',
+  projectsLoadError: (msg: string) => `Could not load projects: ${msg}`,
+  noApiHint: {
+    before: "This server doesn't have the v2 project API yet. Use ",
+    historyWord: 'History',
+    after: ' above for the existing commit timeline and insights.',
+  },
+} as const;
+const SETUP_KO = {
+  projectFolderLabel: '프로젝트 폴더',
+  projectFolderPlaceholder: '/path/to/project',
+  contextFileLabel: '컨텍스트 파일 (선택)',
+  contextFilePlaceholder: '/path/to/context.md',
+  starting: '시작하는 중…',
+  start: '시작',
+  projectsLoadError: (msg: string) => `프로젝트를 불러오지 못했습니다: ${msg}`,
+  noApiHint: {
+    before: '이 서버에는 아직 v2 프로젝트 API가 없습니다. 기존 커밋 타임라인과 인사이트는 위의 ',
+    historyWord: '기록',
+    after: '을 이용하세요.',
+  },
+} as const;
+export function setupCopy(lang: Lang = 'en') {
+  return lang === 'ko' ? SETUP_KO : SETUP_EN;
+}
+
 // --- Header (DIG-49/52): project switcher, digest picker, Explain, calls left, info popover ----
 
 const HEADER_EN = {
@@ -120,6 +156,7 @@ export function headerCopy(lang: Lang = 'en') {
 // --- Top nav and History menu (DIG-60): follows the current project's language, so a Korean
 // project never shows an English "DigestIT | Home | History" bar (see App.tsx's `lang` state).
 const NAV_EN = {
+  pagesLabel: 'Pages',
   home: 'Home',
   history: 'History',
   otherViews: 'Other views',
@@ -133,6 +170,7 @@ const NAV_EN = {
   insightsDesc: 'Charts and trends across digests',
 } as const;
 const NAV_KO = {
+  pagesLabel: '페이지',
   home: '홈',
   history: '기록',
   otherViews: '다른 보기',
