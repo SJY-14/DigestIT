@@ -1,8 +1,8 @@
 // v2 API client (docs/direction-v2.md §5, DIG-39 contract in packages/core/src/v2.ts).
 // Component tests use fixtures (v2Fixtures.ts) instead of a live server.
 import type {
-  AreaDetailDto, ContextStatusDto, CreateProjectResponseDto, DigestDetailDto, DigestPageDto, ExplainLanguage,
-  ExplainResultDto, ProjectDto, ProjectGraphDto, ProjectIgnoreDto, ProjectStatusDto,
+  AreaDetailDto, AreaProgressEvent, ContextStatusDto, CreateProjectResponseDto, DigestDetailDto, DigestPageDto,
+  ExplainLanguage, ExplainResultDto, ProjectDto, ProjectGraphDto, ProjectIgnoreDto, ProjectStatusDto,
 } from '@digestit/core';
 
 export class ApiError extends Error {
@@ -121,4 +121,67 @@ export function fetchArea(digestId: number, areaId: string, signal?: AbortSignal
 
 export function explainArea(digestId: number, areaId: string, signal?: AbortSignal): Promise<AreaDetailDto> {
   return postJson(`/api/digests/${digestId}/areas/${encodeURIComponent(areaId)}/explain`, {}, signal);
+}
+
+// --- Fast Explain progress (DIG-73/76): GET /api/digests/:id/events (SSE) ------------------------
+
+export const DIGEST_EVENTS_POLL_MS = 2000;
+
+export interface DigestEventsDeps {
+  /** A part changed status (event `parts`), or the stream just (re)connected: refetch the digest. */
+  onChange: () => void;
+  /** An L3 walkthrough streaming in for one area (event `area-progress`). */
+  onProgress: (e: AreaProgressEvent) => void;
+  /** Every part of the digest, and every running area L3, has settled (event `done`). */
+  onDone?: () => void;
+  /** Injected for tests. */
+  EventSourceCtor?: typeof EventSource | undefined;
+  pollMs?: number;
+}
+
+/**
+ * Subscribe to a digest's live progress. While the stream is not connected, poll
+ * `GET /api/digests/:id` every 2 s instead (the caller's `onChange` does the actual fetch).
+ * `onChange` fires on connect (the server sends `parts` right away), on every later `parts`
+ * event, on a poll tick, and again after a reconnect: it always means "refetch, don't trust
+ * anything cached". Returns a cleanup function that closes the stream and stops polling.
+ */
+export function openDigestEvents(digestId: number, d: DigestEventsDeps): () => void {
+  const pollMs = d.pollMs ?? DIGEST_EVENTS_POLL_MS;
+  let poll: ReturnType<typeof setInterval> | null = null;
+  let stopped = false;
+
+  const startPolling = () => { poll ??= setInterval(() => !stopped && d.onChange(), pollMs); };
+  const stopPolling = () => {
+    if (poll) clearInterval(poll);
+    poll = null;
+  };
+
+  const ES = d.EventSourceCtor ?? (typeof EventSource === 'undefined' ? undefined : EventSource);
+  let es: EventSource | null = null;
+  const finish = () => {
+    stopPolling();
+    es?.close();
+    d.onDone?.();
+  };
+  if (!ES) {
+    startPolling();
+  } else {
+    es = new ES(`/api/digests/${digestId}/events`);
+    es.addEventListener('parts', () => {
+      stopPolling();
+      d.onChange();
+    });
+    es.addEventListener('area-progress', (ev: MessageEvent) => {
+      d.onProgress(JSON.parse((ev as MessageEvent<string>).data) as AreaProgressEvent);
+    });
+    es.addEventListener('done', finish);
+    // The browser retries a dropped stream by itself; poll until it is back.
+    es.onerror = startPolling;
+  }
+  return () => {
+    stopped = true;
+    stopPolling();
+    es?.close();
+  };
 }

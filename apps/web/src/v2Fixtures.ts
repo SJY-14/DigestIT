@@ -3,8 +3,8 @@
 // fine under vitest (Node) but must never end up in the browser bundle.
 import { buildProjectGraph } from '@digestit/core';
 import type {
-  AreaDetailDto, AreaWalkthrough, ContextStatusDto, DigestDetailDto, DigestFileDto, DigestPageDto, DigestSummaryDto,
-  ProjectDto, ProjectGraphDto, ProjectStatusDto,
+  AreaDetailDto, AreaProgressEvent, AreaWalkthrough, ContextStatusDto, DigestAreaSkeleton, DigestDetailDto, DigestFileDto,
+  DigestPageDto, DigestPartsDto, DigestSummaryDto, ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 
 export const fixtureContext: ContextStatusDto = {
@@ -228,3 +228,158 @@ export const fixtureArea: AreaDetailDto = {
     { ...files[3]!, patch: null },
   ],
 };
+
+// ---- Fast Explain (DIG-73/76, docs/explain-speed.md): a digest that opens instantly (files,
+// stats, deterministic areas) and fills in L0/L1/L2 text and the L3 walkthrough as parts land. A
+// fresh set of files/areas, not the ones above, so a test can freely mix an old-contract digest
+// (no `areas`/`parts`) with a Fast Explain one without the two colliding on ids. ----
+
+const fastFiles: DigestFileDto[] = [
+  { path: 'apps/web/src/SearchBox.tsx', oldPath: null, status: 'A', additions: 80, deletions: 0, filteredReason: null },
+  { path: 'apps/web/src/SearchBox.test.tsx', oldPath: null, status: 'A', additions: 40, deletions: 0, filteredReason: null },
+  { path: 'packages/core/src/search.ts', oldPath: null, status: 'M', additions: 20, deletions: 4, filteredReason: null },
+];
+
+export const fixtureAreaSkeletons: DigestAreaSkeleton[] = [
+  { id: 'apps-web', label: 'apps/web', paths: ['apps/web/src/SearchBox.tsx', 'apps/web/src/SearchBox.test.tsx'], additions: 120, deletions: 0 },
+  { id: 'packages-core', label: 'packages/core', paths: ['packages/core/src/search.ts'], additions: 20, deletions: 4 },
+];
+
+const fastPartsRunning: DigestPartsDto = {
+  summary: 'running',
+  areas: { 'apps-web': 'pending', 'packages-core': 'pending' },
+  context: 'running', // a first Explain: the project context builds alongside (DIG-76 scope 6)
+  startedAt: '2026-09-29T10:00:00Z',
+  finishedAt: null,
+};
+
+/** Right after the POST resolves: files/stats/areas exist, nothing else has landed yet. */
+export const fixtureDigestPending: DigestDetailDto = {
+  id: 100,
+  projectId: 1,
+  seq: 4,
+  fromAt: '2026-09-29T09:00:00Z',
+  toAt: '2026-09-29T10:00:00Z',
+  stats: { files: 3, additions: 140, deletions: 4 },
+  status: 'pending',
+  language: 'en',
+  l0: null,
+  l1: null,
+  l2: { notAnalysed: [], items: [] },
+  files: fastFiles,
+  skipped: [],
+  areas: fixtureAreaSkeletons,
+  parts: fastPartsRunning,
+};
+
+/** The summary and one area have landed; the other area part failed. */
+export const fixtureDigestPartial: DigestDetailDto = {
+  ...fixtureDigestPending,
+  l0: { text: 'Add a search box to the header' },
+  l1: { userVisible: true, bullets: ['A search box now appears in the header and searches as you type.'] },
+  l2: {
+    notAnalysed: [],
+    items: [
+      {
+        id: 'apps-web',
+        paths: fixtureAreaSkeletons[0]!.paths,
+        title: 'Header search box',
+        effect: 'A search box appears in the header and filters results as you type.',
+        how: 'Added SearchBox.tsx, wired into the header, calling the existing search index.',
+        why: 'Users asked for a quick way to jump to a file without opening the graph.',
+      },
+    ],
+  },
+  parts: { summary: 'ok', areas: { 'apps-web': 'ok', 'packages-core': 'error' }, context: 'ok', startedAt: fastPartsRunning.startedAt, finishedAt: null },
+};
+
+/** Every part landed. */
+export const fixtureDigestDone: DigestDetailDto = {
+  ...fixtureDigestPartial,
+  status: 'ok',
+  l2: {
+    notAnalysed: [],
+    items: [
+      ...fixtureDigestPartial.l2!.items,
+      {
+        id: 'packages-core',
+        paths: fixtureAreaSkeletons[1]!.paths,
+        title: 'Search index helper',
+        effect: 'No visible change on its own.',
+        how: 'search.ts gained a case-insensitive prefix match used by the new search box.',
+        why: 'The header search box needs a fast, simple match against file paths.',
+      },
+    ],
+  },
+  parts: { summary: 'ok', areas: { 'apps-web': 'ok', 'packages-core': 'ok' }, context: 'ok', startedAt: fastPartsRunning.startedAt, finishedAt: '2026-09-29T10:00:20Z' },
+};
+
+const searchBoxPatch = [
+  '@@ -0,0 +1,6 @@',
+  '+export function SearchBox({ onSearch }: { onSearch: (q: string) => void }) {',
+  '+  return (',
+  '+    <input type="search" aria-label="Search" onChange={(e) => onSearch(e.target.value)} />',
+  '+  );',
+  '+}',
+].join('\n');
+
+/** The area L3 is still streaming: no `l3` yet, `status: 'pending'`. Paired with
+ * `fixtureAreaProgressSteps` below for a test that renders steps arriving one by one. */
+export const fixtureStreamingArea: AreaDetailDto = {
+  digestId: fixtureDigestDone.id,
+  areaId: 'apps-web',
+  status: 'pending',
+  l3: null,
+  files: [{ ...fastFiles[0]!, patch: searchBoxPatch }],
+};
+
+const streamStep1 = {
+  title: 'Add the search box component',
+  body: 'SearchBox renders a labelled search input and calls onSearch on every change.',
+  hunks: [{ path: 'apps/web/src/SearchBox.tsx', hunk: 1 }],
+  mechanical: false,
+};
+
+/** `area-progress` events for `apps-web`, in arrival order: the overview lands, then the one step,
+ * then `done`. A test drives these through a fake EventSource one at a time. */
+export const fixtureAreaProgressSteps: AreaProgressEvent[] = [
+  { areaId: 'apps-web', overview: null, steps: [], done: false },
+  { areaId: 'apps-web', overview: 'A search box is added to the header, backed by the existing search index.', steps: [], done: false },
+  { areaId: 'apps-web', overview: 'A search box is added to the header, backed by the existing search index.', steps: [streamStep1], done: false },
+  { areaId: 'apps-web', overview: 'A search box is added to the header, backed by the existing search index.', steps: [streamStep1], done: true },
+];
+
+/** The authoritative result `fetchArea` returns once the stream's `done` event lands: same steps
+ * here (a real style/coverage retry could change them), now with `check` and `status: 'ok'`. */
+export const fixtureStreamingAreaFinal: AreaDetailDto = {
+  ...fixtureStreamingArea,
+  status: 'ok',
+  l3: {
+    overview: 'A search box is added to the header, backed by the existing search index.',
+    steps: [streamStep1],
+    check: ['Typing quickly should not spam the search index with every keystroke.'],
+  },
+};
+
+/** `DigestSummaryDto` counterpart of `fixtureDigestPending`, for a digest-list page whose only
+ * entry is the in-flight Fast Explain digest. */
+export const fixtureFastDigestSummary: DigestSummaryDto = {
+  id: fixtureDigestPending.id,
+  seq: fixtureDigestPending.seq,
+  fromAt: fixtureDigestPending.fromAt,
+  toAt: fixtureDigestPending.toAt,
+  stats: fixtureDigestPending.stats,
+  status: fixtureDigestPending.status,
+  l0: null,
+  language: 'en',
+};
+
+export const fixtureFastGraph: ProjectGraphDto = (() => {
+  const paths = fastFiles.map((f) => f.path);
+  const result = buildProjectGraph({
+    paths,
+    files: fastFiles.map((f) => ({ path: f.path, status: f.status, additions: f.additions, deletions: f.deletions })),
+    areas: fixtureAreaSkeletons.map((a) => ({ id: a.id, paths: a.paths })),
+  });
+  return { digestId: fixtureDigestPending.id, ...result };
+})();

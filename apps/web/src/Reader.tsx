@@ -2,10 +2,99 @@
 // view per level. L0 is the headline, L1 the impact bullets, L2 the area cards, L3 without an
 // area an area picker (the walkthrough itself is in Walkthrough.tsx). MainV2 composes these.
 import { useRef, type KeyboardEvent, type MouseEvent } from 'react';
-import type { DigestDetailDto, DigestL2Item } from '@digestit/core';
+import type { DigestDetailDto, DigestL2Item, DigestPartsDto, PartStatus } from '@digestit/core';
 import { humanDateTime, levelsCopy, readerCopy, reviewedCopy, type Lang } from './copy.js';
 import { renderProse } from './prose.js';
 import type { ReadingLevel } from './v2Url.js';
+
+// --- Fast Explain (DIG-73/76): one row per area, merging the deterministic skeleton (always
+// present, so the list shows instantly) with the LLM text once its part lands. An old-contract
+// digest (no `areas`) has no skeleton to merge, so every area there reads as settled ('ok'). ----
+
+export interface AreaHeading {
+  id: string;
+  paths: string[];
+  title: string | null;
+  effect: string | null;
+  how: string | null;
+  why: string | null;
+  /** Deterministic folder/module label (`DigestAreaSkeleton.label`, or the title for an
+   * old-contract digest), shown until `title` lands. */
+  label: string;
+}
+
+export interface AreaRow extends AreaHeading {
+  additions: number;
+  deletions: number;
+  status: PartStatus;
+}
+
+export function digestAreaRows(digest: DigestDetailDto): AreaRow[] {
+  if (!digest.areas) {
+    return (digest.l2?.items ?? []).map((it) => {
+      const files = digest.files.filter((f) => it.paths.includes(f.path));
+      return {
+        id: it.id,
+        paths: it.paths,
+        additions: files.reduce((s, f) => s + f.additions, 0),
+        deletions: files.reduce((s, f) => s + f.deletions, 0),
+        status: 'ok',
+        title: it.title,
+        effect: it.effect,
+        how: it.how,
+        why: it.why,
+        label: it.title,
+      };
+    });
+  }
+  const byId = new Map((digest.l2?.items ?? []).map((it) => [it.id, it]));
+  return digest.areas.map((skel) => {
+    const item = byId.get(skel.id) ?? null;
+    const status: PartStatus = digest.parts?.areas[skel.id] ?? (item ? 'ok' : 'pending');
+    return {
+      id: skel.id,
+      paths: skel.paths,
+      additions: skel.additions,
+      deletions: skel.deletions,
+      status,
+      title: item?.title ?? null,
+      effect: item?.effect ?? null,
+      how: item?.how ?? null,
+      why: item?.why ?? null,
+      label: skel.label,
+    };
+  });
+}
+
+export const partFailed = (status: PartStatus): boolean => status === 'error' || status === 'truncated' || status === 'budget';
+export const partPending = (status: PartStatus): boolean => status === 'pending' || status === 'running';
+
+/** Whether every part of an in-flight Explain has settled: nothing left to stream, so the SSE
+ * connection for this digest can close (or need never open). */
+export function partsSettled(parts: DigestPartsDto): boolean {
+  return !partPending(parts.summary) && !partPending(parts.context) && Object.values(parts.areas).every((s) => !partPending(s));
+}
+
+/** A failed/`budget` part's own short message and retry (DIG-76 scope 4): the retry always POSTs
+ * the whole digest's `/explain`, which re-runs only the parts still `error`/`truncated`/`budget`,
+ * so every failed part on a digest shares one handler. */
+function PartRetry({ status, onRetry, retrying, retryDisabled, lang = 'en' }: {
+  status: PartStatus;
+  onRetry: () => void;
+  retrying: boolean;
+  retryDisabled: boolean;
+  lang?: Lang;
+}) {
+  const T = readerCopy(lang);
+  return (
+    <span className="part-failed" role="alert">
+      {status === 'budget' ? T.partBudget : T.partFailed}{' '}
+      <button type="button" className="btn retry" onClick={onRetry} disabled={retrying || retryDisabled}>
+        {retryDisabled ? T.retryNoBudget : retrying ? T.retrying : T.retry}
+      </button>
+    </span>
+  );
+}
 
 export const LEVEL_TAB_ID = (l: ReadingLevel) => `level-tab-${l}`;
 export const READING_PANE_ID = 'reading-pane';
@@ -82,7 +171,7 @@ export interface BreadcrumbProps {
   digest: Pick<DigestDetailDto, 'toAt'>;
   level: ReadingLevel;
   /** The open area (shown only at L3). */
-  area: DigestL2Item | null;
+  area: AreaHeading | null;
   onDigest: () => void;
   onArea: () => void;
   onLevel: () => void;
@@ -98,7 +187,7 @@ export function Breadcrumb({ digest, level, area, onDigest, onArea, onLevel, lan
     <nav className="breadcrumb" aria-label={T.breadcrumbLabel}>
       <ol>
         <li><button type="button" className="crumb" onClick={onDigest}>{T.digestCrumb(humanDateTime(digest.toAt, Date.now(), lang))}</button></li>
-        {showArea && <li><button type="button" className="crumb" onClick={onArea}>{renderProse(area.title)}</button></li>}
+        {showArea && <li><button type="button" className="crumb" onClick={onArea}>{renderProse(area.title ?? area.label)}</button></li>}
         <li>
           <button type="button" className="crumb current" aria-current="location" onClick={onLevel}>
             {lv.key} {lv.label}
@@ -149,7 +238,15 @@ function NextLevel({ level, onLevel, lang = 'en' }: { level: 0 | 1 | 2; onLevel:
 
 // --- L0 / L1 -------------------------------------------------------------------------------------
 
-export interface SummaryViewProps {
+export interface PartRetryProps {
+  /** Retries every outstanding (`error`/`truncated`/`budget`) part of the digest: one endpoint
+   * for all of them (docs/explain-speed.md §5), so every failed part shares this one handler. */
+  onRetryPart?: () => void;
+  retryingPart?: boolean;
+  retryDisabled?: boolean;
+}
+
+export interface SummaryViewProps extends PartRetryProps {
   digest: DigestDetailDto;
   onLevel: (l: ReadingLevel) => void;
   /** A P2 area card was picked: opens L2 with that area selected and scrolled into view. */
@@ -158,25 +255,36 @@ export interface SummaryViewProps {
   lang?: Lang;
 }
 
-export function SummaryView({ digest, onLevel, onOpenArea, onHoverArea, lang = 'en' }: SummaryViewProps) {
+export function SummaryView({
+  digest, onLevel, onOpenArea, onHoverArea, onRetryPart, retryingPart = false, retryDisabled = false, lang = 'en',
+}: SummaryViewProps) {
   const T = readerCopy(lang);
   const { files, additions, deletions } = digest.stats;
+  const summaryStatus = digest.parts?.summary ?? 'ok';
   return (
     <section className="level-view level-0">
-      <h2 className="l0-headline">{digest.l0 ? renderProse(digest.l0.text) : T.noHeadline}</h2>
+      <h2 className="l0-headline">
+        {digest.l0 ? renderProse(digest.l0.text)
+          : partPending(summaryStatus) ? <span className="muted placeholder">{T.summaryWriting}</span>
+            : partFailed(summaryStatus) && onRetryPart ? <PartRetry status={summaryStatus} onRetry={onRetryPart} retrying={retryingPart} retryDisabled={retryDisabled} lang={lang} />
+              : T.noHeadline}
+      </h2>
       <p className="l0-stats">
         {T.fileCount(files)} · <Delta additions={additions} deletions={deletions} />
         <span className="muted"> · {T.period(humanDateTime(digest.fromAt, Date.now(), lang), humanDateTime(digest.toAt, Date.now(), lang))}</span>
       </p>
+      {digest.parts?.context === 'running' && <p className="notice muted context-building" role="status">{T.contextBuilding}</p>}
       <NextLevel level={0} onLevel={onLevel} lang={lang} />
       <AreasGlance digest={digest} onOpenArea={onOpenArea} onHoverArea={onHoverArea} lang={lang} />
     </section>
   );
 }
 
-/** "Areas in this digest" (DIG-61 P2): a compact map of `digest.l2.items` under L0's headline.
+/** "Areas in this digest" (DIG-61 P2): a compact map of the digest's areas under L0's headline.
  * Cards are real buttons (same focus/hover handling as AreaPicker below) and land on L2 with the
- * area pre-selected, not straight on L3 — L0→L3 would skip the structural framing L3 assumes. */
+ * area pre-selected, not straight on L3 — L0→L3 would skip the structural framing L3 assumes.
+ * Shows instantly from the deterministic area skeleton (DIG-76): the title is a placeholder
+ * (the folder/module label) until that area's L2 text lands. */
 function AreasGlance({ digest, onOpenArea, onHoverArea, lang = 'en' }: {
   digest: DigestDetailDto;
   onOpenArea: (id: string) => void;
@@ -184,44 +292,50 @@ function AreasGlance({ digest, onOpenArea, onHoverArea, lang = 'en' }: {
   lang?: Lang;
 }) {
   const T = readerCopy(lang);
-  const items = digest.l2?.items ?? [];
-  if (items.length === 0) return null;
+  const rows = digestAreaRows(digest);
+  if (rows.length === 0) return null;
   return (
     <section className="areas-glance">
       <h3 className="areas-glance-label">{T.areasGlanceHeading}</h3>
       <ul className="area-glance-grid">
-        {items.map((it) => {
-          const s = areaStats(it, digest);
-          return (
-            <li key={it.id}>
-              <button
-                type="button"
-                className="area-glance-card"
-                onClick={() => onOpenArea(it.id)}
-                onMouseEnter={() => onHoverArea(it.id)}
-                onMouseLeave={() => onHoverArea(null)}
-                onFocus={() => onHoverArea(it.id)}
-                onBlur={() => onHoverArea(null)}
-              >
-                <p className="area-glance-title">{renderProse(it.title)}</p>
-                <p className="area-glance-meta"><span>{T.fileCount(s.files)}</span> <Delta additions={s.additions} deletions={s.deletions} /></p>
-                <span className="area-glance-open" aria-hidden="true">{T.openAreaCard} →</span>
-              </button>
-            </li>
-          );
-        })}
+        {rows.map((row) => (
+          <li key={row.id}>
+            <button
+              type="button"
+              className="area-glance-card"
+              onClick={() => onOpenArea(row.id)}
+              onMouseEnter={() => onHoverArea(row.id)}
+              onMouseLeave={() => onHoverArea(null)}
+              onFocus={() => onHoverArea(row.id)}
+              onBlur={() => onHoverArea(null)}
+            >
+              <p className="area-glance-title">{renderProse(row.title ?? row.label)}</p>
+              <p className="area-glance-meta"><span>{T.fileCount(row.paths.length)}</span> <Delta additions={row.additions} deletions={row.deletions} /></p>
+              <span className="area-glance-open" aria-hidden="true">{T.openAreaCard} →</span>
+            </button>
+          </li>
+        ))}
       </ul>
     </section>
   );
 }
 
-export function ImpactView({ digest, onLevel, lang = 'en' }: { digest: DigestDetailDto; onLevel: (l: ReadingLevel) => void; lang?: Lang }) {
+export interface ImpactViewProps extends PartRetryProps {
+  digest: DigestDetailDto;
+  onLevel: (l: ReadingLevel) => void;
+  lang?: Lang;
+}
+
+export function ImpactView({ digest, onLevel, onRetryPart, retryingPart = false, retryDisabled = false, lang = 'en' }: ImpactViewProps) {
   const T = readerCopy(lang);
   const l1 = digest.l1;
+  const summaryStatus = digest.parts?.summary ?? 'ok';
   return (
     <section className="level-view level-1">
       {!l1 ? (
-        <p className="muted">{T.noImpact}</p>
+        partPending(summaryStatus) ? <p className="muted placeholder">{T.impactWriting}</p>
+          : partFailed(summaryStatus) && onRetryPart ? <p><PartRetry status={summaryStatus} onRetry={onRetryPart} retrying={retryingPart} retryDisabled={retryDisabled} lang={lang} /></p>
+            : <p className="muted">{T.noImpact}</p>
       ) : (
         <>
           {!l1.userVisible && <p className="muted l1-internal">{T.internalOnly}</p>}
@@ -249,7 +363,7 @@ function cardClick(open: () => void) {
   };
 }
 
-export interface StructureViewProps {
+export interface StructureViewProps extends PartRetryProps {
   digest: DigestDetailDto;
   filter: L2Filter | null;
   selectedAreaId: string | null;
@@ -263,54 +377,64 @@ export interface StructureViewProps {
 }
 
 export function StructureView({
-  digest, filter, selectedAreaId, onOpenArea, onClearFilter, onHoverArea, onLevel, reviewedAreaIds, lang = 'en',
+  digest, filter, selectedAreaId, onOpenArea, onClearFilter, onHoverArea, onLevel, reviewedAreaIds,
+  onRetryPart, retryingPart = false, retryDisabled = false, lang = 'en',
 }: StructureViewProps) {
   const T = readerCopy(lang);
-  const items = digest.l2?.items ?? [];
-  const visible = filter ? items.filter((it) => filter.areaIds.has(it.id)) : items;
+  const rows = digestAreaRows(digest);
+  const visible = filter ? rows.filter((row) => filter.areaIds.has(row.id)) : rows;
   const notAnalysed = digest.l2?.notAnalysed ?? [];
   return (
     <section className="level-view level-2">
       {filter && (
         <div className="filter-header" role="status">
-          <span>{visible.length > 0 ? <>{T.filteredTo(visible.length, items.length)} <code>{filter.path}</code></> : <>{T.noAreaForNode} <code>{filter.path}</code></>}</span>
+          <span>{visible.length > 0 ? <>{T.filteredTo(visible.length, rows.length)} <code>{filter.path}</code></> : <>{T.noAreaForNode} <code>{filter.path}</code></>}</span>
           <button type="button" className="btn clear-filter" onClick={onClearFilter}>{T.clearFilter}</button>
         </div>
       )}
-      {items.length === 0 && <p className="muted">{T.noAreas}</p>}
+      {rows.length === 0 && <p className="muted">{T.noAreas}</p>}
       <ul className="area-cards">
-        {visible.map((it) => {
-          const s = areaStats(it, digest);
-          return (
-            <li
-              key={it.id}
-              data-area-id={it.id}
-              className={it.id === selectedAreaId ? 'area-card selected' : 'area-card'}
-              onClick={cardClick(() => onOpenArea(it.id))}
-              onMouseEnter={() => onHoverArea(it.id)}
-              onMouseLeave={() => onHoverArea(null)}
-            >
-              <h3 className="area-card-title">
-                <button type="button" onClick={() => onOpenArea(it.id)} onFocus={() => onHoverArea(it.id)} onBlur={() => onHoverArea(null)}>
-                  {renderProse(it.title)}
-                </button>
-                {reviewedAreaIds?.has(it.id) && <ReviewedIndicator lang={lang} />}
-              </h3>
-              <p className="area-card-effect">{renderProse(it.effect)}</p>
-              <p><span className="area-card-label">{T.areaHow}</span> {renderProse(it.how)}</p>
-              <p><span className="area-card-label">{T.areaWhy}</span> {renderProse(it.why)}</p>
-              <div className="area-card-foot">
-                <span className="area-card-files">
-                  {it.paths.slice(0, 4).map((p) => <code key={p}>{p}</code>)}
-                  {it.paths.length > 4 && <span className="muted">+{it.paths.length - 4}</span>}
-                </span>
-                <span className="muted">{T.fileCount(s.files)}</span>
-                <Delta additions={s.additions} deletions={s.deletions} />
-                <span className="area-card-open" aria-hidden="true">{T.openArea} →</span>
-              </div>
-            </li>
-          );
-        })}
+        {visible.map((row) => (
+          <li
+            key={row.id}
+            data-area-id={row.id}
+            className={row.id === selectedAreaId ? 'area-card selected' : 'area-card'}
+            onClick={cardClick(() => onOpenArea(row.id))}
+            onMouseEnter={() => onHoverArea(row.id)}
+            onMouseLeave={() => onHoverArea(null)}
+          >
+            <h3 className="area-card-title">
+              <button type="button" onClick={() => onOpenArea(row.id)} onFocus={() => onHoverArea(row.id)} onBlur={() => onHoverArea(null)}>
+                {renderProse(row.title ?? row.label)}
+              </button>
+              {reviewedAreaIds?.has(row.id) && <ReviewedIndicator lang={lang} />}
+            </h3>
+            {row.effect !== null ? (
+              <p className="area-card-effect">{renderProse(row.effect)}</p>
+            ) : partPending(row.status) ? (
+              <p className="area-card-effect muted placeholder">{T.areaWriting}</p>
+            ) : partFailed(row.status) && onRetryPart ? (
+              <p className="area-card-effect">
+                <PartRetry status={row.status} onRetry={onRetryPart} retrying={retryingPart} retryDisabled={retryDisabled} lang={lang} />
+              </p>
+            ) : null}
+            {row.how !== null && row.why !== null && (
+              <>
+                <p><span className="area-card-label">{T.areaHow}</span> {renderProse(row.how)}</p>
+                <p><span className="area-card-label">{T.areaWhy}</span> {renderProse(row.why)}</p>
+              </>
+            )}
+            <div className="area-card-foot">
+              <span className="area-card-files">
+                {row.paths.slice(0, 4).map((p) => <code key={p}>{p}</code>)}
+                {row.paths.length > 4 && <span className="muted">+{row.paths.length - 4}</span>}
+              </span>
+              <span className="muted">{T.fileCount(row.paths.length)}</span>
+              <Delta additions={row.additions} deletions={row.deletions} />
+              <span className="area-card-open" aria-hidden="true">{T.openArea} →</span>
+            </div>
+          </li>
+        ))}
       </ul>
       {notAnalysed.length > 0 && (
         <p className="muted not-analysed-line">
@@ -333,34 +457,33 @@ export function AreaPicker({ digest, onOpenArea, onHoverArea, reviewedAreaIds, l
   lang?: Lang;
 }) {
   const T = readerCopy(lang);
-  const items = digest.l2?.items ?? [];
+  const rows = digestAreaRows(digest);
   return (
     <section className="level-view level-3-picker">
-      <h2 className="picker-head">{items.length > 0 ? T.pickArea : T.noAreas}</h2>
+      <h2 className="picker-head">{rows.length > 0 ? T.pickArea : T.noAreas}</h2>
       <ul className="area-picker">
-        {items.map((it) => {
-          const s = areaStats(it, digest);
-          return (
-            <li key={it.id}>
-              <button
-                type="button"
-                className="area-pick"
-                onClick={() => onOpenArea(it.id)}
-                onMouseEnter={() => onHoverArea(it.id)}
-                onMouseLeave={() => onHoverArea(null)}
-                onFocus={() => onHoverArea(it.id)}
-                onBlur={() => onHoverArea(null)}
-              >
-                <span className="area-pick-title">{renderProse(it.title)}</span>
-                {reviewedAreaIds?.has(it.id) && <ReviewedIndicator lang={lang} />}
-                <span className="area-pick-effect">{renderProse(it.effect)}</span>
-                <span className="area-pick-meta">
-                  <span>{T.fileCount(s.files)}</span> <Delta additions={s.additions} deletions={s.deletions} />
-                </span>
-              </button>
-            </li>
-          );
-        })}
+        {rows.map((row) => (
+          <li key={row.id}>
+            <button
+              type="button"
+              className="area-pick"
+              onClick={() => onOpenArea(row.id)}
+              onMouseEnter={() => onHoverArea(row.id)}
+              onMouseLeave={() => onHoverArea(null)}
+              onFocus={() => onHoverArea(row.id)}
+              onBlur={() => onHoverArea(null)}
+            >
+              <span className="area-pick-title">{renderProse(row.title ?? row.label)}</span>
+              {reviewedAreaIds?.has(row.id) && <ReviewedIndicator lang={lang} />}
+              <span className="area-pick-effect">
+                {row.effect !== null ? renderProse(row.effect) : partPending(row.status) ? <span className="muted placeholder">{T.areaWriting}</span> : null}
+              </span>
+              <span className="area-pick-meta">
+                <span>{T.fileCount(row.paths.length)}</span> <Delta additions={row.additions} deletions={row.deletions} />
+              </span>
+            </button>
+          </li>
+        ))}
       </ul>
     </section>
   );

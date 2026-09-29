@@ -141,7 +141,7 @@ describe('ProjectHeader: Explain button states', () => {
       expect(btn.disabled).toBe(true);
       expect(btn.className).not.toContain('primary');
       const badge = host.querySelector('.calls-left')!;
-      expect(badge.textContent).toBe('No calls left today · resets 00:00');
+      expect(badge.textContent).toBe('No Explains left today · resets 00:00');
       expect(badge.className).toContain('spent');
     } finally {
       vi.useRealTimers();
@@ -161,7 +161,7 @@ describe('ProjectHeader: Explain button states', () => {
 
   it('shows the calls-left badge', async () => {
     await render(<ProjectHeader {...baseProps()} />);
-    expect(host.querySelector('.calls-left')?.textContent).toBe('23 calls left today');
+    expect(host.querySelector('.calls-left')?.textContent).toBe('23 Explains left today');
   });
 });
 
