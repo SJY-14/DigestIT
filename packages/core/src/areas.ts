@@ -19,6 +19,8 @@ export interface GroupDigestAreasOptions {
 }
 
 const DEFAULT_MAX_AREAS = 8;
+/** `DigestAreaSkeleton.id` is at most this long (core/v2.ts), collision suffix included. */
+const MAX_ID_LENGTH = 40;
 const ROOT_KEY = '.';
 const ROOT_LABEL = 'project root';
 
@@ -76,8 +78,8 @@ function parentOf(key: string): string {
   return slash === -1 ? ROOT_KEY : key.slice(0, slash);
 }
 
-function slugify(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+function slugify(s: string, max = MAX_ID_LENGTH): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, max).replace(/^-+|-+$/g, '');
 }
 
 interface Group {
@@ -136,10 +138,9 @@ export function groupDigestAreas(files: readonly GroupableFile[], opts: GroupDig
   return ordered.map((g) => {
     const label = g.key === ROOT_KEY ? ROOT_LABEL : g.key;
     let id = slugify(label) || 'area';
-    if (seenIds.has(id)) {
-      let n = 2;
-      while (seenIds.has(`${id}-${n}`)) n++;
-      id = `${id}-${n}`;
+    for (let n = 2; seenIds.has(id); n++) {
+      const suffix = `-${n}`;
+      id = `${slugify(label, MAX_ID_LENGTH - suffix.length) || 'area'}${suffix}`;
     }
     seenIds.add(id);
     return { id, label, paths: [...g.paths].sort(), additions: g.additions, deletions: g.deletions };

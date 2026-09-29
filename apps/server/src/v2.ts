@@ -492,8 +492,13 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       const validDirs = dirsOf([...paths, ...files.map((f) => f.path)]);
       if (expand.some((e) => !validDirs.has(e))) return reply.code(400).send({ error: 'bad_expand' });
 
-      const l2 = loadDigestL2(id!);
-      const areas = l2?.items.map((it) => ({ id: it.id, paths: it.paths }));
+      // The deterministic `digest.areas` (DIG-75) are final when the digest is created, so a graph
+      // cached while its LLM parts still run stays right; older digests only have the level-2 row.
+      const stored = db.prepare('SELECT areas FROM digest WHERE change_unit_id = ?').get(id) as { areas: string | null };
+      const skeleton = stored.areas ? parseJson<DigestAreaSkeleton[] | null>(stored.areas, null) : null;
+      const areas = skeleton
+        ? skeleton.map((a) => ({ id: a.id, paths: a.paths }))
+        : loadDigestL2(id!)?.items.map((it) => ({ id: it.id, paths: it.paths }));
       const result = buildProjectGraph({ paths, files, areas, expand });
       const dto: ProjectGraphDto = { digestId: id!, ...result };
       graphCache.set(cacheKey, dto);

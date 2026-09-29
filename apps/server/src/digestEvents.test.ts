@@ -223,6 +223,17 @@ describe('GET /api/digests/:id/events (SSE, DIG-75)', () => {
     expect(text).toContain('event: done');
   });
 
+  it('the digest graph shows the deterministic areas while the LLM parts are still pending', async () => {
+    const p = new GatedProvider();
+    const { base } = await setupApp(p);
+    const { digestId } = await startExplain(base);
+    const graph = await (await fetch(`${base}/api/digests/${digestId}/graph`)).json();
+    const node = (id: string) => graph.nodes.find((n: { id: string }) => n.id === id);
+    expect(node('f:server/api.ts').areaIds).toEqual(['server']);
+    expect(node('f:web/view.ts').areaIds).toEqual(['web']);
+    p.openAll();
+  });
+
   it('404s an unknown digest', async () => {
     const p = new GatedProvider();
     p.openAll();

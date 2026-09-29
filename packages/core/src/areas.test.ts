@@ -96,9 +96,19 @@ describe('groupDigestAreas', () => {
     expect(ids).toContain('docs-a-2');
   });
 
-  it('stable kebab-case ids, at most 40 chars is not enforced here but ids are always [a-z0-9-]', () => {
+  it('stable kebab-case ids, [a-z0-9-]', () => {
     const areas = groupDigestAreas([f('Some Weird_Dir/File.ts')]);
     expect(areas[0]!.id).toMatch(/^[a-z0-9-]+$/);
+  });
+
+  it('caps ids at 40 chars, collision suffix included', () => {
+    const deep = 'very-long-directory-name/another-long-segment/and-one-more';
+    const areas = groupDigestAreas([f(`${deep}/x/a.ts`), f(`${deep}/y/b.ts`)]);
+    const ids = areas.map((a) => a.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    for (const id of ids) expect(id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    for (const id of ids) expect(id.length).toBeLessThanOrEqual(40);
   });
 
   it('sums additions/deletions per area', () => {
