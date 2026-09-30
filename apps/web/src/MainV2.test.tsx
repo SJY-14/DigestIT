@@ -176,6 +176,22 @@ describe('MainV2: first-run trust box (UX cycle 2 P2/P3, decision-2.md)', () => 
     expect(text).toContain('Nothing is sent anywhere until you run Explain');
   });
 
+  it('renders the first-run screen in Korean when the browser prefers Korean', async () => {
+    projectsResponse = [];
+    const langSpy = vi.spyOn(navigator, 'language', 'get').mockReturnValue('ko-KR');
+    try {
+      await render(<MainV2 />);
+      await waitFor(() => host.querySelector('.fr-trust')?.textContent?.includes('Anthropic') ?? false);
+      expect(host.querySelector('.fr-form .box-head')?.textContent).toBe('프로젝트 등록');
+      const text = host.querySelector('.fr-trust')?.textContent ?? '';
+      expect(text).toContain('Explain이 보내는 것');
+      expect(text).toContain('Claude Code CLI를 통해 Anthropic으로 전송됩니다');
+      expect(text).toContain('DigestIT는 프로젝트 폴더나 git 기록에 쓰지 않습니다');
+    } finally {
+      langSpy.mockRestore();
+    }
+  });
+
   it('says nothing leaves the machine for the stub provider', async () => {
     projectsResponse = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {

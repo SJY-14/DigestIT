@@ -152,7 +152,7 @@ function InfoPopover({
         {status && (
           <div className="settings-row">
             <span>{T.budgetRowLabel}</span>
-            <span className="mono">{callsLeftLabel(status.budget.remaining, status.budget.resetsAt, Date.now(), lang)}</span>
+            <span>{callsLeftLabel(status.budget.remaining, status.budget.resetsAt, Date.now(), lang)}</span>
           </div>
         )}
         {about && (

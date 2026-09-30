@@ -427,28 +427,32 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .field input { font: inherit; padding: 6px 8px; border: 1px solid var(--control-border); border-radius: 3px; background: var(--bg); color: var(--fg); }
 .field input:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
 
-/* First run (UX cycle 2 P2/P3, decision-2.md): two columns that fill the width and roughly match
-   each other's height, replacing a single 480px card block-centered in the full `.with-panel`
-   width with ~465px of dead space below it (brief-2.md P3's pixel check). Left: the step list plus
-   what-Explain-sends trust box; right: the unchanged form fields in a card stretched to match. */
-.firstrun { display: flex; gap: var(--space-4); padding: var(--space-4) 0; align-items: flex-start; flex-wrap: wrap; }
-.fr-explain { flex: 1 1 360px; max-width: 46ch; }
-.fr-heading { font-family: var(--serif); font-size: 24px; font-weight: 600; line-height: 1.35; margin: 0 0 var(--space-2); }
-.fr-steps { list-style: none; margin: 0 0 var(--space-3); padding: 0; counter-reset: fr; font-family: var(--serif); font-size: var(--text-body); line-height: 1.5; }
-.fr-steps li { counter-increment: fr; position: relative; padding: 0 0 var(--space-2) 34px; }
-.fr-steps li::before {
-  content: counter(fr); position: absolute; left: 0; top: -1px; width: 22px; height: 22px; border-radius: 50%;
-  background: var(--bg-inset); border: 1px solid var(--control-border); color: var(--muted);
-  font: 600 12px/20px var(--sans); text-align: center;
+/* First run (UX cycle 2 P2/P3, decision-2.md): two columns, centred in the viewport as one
+   composition, replacing a single 480px card block-centered in the full `.with-panel` width with
+   ~465px of dead space below it (brief-2.md P3's pixel check). Left: the step list plus the
+   what-Explain-sends trust box; right: the form in a card stretched to the left column's height. */
+.firstrun {
+  display: flex; gap: var(--space-5); align-items: flex-start; flex-wrap: wrap; justify-content: center;
+  width: 100%; max-width: 1000px; margin: auto; padding: var(--space-3) 0 var(--space-4);
 }
-.fr-steps li:not(:last-child)::after { content: ''; position: absolute; left: 10px; top: 22px; width: 1px; height: calc(100% - 14px); background: var(--border); }
-.fr-trust { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px; padding: var(--space-2); font-size: var(--text-ui); }
+.fr-explain { flex: 1 1 360px; max-width: 48ch; }
+.fr-heading { font-family: var(--serif); font-size: 28px; font-weight: 600; line-height: 1.3; margin: 0 0 var(--space-3); }
+.fr-steps { list-style: none; margin: 0 0 var(--space-3); padding: 0; counter-reset: fr; font-family: var(--serif); font-size: 17px; line-height: 1.5; }
+.fr-steps li { counter-increment: fr; position: relative; padding: 0 0 var(--space-2) 38px; }
+.fr-steps li::before {
+  content: counter(fr); position: absolute; left: 0; top: 1px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--bg-inset); border: 1px solid var(--control-border); color: var(--muted);
+  font: 600 12px/22px var(--sans); text-align: center;
+}
+.fr-steps li:not(:last-child)::after { content: ''; position: absolute; left: 12px; top: 26px; width: 1px; height: calc(100% - 26px); background: var(--border); }
+.fr-trust { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px; padding: var(--space-2) 20px; font-size: 14px; line-height: 1.55; }
 .fr-trust-label { display: block; font-size: var(--text-meta); color: var(--muted); margin-bottom: var(--space-1); font-weight: 600; }
-.fr-trust p { margin: 0 0 8px; }
+.fr-trust p { margin: 0 0 10px; }
 .fr-trust p:last-child { margin-bottom: 0; }
-.fr-form { flex: 1 1 320px; max-width: 420px; align-self: stretch; display: flex; flex-direction: column; border-top: 0; }
-.fr-form > .box-head { font-size: var(--text-ui); font-weight: 600; padding: 0 0 var(--space-2); border-bottom: 1px solid var(--border); }
-.fr-form .setup-form { flex: 1; justify-content: space-between; }
+.fr-form { flex: 1 1 320px; max-width: 420px; align-self: stretch; display: flex; flex-direction: column; border: 1px solid var(--control-border); border-radius: 4px; background: var(--bg); }
+.fr-form > .box-head { font-size: var(--text-ui); font-weight: 600; padding: 12px var(--space-2); background: var(--bg-inset); border-bottom: 1px solid var(--border); border-radius: 4px 4px 0 0; }
+.fr-form .setup-form { flex: 1; gap: 14px; padding: var(--space-2); }
+.fr-form .setup-form > .btn.primary { margin-top: auto; }
 
 /* Settings panel additions (UX cycle 2 P5, decision-2.md): budget/provider/model rows and the
    read-only line, above the existing context/language/ignore controls. */
@@ -471,7 +475,7 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .calls-left.spent { color: var(--del); }
 
 .info-popover { position: relative; }
-.info-popover > summary { list-style: none; cursor: pointer; font-size: 16px; line-height: 1; padding: 4px 8px; border-radius: 3px; color: var(--muted); }
+.info-popover > summary { list-style: none; cursor: pointer; font-size: var(--text-ui); line-height: 1.4; padding: 3px 8px; border-radius: 3px; color: var(--muted); }
 .info-popover > summary::-webkit-details-marker { display: none; }
 .info-popover > summary:hover, .info-popover[open] > summary { background: var(--hover); color: var(--fg); }
 .info-popover > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
