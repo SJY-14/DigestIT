@@ -62,6 +62,8 @@ const post = (app: App, url: string, body: unknown = {}, headers: Record<string,
   app.inject({ method: 'POST', url, headers, payload: JSON.stringify(body) });
 const patch = (app: App, url: string, body: unknown = {}, headers: Record<string, string> = auth) =>
   app.inject({ method: 'PATCH', url, headers, payload: JSON.stringify(body) });
+const del = (app: App, url: string, headers: Record<string, string> = auth) =>
+  app.inject({ method: 'DELETE', url, headers, payload: '{}' });
 
 /** `inner` with some methods replaced; the rest (a class's prototype methods too) still reach it. */
 const spy = (inner: ExplanationProvider, overrides: Partial<ExplanationProvider>): ExplanationProvider =>
@@ -93,6 +95,106 @@ async function waitForAreaSettled(app: App, digestId: number, areaId: string, ti
   }
 }
 
+describe('GET /api/about', () => {
+  it('reports the stub provider, no model, and hasLegacyData: false by default', async () => {
+    const { db } = await setup();
+    const app = makeApp(db);
+    const res = await get(app, '/api/about');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ provider: 'stub', model: null, readOnly: true, hasLegacyData: false });
+  });
+
+  it('reports hasLegacyData: true once any unit_event row exists', async () => {
+    const { db, repoId } = await setup();
+    db.prepare("INSERT INTO unit_event (repo_id, kind, at) VALUES (?, 'landed', ?)").run(repoId, NOW().toISOString());
+    const app = makeApp(db);
+    expect((await get(app, '/api/about')).json().hasLegacyData).toBe(true);
+  });
+
+  it('names the configured provider and model from the same env vars providerFactory uses', async () => {
+    const { db } = await setup();
+    const app = makeApp(db);
+    const prevProvider = process.env.DIGESTIT_PROVIDER;
+    const prevModel = process.env.DIGESTIT_CLAUDE_MODEL;
+    process.env.DIGESTIT_PROVIDER = 'claude-code';
+    process.env.DIGESTIT_CLAUDE_MODEL = 'claude-example-model';
+    try {
+      expect((await get(app, '/api/about')).json()).toMatchObject({ provider: 'claude-code', model: 'claude-example-model' });
+    } finally {
+      if (prevProvider === undefined) delete process.env.DIGESTIT_PROVIDER; else process.env.DIGESTIT_PROVIDER = prevProvider;
+      if (prevModel === undefined) delete process.env.DIGESTIT_CLAUDE_MODEL; else process.env.DIGESTIT_CLAUDE_MODEL = prevModel;
+    }
+  });
+
+  it('never includes paths, env values or tokens', async () => {
+    const { db } = await setup();
+    const app = makeApp(db);
+    const res = await get(app, '/api/about');
+    expect(Object.keys(res.json()).sort()).toEqual(['hasLegacyData', 'model', 'provider', 'readOnly']);
+    expect(JSON.stringify(res.json())).not.toContain(root);
+    expect(JSON.stringify(res.json())).not.toContain(WRITE_TOKEN);
+  });
+});
+
+describe('DELETE /api/projects/:id (soft remove)', () => {
+  it('404s an unknown project', async () => {
+    const { db } = await setup();
+    const app = makeApp(db);
+    expect((await del(app, '/api/projects/999')).statusCode).toBe(404);
+  });
+
+  it('401s without the write token, like the other v2 writes', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    expect((await del(app, `/api/projects/${repoId}`, good)).statusCode).toBe(401);
+  });
+
+  it('removes it: 204, then 404 on the project route, then left out of the list', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    expect((await del(app, `/api/projects/${repoId}`)).statusCode).toBe(204);
+    expect((await get(app, `/api/projects/${repoId}/status`)).statusCode).toBe(404);
+    expect((await get(app, '/api/projects')).json()).toEqual([]);
+  });
+
+  it('409s while an explain is running for that project, and does not remove it', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+    const dataDir = projectDataDir(home, repoId);
+    ensureDir0700(dataDir);
+    const lockPath = join(dataDir, 'explain.lock');
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: NOW().toISOString() }));
+    try {
+      const res = await del(app, `/api/projects/${repoId}`);
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toBe('explain_running');
+      expect((await get(app, `/api/projects/${repoId}/status`)).statusCode).toBe(200);
+    } finally {
+      unlinkSync(lockPath);
+    }
+  });
+
+  it('is restored, with its digest history, by re-registering the same root through POST /api/projects', async () => {
+    const { db, repoId } = await setup();
+    write('src/b.ts', 'export const b = 2;\n');
+    const app = makeApp(db, { projectRoots: [root] });
+    const explainRes = (await post(app, `/api/projects/${repoId}/explain`)).json();
+    await waitForDigestSettled(app, explainRes.digestId);
+
+    expect((await del(app, `/api/projects/${repoId}`)).statusCode).toBe(204);
+    expect((await get(app, '/api/projects')).json()).toEqual([]);
+
+    const registerRes = await post(app, '/api/projects', { rootPath: proj });
+    expect(registerRes.statusCode).toBe(201);
+    expect(registerRes.json().id).toBe(repoId);
+
+    const listed = (await get(app, '/api/projects')).json();
+    expect(listed).toHaveLength(1);
+    expect(listed[0].digestCount).toBe(1);
+    expect(listed[0].latestDigest.id).toBe(explainRes.digestId);
+  });
+});
+
 describe('GET /api/projects', () => {
   it('lists a registered project with a "none" context and zero digests', async () => {
     const { db, repoId } = await setup();
@@ -105,6 +207,7 @@ describe('GET /api/projects', () => {
       context: { status: 'none', builtAt: null, fromFiles: null, hasUserContext: false },
       lastCheckpointAt: NOW().toISOString(),
       digestCount: 0,
+      latestDigest: null,
     }]);
   });
 
@@ -112,6 +215,57 @@ describe('GET /api/projects', () => {
     const { db } = await setup();
     const app = makeApp(db);
     expect((await get(app, '/api/projects/999/status')).statusCode).toBe(404);
+  });
+});
+
+describe('GET /api/projects: latestDigest', () => {
+  it('is null with no digests yet', async () => {
+    const { db } = await setup();
+    const app = makeApp(db);
+    const body = (await get(app, '/api/projects')).json();
+    expect(body[0].latestDigest).toBeNull();
+  });
+
+  it('has a null headline before Explain, gets one once L0 lands, and tracks the newest of several digests', async () => {
+    const { db, repoId } = await setup();
+    const app = makeApp(db);
+
+    write('src/b.ts', 'export const b = 2;\n');
+    const first = (await post(app, `/api/projects/${repoId}/explain`)).json();
+    const rightAfter = (await get(app, '/api/projects')).json()[0];
+    expect(rightAfter.latestDigest).toMatchObject({ id: first.digestId, seq: 1 });
+    expect(rightAfter.latestDigest.headline).toBeNull(); // Fast Explain: L0 hasn't landed yet
+
+    await waitForDigestSettled(app, first.digestId);
+    const afterFirst = (await get(app, '/api/projects')).json()[0];
+    expect(typeof afterFirst.latestDigest.headline).toBe('string');
+    expect(afterFirst.latestDigest.headline.length).toBeGreaterThan(0);
+
+    write('src/c.ts', 'export const c = 3;\n');
+    const second = (await post(app, `/api/projects/${repoId}/explain`)).json();
+    await waitForDigestSettled(app, second.digestId);
+    const afterSecond = (await get(app, '/api/projects')).json()[0];
+    expect(afterSecond.latestDigest).toMatchObject({ id: second.digestId, seq: 2 });
+  });
+
+  it('is filled for every project in one query, not one per project', async () => {
+    const { db, repoId } = await setup();
+    const other = join(root, 'other-project');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'x.txt'), 'x\n');
+    await initProject(db, home, other, {}, NOW);
+    const app = makeApp(db);
+
+    write('src/b.ts', 'export const b = 2;\n');
+    const explainRes = (await post(app, `/api/projects/${repoId}/explain`)).json();
+    await waitForDigestSettled(app, explainRes.digestId);
+
+    const body = (await get(app, '/api/projects')).json();
+    expect(body).toHaveLength(2);
+    const withDigest = body.find((p: { id: number }) => p.id === repoId);
+    const withoutDigest = body.find((p: { id: number }) => p.id !== repoId);
+    expect(withDigest.latestDigest.id).toBe(explainRes.digestId);
+    expect(withoutDigest.latestDigest).toBeNull();
   });
 });
 

@@ -22,6 +22,7 @@ export const fixtureProject: ProjectDto = {
   context: fixtureContext,
   lastCheckpointAt: '2026-09-26T16:40:00Z',
   digestCount: 3,
+  latestDigest: { id: 30, seq: 3, toAt: '2026-09-26T16:40:00Z', headline: 'Fixture headline' },
 };
 
 export const fixtureStatus: ProjectStatusDto = {
@@ -41,6 +42,7 @@ export const fixtureProject2: ProjectDto = {
   context: { status: 'none', builtAt: null, fromFiles: null, hasUserContext: false },
   lastCheckpointAt: '2026-09-27T10:00:00Z',
   digestCount: 0,
+  latestDigest: null,
 };
 
 export const fixtureStatus2: ProjectStatusDto = {

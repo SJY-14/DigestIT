@@ -9,15 +9,15 @@ import type { FastifyInstance } from 'fastify';
 import {
   EXPLAIN_LANGUAGES,
   buildProjectGraph,
-  type AreaProgressEvent, type ChangeStatus, type CreateProjectResponseDto, type DigestAreaSkeleton,
+  type AboutDto, type AreaProgressEvent, type ChangeStatus, type CreateProjectResponseDto, type DigestAreaSkeleton,
   type DigestL2Content, type DigestFileDto, type DigestPartsDto, type ExplainLanguage,
-  type ExplanationStatus, type NotTrackedGroupDto, type ProjectDto, type ProjectGraphDto, type ProjectIgnoreDto,
-  type SkipReason,
+  type ExplanationStatus, type LatestDigestDto, type NotTrackedGroupDto, type ProjectDto, type ProjectGraphDto,
+  type ProjectIgnoreDto, type SkipReason,
 } from '@digestit/core';
 import {
   AreaExplainRunningError, DEFAULT_DAILY_BUDGET, ExplainJobRunner, ProjectLockedError, addIgnorePatterns,
-  budgetStatus, initProject, isValidIgnorePattern, latestCheckpoint,
-  listProjects, listTree, openShadow, projectDataDir, projectStatus,
+  budgetStatus, initProject, isExplaining, isValidIgnorePattern, latestCheckpoint,
+  listProjects, listTree, openShadow, projectDataDir, projectStatus, removeProject,
   readIgnorePatterns, refreshContext, removeIgnorePatterns, updateProjectLanguage, type ProjectRow,
 } from '@digestit/ingest';
 import {
@@ -159,11 +159,41 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     `SELECT content, status, created_at FROM explanation WHERE change_unit_id = ? AND level = ?
      ORDER BY (status = 'ok') DESC, created_at DESC, rowid DESC LIMIT 1`,
   );
+  // Excludes removed projects (DIG-87): every per-project route 404s through this once removed.
   const findProjectRow = (id: number): ProjectRow | undefined => {
-    const r = db.prepare("SELECT id, name, path, language, context_path, created_at FROM repo WHERE id = ? AND mode = 'project'")
+    const r = db.prepare("SELECT id, name, path, language, context_path, created_at FROM repo WHERE id = ? AND mode = 'project' AND removed_at IS NULL")
       .get(id) as { id: number; name: string; path: string; language: ExplainLanguage; context_path: string | null; created_at: string | null } | undefined;
     return r ? { id: r.id, name: r.name, path: r.path, language: r.language, contextPath: r.context_path, createdAt: r.created_at } : undefined;
   };
+
+  /**
+   * Every project's newest digest (id, seq, toAt, headline), in one query -- used by `GET
+   * /api/projects` so N projects cost one round trip, not N. `seq` is the from-checkpoint's seq,
+   * same convention as `DigestSummaryDto.seq`. The l0 pick mirrors `latestExplanation` above
+   * (newest ok wins over a later error/pending row); `headline` is null when there is no L0 row
+   * yet, or it explained to an empty line (the `error` outcome's placeholder content).
+   */
+  function latestDigestsByRepo(): Map<number, LatestDigestDto> {
+    const rows = db.prepare(
+      `WITH latest AS (
+         SELECT d.repo_id AS repoId, d.change_unit_id AS id, fromCp.seq AS seq, toCp.taken_at AS toAt,
+                ROW_NUMBER() OVER (PARTITION BY d.repo_id ORDER BY fromCp.seq DESC) AS rn
+         FROM digest d
+         JOIN checkpoint fromCp ON fromCp.id = d.from_checkpoint_id
+         JOIN checkpoint toCp ON toCp.id = d.to_checkpoint_id
+       )
+       SELECT l.repoId AS repoId, l.id AS id, l.seq AS seq, l.toAt AS toAt,
+         (SELECT content FROM explanation e WHERE e.change_unit_id = l.id AND e.level = 0
+          ORDER BY (e.status = 'ok') DESC, e.created_at DESC, e.rowid DESC LIMIT 1) AS l0Content
+       FROM latest l WHERE l.rn = 1`,
+    ).all() as { repoId: number; id: number; seq: number; toAt: string; l0Content: string | null }[];
+    const map = new Map<number, LatestDigestDto>();
+    for (const r of rows) {
+      const headline = r.l0Content ? parseJson<{ text: string }>(r.l0Content, { text: '' }).text || null : null;
+      map.set(r.repoId, { id: r.id, seq: r.seq, toAt: r.toAt, headline });
+    }
+    return map;
+  }
 
   function contextStatusOf(repoId: number, hasUserContext: boolean) {
     const row = db.prepare(
@@ -174,7 +204,9 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     return { status: row.status, builtAt: row.createdAt, fromFiles: row.fromFiles, hasUserContext };
   }
 
-  function projectRowToDto(row: ProjectRow): ProjectDto {
+  /** `latestDigest`: pass it when the caller already has the batch (`GET /api/projects`); left
+   * out, it costs one extra query -- fine for the single-project routes that call this. */
+  function projectRowToDto(row: ProjectRow, latestDigest?: LatestDigestDto | null): ProjectDto {
     const latest = latestCheckpoint(db, row.id);
     const digestCount = (db.prepare('SELECT count(*) AS n FROM digest WHERE repo_id = ?').get(row.id) as { n: number }).n;
     return {
@@ -185,6 +217,7 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
       context: contextStatusOf(row.id, row.contextPath !== null),
       lastCheckpointAt: latest?.takenAt ?? null,
       digestCount,
+      latestDigest: latestDigest !== undefined ? latestDigest : (latestDigestsByRepo().get(row.id) ?? null),
     };
   }
 
@@ -296,7 +329,18 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
 
   app.get('/api/budget', async () => budgetStatus(db, now(), budgetLimit));
 
-  app.get('/api/projects', async () => listProjects(db).map(projectRowToDto));
+  const hasLegacyData = db.prepare('SELECT EXISTS(SELECT 1 FROM unit_event) AS e');
+  app.get('/api/about', async () => {
+    const provider = process.env.DIGESTIT_PROVIDER ?? 'stub';
+    const model = provider === 'claude-code' ? (process.env.DIGESTIT_CLAUDE_MODEL ?? null) : null;
+    const legacy = (hasLegacyData.get() as { e: number }).e === 1;
+    return { provider, model, readOnly: true, hasLegacyData: legacy } satisfies AboutDto;
+  });
+
+  app.get('/api/projects', async () => {
+    const digests = latestDigestsByRepo();
+    return listProjects(db).map((row) => projectRowToDto(row, digests.get(row.id) ?? null));
+  });
 
   app.get<{ Params: { id: string } }>('/api/projects/:id/status', async (req, reply) => {
     const id = parseId(req.params.id);
@@ -596,6 +640,17 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     },
   );
 
+  // Soft remove (DIG-87): keeps the DB rows and shadow repo; registering the same root again
+  // (`digest init` or POST /api/projects) restores it with its full history.
+  app.delete<{ Params: { id: string } }>('/api/projects/:id', { bodyLimit: V2_BODY_LIMIT }, async (req, reply) => {
+    const id = parseId(req.params.id);
+    const row = id === null ? undefined : findProjectRow(id);
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+    if (isExplaining(home, id!)) return reply.code(409).send({ error: 'explain_running' });
+    removeProject(db, id!, now);
+    return reply.code(204).send();
+  });
+
   // Fast Explain (DIG-75): each of the next three routes returns as soon as its own no-LLM prep is
   // done and the LLM parts have started in the background -- it does not wait for them. Progress is
   // read from GET /api/digests/:id (parts/areas) or streamed from GET /api/digests/:id/events.
@@ -690,8 +745,12 @@ export const V2_WRITE_PATTERNS: readonly RegExp[] = [
 /** PATCH write routes: kept separate from `V2_WRITE_PATTERNS` (all POST) since the method also gates them. */
 export const V2_PATCH_WRITE_PATTERNS: readonly RegExp[] = [/^\/api\/projects\/\d+$/];
 
+/** DELETE write routes (DIG-87): same shape, kept separate for the same reason. */
+export const V2_DELETE_WRITE_PATTERNS: readonly RegExp[] = [/^\/api\/projects\/\d+$/];
+
 export function isV2WritePath(method: string, urlPath: string): boolean {
   if (method === 'POST') return V2_WRITE_PATTERNS.some((p) => p.test(urlPath));
   if (method === 'PATCH') return V2_PATCH_WRITE_PATTERNS.some((p) => p.test(urlPath));
+  if (method === 'DELETE') return V2_DELETE_WRITE_PATTERNS.some((p) => p.test(urlPath));
   return false;
 }
