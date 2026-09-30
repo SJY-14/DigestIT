@@ -41,10 +41,12 @@ export const LIMITS = {
 export const NO_CHANGE = 'No user-visible change';
 
 export interface CheckResult {
-  /** Sanitised copy that satisfies every limit (over-limit parts are cut). */
+  /** Sanitised copy that satisfies every limit (over-limit parts are cut at a sentence boundary). */
   levels: AllLevels;
   /** Empty when the provider output was valid as delivered. */
   violations: string[];
+  /** Fields over their target but inside the tolerance band (DIG-94): never retried. */
+  lengthNotes: string[];
 }
 
 export const wordCount = (s: string): number => (s.trim() === '' ? 0 : s.trim().split(/\s+/).length);
@@ -60,6 +62,89 @@ export const FILE_REF = /`|\b[\w-]+\.(?:tsx?|jsx?|json|md|ya?ml|py|sql|sh|css|ht
 export function truncateWords(s: string, n: number): string {
   const parts = s.trim().split(/\s+/);
   return parts.length <= n ? s.trim() : `${parts.slice(0, n).join(' ')}…`;
+}
+
+/** Truncates to `max` characters on a character boundary, with an ellipsis. */
+export function truncateChars(s: string, max: number): string {
+  const chars = [...s.trim()];
+  return chars.length <= max ? s.trim() : `${chars.slice(0, Math.max(0, max - 1)).join('').trimEnd()}…`;
+}
+
+export const charLength = (s: string): number => [...s].length;
+
+const ABBREVIATIONS = /\b(?:e\.g|i\.e|etc|vs|cf|approx|incl)\./gi;
+
+/** Sentences in `s`: ends at `.`, `!`, `?` (or `。`) followed by whitespace or the end; abbreviations and `a.b` identifiers do not end one. */
+export function sentenceCount(s: string): number {
+  const t = s.replace(ABBREVIATIONS, 'x').trim();
+  if (t === '') return 0;
+  return t.split(/(?<=[.!?。])\s+/).filter((p) => p.trim() !== '').length;
+}
+
+/** The first `max` sentences of `s` (split as in `sentenceCount`); `s` itself when it has no more. */
+export function truncateSentences(s: string, max: number): string {
+  const t = s.trim();
+  const masked = t.replace(ABBREVIATIONS, (m) => 'x'.repeat(m.length));
+  const boundary = /(?<=[.!?。])\s+/g;
+  let seen = 0;
+  for (let m = boundary.exec(masked); m; m = boundary.exec(masked)) {
+    if (++seen === max) return t.slice(0, m.index);
+  }
+  return t;
+}
+
+/**
+ * Word and character limits are targets, not cut-offs (DIG-94): the prompts state the exact limit,
+ * and the validator accepts up to `ceil(limit * LENGTH_TOLERANCE)` without a retry (a length note
+ * instead). Real output that names flags and numbers ("`--retries <n>`", "408, 429 and 5xx") runs a
+ * few words past a hard 20/30-word cap even after the retry, and cutting it left fragments.
+ */
+export const LENGTH_TOLERANCE = 1.25;
+
+/** The most words (or characters) a field may use before it is a hard violation. */
+export const tolerated = (limit: number): number => Math.ceil(limit * LENGTH_TOLERANCE);
+
+/** The longest run of whole sentences of `text` that fits `maxWords`/`maxChars`; `null` when not even the first does. */
+function wholeSentences(text: string, maxWords: number, maxChars: number): string | null {
+  const fits = (s: string): boolean => wordCount(s) <= maxWords && charLength(s) <= maxChars;
+  if (fits(text)) return text;
+  for (let keep = sentenceCount(text) - 1; keep >= 1; keep--) {
+    const head = truncateSentences(text, keep);
+    if (fits(head)) return head;
+  }
+  return null;
+}
+
+/**
+ * Fits `text` into `maxWords`/`maxChars` without cutting a sentence (DIG-94): keeps the longest run
+ * of whole sentences that fits, and falls back to a word/character cut with an ellipsis only when
+ * even the first sentence is too long.
+ */
+export function fitProse(text: string, maxWords: number, maxChars: number): string {
+  const t = text.trim();
+  return wholeSentences(t, maxWords, maxChars) ?? truncateChars(truncateWords(t, maxWords), maxChars);
+}
+
+/**
+ * Fits a bullet list into `maxWords` words in total (DIG-94): whole bullets first, then the first
+ * bullet that does not fit is cut at a sentence boundary, or dropped when no sentence fits (cut
+ * with an ellipsis only when it is the first bullet), and the rest go.
+ */
+export function fitBullets(bullets: readonly string[], maxWords: number): string[] {
+  const out: string[] = [];
+  let budget = maxWords;
+  for (const b of bullets) {
+    if (wordCount(b) <= budget) {
+      out.push(b);
+      budget -= wordCount(b);
+      continue;
+    }
+    const head = budget > 0 ? wholeSentences(b.trim(), budget, Infinity) : null;
+    if (head !== null) out.push(head);
+    else if (out.length === 0) out.push(truncateWords(b, maxWords));
+    break;
+  }
+  return out;
 }
 
 export function cleanText(s: string): string {
@@ -99,15 +184,20 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
   if (!bulletsIn || !Array.isArray(l2.items) || !Array.isArray(l3.annotations)) return null;
 
   const v: string[] = [];
+  const ln: string[] = [];
+  /** Word limit with the DIG-94 tolerance band: a note up to `tolerated(limit)`, a violation beyond. */
+  const overLimit = (label: string, n: number, limit: number): boolean => {
+    if (n > tolerated(limit)) v.push(`${label} ${n} words, limit ${limit}`);
+    else if (n > limit) ln.push(`${label} ${n} words, target ${limit}`);
+    return n > tolerated(limit);
+  };
 
-  // L0
-  let text = cleanText(l0.text);
+  // L0: never cut (DIG-94) — a headline past the tolerance band is flagged so a retry can fix it,
+  // but the delivered text stays whole rather than a fragment ending in "…".
+  const text = cleanText(l0.text);
   if (hasUnsafeMarkup(l0.text)) v.push('l0: contains HTML or a link');
   if (text === '') v.push('l0: empty');
-  if (wordCount(text) > LIMITS.l0Words) {
-    v.push(`l0: ${wordCount(text)} words, limit ${LIMITS.l0Words}`);
-    text = truncateWords(text, LIMITS.l0Words);
-  }
+  overLimit('l0:', wordCount(text), LIMITS.l0Words);
   if (/[.!?]\s+[A-Z]/.test(text)) v.push('l0: more than one sentence');
   if (FILE_REF.test(text)) v.push('l0: mentions a file name or code identifier');
 
@@ -126,15 +216,8 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
     v.push(`l1: ${bullets.length} bullets, limit ${maxBullets}`);
     bullets = bullets.slice(0, maxBullets);
   }
-  let budget: number = LIMITS.l1Words;
   const total = bullets.reduce((n, b) => n + wordCount(b), 0);
-  if (total > LIMITS.l1Words) v.push(`l1: ${total} words, limit ${LIMITS.l1Words}`);
-  bullets = bullets.flatMap((b) => {
-    if (budget <= 0) return [];
-    const cut = truncateWords(b, budget);
-    budget -= Math.min(wordCount(b), budget);
-    return [cut];
-  });
+  if (overLimit('l1:', total, LIMITS.l1Words)) bullets = fitBullets(bullets, tolerated(LIMITS.l1Words));
 
   // L2
   const items: AllLevels['l2']['items'] = [];
@@ -146,10 +229,9 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
     if ([it.path, it.role, it.change].some(hasUnsafeMarkup)) v.push(`l2: item ${i} contains HTML or a link`);
     let role = cleanText(it.role);
     let change = cleanText(it.change);
-    if (wordCount(role) + wordCount(change) > LIMITS.l2Words) {
-      v.push(`l2: item ${i} has ${wordCount(role) + wordCount(change)} words, limit ${LIMITS.l2Words}`);
-      role = truncateWords(role, 10);
-      change = truncateWords(change, LIMITS.l2Words - Math.min(wordCount(role), 10));
+    if (overLimit(`l2: item ${i} has`, wordCount(role) + wordCount(change), LIMITS.l2Words)) {
+      role = fitProse(role, 10, Infinity);
+      change = fitProse(change, tolerated(LIMITS.l2Words) - wordCount(role), Infinity);
     }
     items.push({ path: cleanText(it.path), role, change });
   });
@@ -178,10 +260,7 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
     } else {
       if (hasUnsafeMarkup(note)) v.push(`l3: annotation ${i} contains HTML or a link`);
       let n = cleanText(note);
-      if (wordCount(n) > LIMITS.l3Words) {
-        v.push(`l3: annotation ${i} has ${wordCount(n)} words, limit ${LIMITS.l3Words}`);
-        n = truncateWords(n, LIMITS.l3Words);
-      }
+      if (overLimit(`l3: annotation ${i} has`, wordCount(n), LIMITS.l3Words)) n = fitProse(n, tolerated(LIMITS.l3Words), Infinity);
       annotations.push({ path, side, startLine, endLine, note: n });
     }
   });
@@ -198,5 +277,6 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
       l3: { annotations },
     },
     violations: v,
+    lengthNotes: ln,
   };
 }

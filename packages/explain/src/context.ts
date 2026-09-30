@@ -6,7 +6,7 @@ import type { JobRef } from './jobs.js';
 import { logJobCall } from './jobs.js';
 import { LOCKFILES } from './prepare.js';
 import { redact } from './redact.js';
-import { DEFAULT_LANGUAGE, VOICE, checkProse, languageInstruction } from './style.js';
+import { DEFAULT_LANGUAGE, VOICE, checkProse, languageInstruction, softCount } from './style.js';
 import type {
   ContextInput, ContextResult, ExplanationProvider, ManifestKind, ProjectDoc, ProjectManifest, ProjectMap, ProjectMapDir,
 } from './provider.js';
@@ -317,6 +317,8 @@ export interface CheckContextResult {
   violations: string[];
   /** AI-tell hits (DIG-65): soft style signals, never truncated or rewritten on their account. */
   styleWarnings: string[];
+  /** Fields over their target but inside the tolerance band (DIG-94): never retried. */
+  lengthNotes: string[];
 }
 
 /**
@@ -331,9 +333,10 @@ export function checkContext(raw: unknown, map: ProjectMap, language: ExplainLan
   }
   const v: string[] = [];
   const sw: string[] = [];
+  const ln: string[] = [];
   const known = validPaths(map);
 
-  const purpose = checkProse(raw.purpose, 'purpose', CONTEXT_LIMITS.purposeWords, language, v, sw);
+  const purpose = checkProse(raw.purpose, 'purpose', CONTEXT_LIMITS.purposeWords, language, v, sw, { lengthNotes: ln });
   if (purpose === '') v.push('purpose: empty');
 
   const modules: ProjectContextContent['modules'] = [];
@@ -347,7 +350,7 @@ export function checkContext(raw: unknown, map: ProjectMap, language: ExplainLan
       v.push(`modules: item ${i} path "${path}" is not in the project map`);
       return;
     }
-    const role = checkProse(m.role, `modules: item ${i} role`, CONTEXT_LIMITS.moduleRoleWords, language, v, sw);
+    const role = checkProse(m.role, `modules: item ${i} role`, CONTEXT_LIMITS.moduleRoleWords, language, v, sw, { lengthNotes: ln });
     modules.push({ path, role });
   });
   if (modules.length > CONTEXT_LIMITS.modulesMax) {
@@ -361,8 +364,8 @@ export function checkContext(raw: unknown, map: ProjectMap, language: ExplainLan
       v.push(`glossary: item ${i} is malformed`);
       return;
     }
-    const term = checkProse(g.term, `glossary: item ${i} term`, CONTEXT_LIMITS.glossaryTermWords, language, v, sw);
-    const meaning = checkProse(g.meaning, `glossary: item ${i} meaning`, CONTEXT_LIMITS.glossaryMeaningWords, language, v, sw);
+    const term = checkProse(g.term, `glossary: item ${i} term`, CONTEXT_LIMITS.glossaryTermWords, language, v, sw, { lengthNotes: ln });
+    const meaning = checkProse(g.meaning, `glossary: item ${i} meaning`, CONTEXT_LIMITS.glossaryMeaningWords, language, v, sw, { lengthNotes: ln });
     if (term === '' || meaning === '') {
       v.push(`glossary: item ${i} is empty`);
       return;
@@ -380,7 +383,7 @@ export function checkContext(raw: unknown, map: ProjectMap, language: ExplainLan
       v.push(`conventions: item ${i} is not a string`);
       return;
     }
-    const text = checkProse(c, `conventions: item ${i}`, CONTEXT_LIMITS.conventionWords, language, v, sw);
+    const text = checkProse(c, `conventions: item ${i}`, CONTEXT_LIMITS.conventionWords, language, v, sw, { lengthNotes: ln });
     if (text === '') {
       v.push(`conventions: item ${i} is empty`);
       return;
@@ -392,7 +395,7 @@ export function checkContext(raw: unknown, map: ProjectMap, language: ExplainLan
     conventions.length = CONTEXT_LIMITS.conventionsMax;
   }
 
-  return { content: { purpose, modules, glossary, conventions }, violations: v, styleWarnings: sw };
+  return { content: { purpose, modules, glossary, conventions }, violations: v, styleWarnings: sw, lengthNotes: ln };
 }
 
 export interface ContextAttempt {
@@ -464,20 +467,20 @@ export async function explainContext(
         continue;
       }
       const clean = checked.violations.length === 0 && checked.styleWarnings.length === 0;
-      if (clean) return { outcome: 'ok', content: checked.content, calls, attempts, provider: used, styleWarnings: 0 };
+      if (clean) return { outcome: 'ok', content: checked.content, calls, attempts, provider: used, styleWarnings: softCount(checked) };
       if (attempt === 0) {
         best = checked;
-        feedback = [...checked.violations, ...checked.styleWarnings];
+        feedback = [...checked.violations, ...checked.styleWarnings, ...checked.lengthNotes];
         lastError = feedback.join('; ');
         continue;
       }
       // Last attempt: accept it per today's hard-violation rules, recording the tells left. If it
       // is hard-invalid while attempt 1 was hard-valid (only tells), keep attempt 1 instead (DIG-65).
       if (checked.violations.length === 0) {
-        return { outcome: 'ok', content: checked.content, calls, attempts, provider: used, styleWarnings: checked.styleWarnings.length };
+        return { outcome: 'ok', content: checked.content, calls, attempts, provider: used, styleWarnings: softCount(checked) };
       }
       if (best && best.violations.length === 0) {
-        return { outcome: 'ok', content: best.content, calls, attempts, provider: used, styleWarnings: best.styleWarnings.length };
+        return { outcome: 'ok', content: best.content, calls, attempts, provider: used, styleWarnings: softCount(best) };
       }
       best = checked;
       lastError = checked.violations.join('; ');
@@ -491,9 +494,9 @@ export async function explainContext(
   // A hard-valid attempt 1 kept only for its tells stays 'ok' when the retry fails, is unusable or
   // runs out of budget (DIG-65): 'truncated' is only for output that broke a hard rule.
   if (best && best.violations.length === 0) {
-    return { outcome: 'ok', content: best.content, calls, attempts, provider: used, styleWarnings: best.styleWarnings.length };
+    return { outcome: 'ok', content: best.content, calls, attempts, provider: used, styleWarnings: softCount(best) };
   }
-  if (best) return { outcome: 'truncated', content: best.content, calls, attempts, provider: used, detail: lastError, styleWarnings: best.styleWarnings.length };
+  if (best) return { outcome: 'truncated', content: best.content, calls, attempts, provider: used, detail: lastError, styleWarnings: softCount(best) };
   return { outcome: 'error', content: null, calls, attempts, provider: used, detail: lastError, styleWarnings: 0 };
 }
 

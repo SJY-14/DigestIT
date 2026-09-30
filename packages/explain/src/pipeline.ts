@@ -118,9 +118,9 @@ export function storeLevels(
 
 export function store(
   db: DatabaseSync, id: number, levels: AllLevels, status: ExplanationStatus,
-  provider: { provider: string; model: string }, promptVersion: string, inputHash: string, at: string,
+  provider: { provider: string; model: string }, promptVersion: string, inputHash: string, at: string, styleWarnings = 0,
 ): void {
-  storeLevels(db, id, [[0, levels.l0], [1, levels.l1], [2, levels.l2], [3, levels.l3]], status, provider, promptVersion, inputHash, at);
+  storeLevels(db, id, [[0, levels.l0], [1, levels.l1], [2, levels.l2], [3, levels.l3]], status, provider, promptVersion, inputHash, at, styleWarnings);
 }
 
 /**
@@ -164,7 +164,7 @@ export async function explainUnit(
         lastError = 'provider output has an unusable shape';
         feedback = [lastError];
       } else if (checked.violations.length === 0) {
-        store(db, changeUnitId, checked.levels, 'ok', usedBy, promptVersion, prepared.inputHash, (options.now?.() ?? new Date()).toISOString());
+        store(db, changeUnitId, checked.levels, 'ok', usedBy, promptVersion, prepared.inputHash, (options.now?.() ?? new Date()).toISOString(), checked.lengthNotes.length);
         return { changeUnitId, outcome: 'ok', calls };
       } else {
         best = checked;
@@ -180,7 +180,7 @@ export async function explainUnit(
 
   const at = (options.now?.() ?? new Date()).toISOString();
   if (best) {
-    store(db, changeUnitId, best.levels, 'truncated', usedBy, promptVersion, prepared.inputHash, at);
+    store(db, changeUnitId, best.levels, 'truncated', usedBy, promptVersion, prepared.inputHash, at, best.lengthNotes.length);
     return { changeUnitId, outcome: 'truncated', calls, detail: lastError };
   }
   store(db, changeUnitId, EMPTY, 'error', usedBy, promptVersion, prepared.inputHash, at);

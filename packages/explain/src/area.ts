@@ -17,8 +17,8 @@ import { logJobCall } from './jobs.js';
 import { loadChange } from './pipeline.js';
 import { DEFAULT_PREPARE_OPTIONS, prepareInput, type PrepareOptions, type RawChange } from './prepare.js';
 import { redact } from './redact.js';
-import { DEFAULT_LANGUAGE, VOICE, checkProse, languageInstruction, sentenceCount, truncateSentences } from './style.js';
-import { LIMITS } from './validate.js';
+import { DEFAULT_LANGUAGE, VOICE, callReasons, checkProse, languageInstruction, softCount } from './style.js';
+import { LIMITS, sentenceCount, truncateSentences } from './validate.js';
 
 /** Bump whenever the instructions or the rendering below change. `a1` was the why/design/risks/notes shape; `a2` allowed a 120-word body paragraph; `a4` (DIG-65) added the AI-tell style rules; `a5` (DIG-70) asked for backticks around code identifiers/flags/paths; `a6` (DIG-96/98) replaced whole-hunk `hunks` with exact `ranges` and line-anchored `callouts` (docs/l3-step-snippets.md). A row stored under an older version is never read back (`explainArea` reads only the current version), so older walkthroughs simply show as not generated. `a7` (DIG-101) added the `<memory>` block and its rules. */
 export const AREA_PROMPT_VERSION = 'a7';
@@ -142,6 +142,8 @@ export interface AreaCheckResult {
   violations: string[];
   /** AI-tell hits (DIG-65): soft style signals, never truncated or rewritten on their account. */
   styleWarnings: string[];
+  /** Fields over their target but inside the tolerance band (DIG-94): logged, never retried. */
+  lengthNotes: string[];
 }
 
 /** One file's `walkPatch` lines and its total changed-line count (rule 3's "every changed line of a file"). */
@@ -233,8 +235,9 @@ export function checkAreaWalkthrough(
   if (!isObj(raw) || typeof raw.overview !== 'string' || !Array.isArray(raw.steps) || !Array.isArray(raw.check)) return null;
   const v: string[] = [];
   const sw: string[] = [];
+  const ln: string[] = [];
 
-  const overview = checkProse(raw.overview, 'overview', LIMITS.walkOverviewWords, language, v, sw);
+  const overview = checkProse(raw.overview, 'overview', LIMITS.walkOverviewWords, language, v, sw, { lengthNotes: ln });
   const sentences = sentenceCount(overview);
   if (overview === '') v.push('overview: empty');
   else if (sentences < LIMITS.walkOverviewSentencesMin || sentences > LIMITS.walkOverviewSentencesMax) {
@@ -253,8 +256,8 @@ export function checkAreaWalkthrough(
       v.push(`${label}: is malformed`);
       return;
     }
-    const title = checkProse(s.title, `${label} title`, LIMITS.walkTitleWords, language, v, sw);
-    let body = checkProse(s.body, `${label} body`, LIMITS.walkBodyWords, language, v, sw);
+    const title = checkProse(s.title, `${label} title`, LIMITS.walkTitleWords, language, v, sw, { lengthNotes: ln });
+    let body = checkProse(s.body, `${label} body`, LIMITS.walkBodyWords, language, v, sw, { lengthNotes: ln });
     if (title === '') v.push(`${label}: title is empty`);
     if (body === '') v.push(`${label}: body is empty`);
     else {
@@ -318,7 +321,9 @@ export function checkAreaWalkthrough(
         v.push(`${label}: callout ${j + 1} (${rangeText(parsed.range)}) overlaps another callout in ${label}`);
         return;
       }
-      const note = checkProse(c.note, `${label} callout ${j + 1} note`, LIMITS.walkCalloutNoteWords, language, v, sw, LIMITS.walkCalloutNoteCharsKo);
+      const note = checkProse(c.note, `${label} callout ${j + 1} note`, LIMITS.walkCalloutNoteWords, language, v, sw, {
+        koChars: LIMITS.walkCalloutNoteCharsKo, lengthNotes: ln,
+      });
       if (note === '') {
         v.push(`${label}: callout ${j + 1} note is empty`);
         return;
@@ -373,7 +378,7 @@ export function checkAreaWalkthrough(
       v.push(`check: item ${i + 1} is not a string`);
       return;
     }
-    const text = checkProse(c, `check: item ${i + 1}`, LIMITS.walkCheckWords, language, v, sw);
+    const text = checkProse(c, `check: item ${i + 1}`, LIMITS.walkCheckWords, language, v, sw, { lengthNotes: ln });
     if (text !== '') check.push(text);
   });
   if (check.length < LIMITS.walkCheckMin) v.push(`check: ${check.length} items, need ${LIMITS.walkCheckMin}-${LIMITS.walkCheckMax}`);
@@ -387,7 +392,7 @@ export function checkAreaWalkthrough(
     v.push(...checkMemoryDateClaims([overview, ...stepTexts, ...check], dateSources, language));
   }
 
-  return { content: { overview, steps, check }, violations: v, styleWarnings: sw };
+  return { content: { overview, steps, check }, violations: v, styleWarnings: sw, lengthNotes: ln };
 }
 
 export type AreaOutcome = 'cached' | 'ok' | 'truncated' | 'error' | 'budget';
@@ -569,15 +574,16 @@ export async function explainArea(
       // Only the first attempt streams: a retry would restart the steps, and the final result replaces them anyway.
       const res = await provider.explainArea(input, attempt === 0 ? onProgress : undefined);
       used = { provider: res.provider, model: res.model };
+      const checked = checkAreaWalkthrough(res.content, prepared.input.files, language, dateSources);
       if (options.job) {
         logJobCall(db, at, 'area', {
           jobId: options.job.jobId, part: `walkthrough:${areaId}`, changeUnitId, model: res.model, effort: res.effort,
           timing: res.timing, durationMs: now().getTime() - at.getTime(), outcome: 'ok',
+          violations: callReasons(checked),
         });
       } else {
         logCall(db, at, changeUnitId, now().getTime() - at.getTime(), 'ok');
       }
-      const checked = checkAreaWalkthrough(res.content, prepared.input.files, language, dateSources);
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
         feedback = [lastError];
@@ -585,23 +591,23 @@ export async function explainArea(
       }
       const clean = checked.violations.length === 0 && checked.styleWarnings.length === 0;
       if (clean) {
-        storeArea(db, changeUnitId, areaId, checked.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), 0);
+        storeArea(db, changeUnitId, areaId, checked.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), softCount(checked));
         return { changeUnitId, areaId, outcome: 'ok', calls };
       }
       if (attempt === 0) {
         best = checked;
-        feedback = [...checked.violations, ...checked.styleWarnings];
+        feedback = [...checked.violations, ...checked.styleWarnings, ...checked.lengthNotes];
         lastError = feedback.join('; ');
         continue;
       }
       // Last attempt: accept it per today's hard-violation rules, recording the tells left. If it
       // is hard-invalid while attempt 1 was hard-valid (only tells), keep attempt 1 instead (DIG-65).
       if (checked.violations.length === 0) {
-        storeArea(db, changeUnitId, areaId, checked.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), checked.styleWarnings.length);
+        storeArea(db, changeUnitId, areaId, checked.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), softCount(checked));
         return { changeUnitId, areaId, outcome: 'ok', calls };
       }
       if (best && best.violations.length === 0) {
-        storeArea(db, changeUnitId, areaId, best.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), best.styleWarnings.length);
+        storeArea(db, changeUnitId, areaId, best.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), softCount(best));
         return { changeUnitId, areaId, outcome: 'ok', calls };
       }
       best = checked;
@@ -625,11 +631,11 @@ export async function explainArea(
   // A hard-valid attempt 1 kept only for its tells stays 'ok' when the retry fails, is unusable or
   // runs out of budget (DIG-65): 'truncated' is only for output that broke a hard rule.
   if (best && best.violations.length === 0) {
-    storeArea(db, changeUnitId, areaId, best.content, 'ok', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
+    storeArea(db, changeUnitId, areaId, best.content, 'ok', used, promptVersion, prepared.inputHash, at, softCount(best));
     return { changeUnitId, areaId, outcome: 'ok', calls };
   }
   if (best) {
-    storeArea(db, changeUnitId, areaId, best.content, 'truncated', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
+    storeArea(db, changeUnitId, areaId, best.content, 'truncated', used, promptVersion, prepared.inputHash, at, softCount(best));
     return { changeUnitId, areaId, outcome: 'truncated', calls, detail: lastError };
   }
   storeArea(db, changeUnitId, areaId, EMPTY_AREA, 'error', used, promptVersion, prepared.inputHash, at);

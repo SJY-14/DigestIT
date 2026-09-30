@@ -20,6 +20,9 @@ Rules that apply to all levels:
   oversized files) is listed in L2 as "not analysed", never silently dropped.
 - Length limits are enforced by the pipeline's validator; an over-limit output
   is retried once, then truncated and flagged.
+- The prompts state the limits above exactly; the validator tolerates up to 25% over
+  (rounded up, e.g. 25 words for a 20-word limit) as a logged style note with no retry.
+  Past that, text is cut at the last whole sentence that fits, and L0 is never cut (DIG-94).
 
 ## Worked example — commit `3dd6389` "Add Business Source License 1.1 and README"
 
