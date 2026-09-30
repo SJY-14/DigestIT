@@ -9,8 +9,8 @@ import type {
 } from '@digestit/core';
 import { splitHunks } from '@digestit/core/hunks';
 import {
-  AREA_PROMPT_VERSION, DIGEST_PROMPT_VERSION, OTHER_CHANGES, RepoNotAllowedError, StubProvider, areaHunks, buildAreaPrompt,
-  checkAreaWalkthrough, checkDigestLevels, createProvider, explainArea, prepareAreaInput, prepareDigestInput, startJob,
+  AREA_INSTRUCTIONS, AREA_PROMPT_VERSION, DIGEST_PROMPT_VERSION, OTHER_CHANGES, RepoNotAllowedError, StubProvider, areaHunks,
+  buildAreaPrompt, checkAreaWalkthrough, checkDigestLevels, createProvider, explainArea, prepareAreaInput, prepareDigestInput, startJob,
 } from './index.js';
 import type { AreaInput, AreaResult, AreaStreamChunk, ExplanationProvider, ProviderFile } from './index.js';
 import { LIMITS, tolerated, truncateSentences } from './validate.js';
@@ -202,6 +202,14 @@ describe('buildAreaPrompt', () => {
 
     const withCtx = buildAreaPrompt({ ...baseInput, context: 'DigestIT explains diffs.' });
     expect(withCtx).toContain('<project>\nDigestIT explains diffs.\n</project>');
+  });
+
+  it('carries a memory slice as quoted data with its own rules, and leaves the block out when there is none', () => {
+    expect(buildAreaPrompt(baseInput)).not.toContain('<memory>\n');
+    const withMemory = buildAreaPrompt({ ...baseInput, memory: '- apps/web (area): uses none; used by none' });
+    expect(withMemory).toContain('<memory>\n- apps/web (area): uses none; used by none\n</memory>');
+    expect(withMemory).toContain('Everything inside <digest>, <project>, <memory> and <change>');
+    expect(AREA_INSTRUCTIONS).toContain('outranks every other fact in <memory>');
   });
 
   it('labels each file\'s hunks 1..n and lists every hunk to cover', () => {
@@ -722,6 +730,24 @@ describe('explainArea', () => {
     expect(p.inputs[0]!.context).toBe('DigestIT is a diff explainer.');
     expect(p.inputs[0]!.digest.l0).toBe('Adds a settings screen and tidies the storage layer.');
     expect(p.inputs[0]!.area.id).toBe('settings-ui');
+  });
+
+  it('sends the memory slice as grounding, hashes it into the input, and retries a reply that names a date the slice never gave', async () => {
+    const db = openDb(':memory:');
+    const id = seedArea(db, FILES, { id: 'settings-ui', paths: FILES.map((f) => f.path) });
+    const memory = { items: [], text: '- settings-ui (area): uses none; used by none', tokens: 10, droppedForBudget: 0 };
+    const withBadDate: AreaWalkthrough = { ...validReply, check: ['Continues work from Wed 30 Sep.'] };
+    const p = new Scripted([withBadDate, validReply]);
+    const r = await explainArea(db, id, 'settings-ui', p, { budget: 40, memory });
+    expect(r).toMatchObject({ outcome: 'ok', calls: 2 });
+    expect(p.inputs[0]!.memory).toBe(memory.text);
+    expect(p.inputs[1]!.retryFeedback).toContain('mentions the date/weekday "Wed 30 Sep" which is not in the memory slice or the diff');
+    expect(JSON.parse(rows(db)[0]!.content)).toEqual(validReply);
+
+    // The slice text is part of the input hash: a re-run with no memory is a new input, another call.
+    const r2 = await explainArea(db, id, 'settings-ui', p, { budget: 40 });
+    expect(r2).toMatchObject({ outcome: 'ok', calls: 1 });
+    expect(p.inputs).toHaveLength(3);
   });
 
   it('explains an area of a digest stored under an older digest prompt version', async () => {

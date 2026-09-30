@@ -502,13 +502,23 @@ export async function explainContext(
 
 // ---- 3. compactContext: grounding text for the digest and L3 prompts ----
 
+export interface CompactContextOptions {
+  /**
+   * Leaves out the "Modules" section (docs/milestone-4-memory.md §3): once a memory slice has its
+   * own area entries for this call, the module list would only repeat them under a different name.
+   */
+  omitModules?: boolean;
+}
+
 /**
  * Renders a `ProjectContextContent` as compact grounding text, hard-capped at `maxTokens`
  * (docs/explain-speed.md §4/§7; default `CONTEXT_LIMITS.maxCompactTokens`, configurable per call).
  */
-export function compactContext(content: ProjectContextContent, maxTokens: number = CONTEXT_LIMITS.maxCompactTokens): string {
+export function compactContext(
+  content: ProjectContextContent, maxTokens: number = CONTEXT_LIMITS.maxCompactTokens, options: CompactContextOptions = {},
+): string {
   let out = `Purpose: ${content.purpose}`;
-  if (content.modules.length > 0) out += `\nModules:\n${content.modules.map((m) => `- ${m.path}: ${m.role}`).join('\n')}`;
+  if (!options.omitModules && content.modules.length > 0) out += `\nModules:\n${content.modules.map((m) => `- ${m.path}: ${m.role}`).join('\n')}`;
   if (content.glossary.length > 0) out += `\nGlossary:\n${content.glossary.map((g) => `- ${g.term}: ${g.meaning}`).join('\n')}`;
   if (content.conventions.length > 0) out += `\nConventions:\n${content.conventions.map((c) => `- ${c}`).join('\n')}`;
   const maxChars = maxTokens * 4;
