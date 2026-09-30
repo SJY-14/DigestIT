@@ -419,6 +419,40 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX memory_slice_change_unit ON memory_slice(change_unit_id);
   `,
+  // DIG-103: background `memory`-kind jobs (docs/milestone-4-memory.md §4, area/thread summaries)
+  // log their calls with `explain_call.reason = 'memory'`, same as every other task logs its own
+  // reason. SQLite cannot alter a CHECK constraint, so the table is rebuilt (same procedure as
+  // migration 10's `explain_job` widening).
+  `
+  CREATE TABLE explain_call_new (
+    id             INTEGER PRIMARY KEY,
+    at             TEXT NOT NULL,
+    change_unit_id INTEGER REFERENCES change_unit(id),
+    reason         TEXT NOT NULL CHECK (reason IN
+                   ('merged','handoff','rollup','backfill','manual','digest','area','context','memory')),
+    duration_ms    INTEGER NOT NULL DEFAULT 0,
+    outcome        TEXT NOT NULL CHECK (outcome IN ('ok','error','budget')),
+    job_id         INTEGER REFERENCES explain_job(id),
+    part           TEXT,
+    model          TEXT,
+    effort         TEXT,
+    startup_ms     INTEGER,
+    ttft_ms        INTEGER,
+    gen_ms         INTEGER,
+    input_tokens   INTEGER,
+    output_tokens  INTEGER,
+    violations     TEXT
+  );
+  INSERT INTO explain_call_new SELECT
+    id, at, change_unit_id, reason, duration_ms, outcome, job_id, part, model, effort,
+    startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens, violations
+  FROM explain_call;
+  DROP TABLE explain_call;
+  ALTER TABLE explain_call_new RENAME TO explain_call;
+  CREATE INDEX explain_call_at ON explain_call(at);
+  CREATE INDEX explain_call_unit ON explain_call(change_unit_id, at);
+  CREATE INDEX explain_call_job ON explain_call(job_id);
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {
