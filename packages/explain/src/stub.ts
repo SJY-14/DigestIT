@@ -1,6 +1,7 @@
-import type { AreaWalkthrough, ExplainLanguage, HunkRef, WalkthroughStep } from '@digestit/core';
+import type { AreaWalkthrough, ExplainLanguage, LineRange, StepCallout, WalkthroughStep } from '@digestit/core';
+import { changedCount, walkPatch, type PatchHunk, type PatchLine } from '@digestit/core/hunks';
 import { NO_CHANGE, LIMITS, truncateWords } from './validate.js';
-import { areaHunks } from './difflines.js';
+import { promptHunks } from './difflines.js';
 import type {
   AreaInput, AreaResult, AreaStreamChunk, BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult,
   DigestAreaTextInput, DigestAreaTextResult, DigestInput, DigestResult, DigestSummaryInput, DigestSummaryResult,
@@ -44,6 +45,54 @@ function list(names: readonly string[], language: ExplainLanguage, max = 3): str
   }
   const items = rest > 0 ? [...shown, `${rest} more`] : shown;
   return items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** Maximal contiguous runs of changed (`+`/`-`) lines, so a chunk boundary never lands inside one replacement block. */
+function changeGroups(lines: readonly PatchLine[]): PatchLine[][] {
+  const groups: PatchLine[][] = [];
+  let cur: PatchLine[] = [];
+  for (const l of lines) {
+    if (l.kind === '+' || l.kind === '-') cur.push(l);
+    else if (cur.length > 0) { groups.push(cur); cur = []; }
+  }
+  if (cur.length > 0) groups.push(cur);
+  return groups;
+}
+
+/**
+ * `LineRange`s over one hunk's own changed lines: one range normally, several when the hunk has
+ * more than `LIMITS.walkRangeMaxChanged` changed lines (never splitting inside one replacement
+ * block), and at least two when this hunk alone is the file's only hunk and the file has more than
+ * `LIMITS.walkFileChangedMax` changed lines (so no single range covers 100% of it, rule 3).
+ */
+function hunkRanges(path: string, hunk: PatchHunk, fileChanged: number): LineRange[] {
+  const groups = changeGroups(hunk.lines);
+  if (groups.length === 0) return [];
+  const hunkChanged = groups.reduce((n, g) => n + g.length, 0);
+  const wholeFile = fileChanged > LIMITS.walkFileChangedMax && hunkChanged === fileChanged;
+  const cap = wholeFile ? Math.max(1, Math.ceil(hunkChanged / 2)) : LIMITS.walkRangeMaxChanged;
+  const chunks: PatchLine[][] = [];
+  let cur: PatchLine[] = [];
+  let n = 0;
+  for (const g of groups) {
+    if (g.length > cap) {
+      // One replacement block bigger than the cap on its own: split by position (best effort;
+      // typically pure additions or pure deletions, so this never separates a delete from its add).
+      if (cur.length > 0) { chunks.push(cur); cur = []; n = 0; }
+      for (let i = 0; i < g.length; i += cap) chunks.push(g.slice(i, i + cap));
+      continue;
+    }
+    if (cur.length > 0 && n + g.length > cap) { chunks.push(cur); cur = []; n = 0; }
+    cur.push(...g);
+    n += g.length;
+  }
+  if (cur.length > 0) chunks.push(cur);
+  return chunks.map((lines) => {
+    const newNos = lines.map((l) => l.newNo).filter((no): no is number => no !== undefined);
+    if (newNos.length > 0) return { path, side: 'new' as const, start: Math.min(...newNos), end: Math.max(...newNos) };
+    const oldNos = lines.map((l) => l.oldNo).filter((no): no is number => no !== undefined);
+    return { path, side: 'old' as const, start: Math.min(...oldNos), end: Math.max(...oldNos) };
+  });
 }
 
 /** Deterministic placeholder built from the commit message and diffstat. No network, no process. */
@@ -257,49 +306,64 @@ export class StubProvider implements ExplanationProvider {
     };
   }
 
-  /** Deterministic walkthrough: one step per file (the rest grouped into the last step), covering every hunk the prompt shows. */
+  /**
+   * Deterministic walkthrough: one step per hunk (the rest grouped into the last step when there
+   * are more hunks than `walkStepsMax`), each step's range(s) over just that hunk's changed lines
+   * (split at `walkRangeMaxChanged` for a big hunk, docs/l3-step-snippets.md) and one callout on
+   * its first changed line, so every hunk the prompt shows is covered without ever repeating a
+   * whole hunk under two steps.
+   */
   async explainArea(input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult> {
     const ko = input.language === 'ko';
     const byPath = new Map(input.files.map((f) => [f.path, f]));
-    const inventory = areaHunks(input.files);
+    const fileChanged = new Map(input.files
+      .filter((f) => f.patch !== null && f.filteredReason === null)
+      .map((f) => [f.path, changedCount(walkPatch(f.patch!))]));
+    const inventory: { path: string; hunk: PatchHunk }[] = input.files
+      .filter((f) => f.filteredReason === null && f.patch !== null)
+      .flatMap((f) => promptHunks(f.patch).map((hunk) => ({ path: f.path, hunk })));
     const groups = inventory.length > LIMITS.walkStepsMax
-      ? [...inventory.slice(0, LIMITS.walkStepsMax - 1).map((f) => [f]), inventory.slice(LIMITS.walkStepsMax - 1)]
-      : inventory.map((f) => [f]);
+      ? [...inventory.slice(0, LIMITS.walkStepsMax - 1).map((h) => [h]), inventory.slice(LIMITS.walkStepsMax - 1)]
+      : inventory.map((h) => [h]);
     const steps: WalkthroughStep[] = groups.map((group) => {
-      const hunks: HunkRef[] = group.flatMap((f) => f.hunks.map((hunk) => ({ path: f.path, hunk })));
-      const files = group.map((f) => byPath.get(f.path)!);
-      const a = files.reduce((n, f) => n + f.additions, 0);
-      const d = files.reduce((n, f) => n + f.deletions, 0);
+      const ranges = group.flatMap(({ path, hunk }) => hunkRanges(path, hunk, fileChanged.get(path) ?? 0));
+      const callout = ranges[0]!;
+      const callouts: StepCallout[] = [{
+        path: callout.path, side: callout.side, start: callout.start, end: callout.start,
+        note: ko ? '스텁 콜아웃: 분석 없음' : 'stub callout: not analysed',
+      }];
+      const a = group.reduce((n, { hunk }) => n + hunk.lines.filter((l) => l.kind === '+').length, 0);
+      const d = group.reduce((n, { hunk }) => n + hunk.lines.filter((l) => l.kind === '-').length, 0);
       if (group.length > 1) {
-        const names = list(group.map((f) => basename(f.path)), input.language);
+        const names = list([...new Set(group.map(({ path }) => basename(path)))], input.language);
         return {
-          title: ko ? '나머지 파일' : 'The remaining files',
+          title: ko ? '나머지 변경' : 'The remaining changes',
           body: ko
-            ? `${names}: hunk ${hunks.length}개, ${delta(a, d, 'ko')}. 스텁 제공자는 이유를 설명하지 않습니다.`
-            : `Edits ${names} in ${count(hunks.length, 'hunk')}, ${delta(a, d, 'en')}. The stub provider does not explain why.`,
-          hunks, mechanical: false,
+            ? `${names}: hunk ${group.length}개, ${delta(a, d, 'ko')}. 스텁 제공자는 이유를 설명하지 않습니다.`
+            : `Edits ${names} in ${count(group.length, 'hunk')}, ${delta(a, d, 'en')}. The stub provider does not explain why.`,
+          ranges, callouts, mechanical: false,
         };
       }
-      const f = files[0]!;
-      const name = basename(f.path);
+      const { path, hunk } = group[0]!;
+      const f = byPath.get(path)!;
+      const name = basename(path);
       const verb = f.status === 'A' ? (ko ? '추가' : 'Add') : f.status === 'D' ? (ko ? '삭제' : 'Remove') : (ko ? '수정' : 'Edit');
+      const oneHunk = inventory.filter((h) => h.path === path).length === 1;
+      const label = oneHunk ? name : ko ? `${name} hunk ${hunk.index}` : `${name}, hunk ${hunk.index}`;
       return {
-        title: ko ? `${name} ${verb}` : `${verb} ${name}`,
+        title: ko ? `${label} ${verb}` : `${verb} ${label}`,
         body: ko
-          ? `${f.path}: hunk ${hunks.length}개, ${delta(a, d, 'ko')}. 스텁 제공자는 이유를 설명하지 않습니다.`
-          : `${verb}s ${f.path} in ${count(hunks.length, 'hunk')}, ${delta(a, d, 'en')}. The stub provider does not explain why.`,
-        hunks, mechanical: false,
+          ? `${path} hunk ${hunk.index}: ${delta(a, d, 'ko')}. 스텁 제공자는 이유를 설명하지 않습니다.`
+          : `${verb}s ${path} hunk ${hunk.index}, ${delta(a, d, 'en')}. The stub provider does not explain why.`,
+        ranges, callouts, mechanical: false,
       };
     });
-    const names = list(inventory.map((f) => basename(f.path)), input.language);
-    const largest = [...inventory].sort((x, y) => {
-      const fx = byPath.get(x.path)!;
-      const fy = byPath.get(y.path)!;
-      return fy.additions + fy.deletions - (fx.additions + fx.deletions) || (x.path < y.path ? -1 : 1);
-    })[0];
+    const names = list([...new Set(inventory.map((h) => basename(h.path)))], input.language);
+    const largest = [...input.files].filter((f) => f.filteredReason === null && f.patch !== null).sort((x, y) =>
+      (y.additions + y.deletions) - (x.additions + x.deletions) || (x.path < y.path ? -1 : 1))[0];
     const overview = ko
-      ? `이 영역에서 다루는 파일은 ${names || '없음'}입니다. 스텁 제공자는 코드를 읽지 않고 파일별 hunk만 나열합니다.`
-      : `This area covers ${names || 'no analysable file'}. The stub provider lists each file's hunks without reading them.`;
+      ? `이 영역에서 다루는 파일은 ${names || '없음'}입니다. 스텁 제공자는 코드를 읽지 않고 hunk만 나열합니다.`
+      : `This area covers ${names || 'no analysable file'}. The stub provider lists each hunk without reading them.`;
     const check = largest
       ? [ko ? `가장 큰 변경부터 확인하세요: ${largest.path}.` : `Read ${largest.path} first; it is the largest edit in this area.`]
       : [ko ? '분석할 수 있는 hunk가 없으니 파일을 직접 확인하세요.' : 'No hunk could be analysed; open the files directly.'];
