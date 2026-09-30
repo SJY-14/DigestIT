@@ -397,3 +397,28 @@ export async function prepareExplainDigest(
   }
   return { noChanges: false, changeUnitId, areas };
 }
+
+/**
+ * Snapshots the shadow store and, if the tree changed since the last checkpoint, records a new one
+ * -- with no `file_change`/`digest` rows, unlike {@link prepareExplainDigest} -- so a caller outside
+ * an Explain job (DIG-100's `digest memory update`, and later the idle/daily `MemoryWorker`
+ * triggers) still sees the project's current state. `snapshot` serializes on the shadow's own
+ * index internally, so this is safe to call whether or not an Explain is running concurrently.
+ */
+export async function ensureCheckpoint(
+  db: DatabaseSync, home: string, project: ProjectRow, reason: CheckpointReason, now: () => Date = () => new Date(),
+): Promise<CheckpointRow> {
+  const dataDir = projectDataDir(home, project.id);
+  const shadow = await openShadow(dataDir, project.path);
+  const latest = latestCheckpoint(db, project.id);
+  if (!latest) throw new Error(`project ${project.id} has no checkpoints; run \`digest init\` first`);
+  const result = await snapshot(shadow, { parent: latest.shadowSha });
+  if (result.unchanged) return latest;
+  const info = await userGitInfo(project.path);
+  const at = now().toISOString();
+  const id = insertCheckpoint(db, project.id, latest.seq + 1, result.treeSha, reason, info?.head ?? null, info?.branch ?? null, result.skipped, at);
+  return {
+    id, repoId: project.id, seq: latest.seq + 1, shadowSha: result.treeSha, treeSha: result.treeSha, takenAt: at,
+    reason, userHead: info?.head ?? null, userBranch: info?.branch ?? null, skipped: result.skipped,
+  };
+}

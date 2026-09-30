@@ -86,9 +86,9 @@ export function groupMemoryAreas(
 
 // ---- per-file language extraction ------------------------------------------------------------
 
-type Lang = 'ts' | 'py' | 'go' | 'rs' | null;
+export type Lang = 'ts' | 'py' | 'go' | 'rs' | null;
 
-function langOf(path: string): Lang {
+export function langOf(path: string): Lang {
   const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
   if (ext === path) return null; // no extension
   if (['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'].includes(ext)) return 'ts';
