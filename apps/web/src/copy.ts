@@ -813,3 +813,217 @@ const GRAPH_KO = {
 export function graphCopy(lang: Lang = 'en') {
   return lang === 'ko' ? GRAPH_KO : GRAPH_EN;
 }
+
+// --- "What DigestIT knows" (DIG-97/102/104, milestone 4 project memory) --------------------------
+// Route /memory?project=&digest=: docs/ux/decision-4-memory.md is the source of truth for exact
+// wording (changes 1-11); docs/ux/brief-4-memory.md fills in anything the decision doesn't override.
+import type { MemoryKind, MemorySource, MemoryTrigger } from '@digestit/core';
+
+const MEMORY_KIND_LABEL_EN: Record<MemoryKind, string> = { area: 'Areas', term: 'Terms', thread: 'Ongoing work', note: 'Your notes' };
+const MEMORY_KIND_LABEL_KO: Record<MemoryKind, string> = { area: '영역', term: '용어', thread: '진행 중인 작업', note: '내 메모' };
+const MEMORY_KIND_NOUN_EN: Record<MemoryKind, string> = { area: 'Area', term: 'Term', thread: 'Thread', note: 'Note' };
+const MEMORY_KIND_NOUN_KO: Record<MemoryKind, string> = { area: '영역', term: '용어', thread: '스레드', note: '메모' };
+
+const MEMORY_SOURCE_BADGE_EN: Record<MemorySource, string> = {
+  code: 'From the code', digest: 'From earlier digests', summary: 'Summarised', user: 'From you',
+};
+const MEMORY_SOURCE_BADGE_KO: Record<MemorySource, string> = {
+  code: '코드에서', digest: '이전 다이제스트에서', summary: '요약됨', user: '직접 작성',
+};
+
+const MEMORY_TRIGGER_LABEL_EN: Record<MemoryTrigger, string> = {
+  init: 'initial scan', 'after-explain': 'update after a digest', idle: 'background summary run',
+  daily: 'daily sweep', manual: 'manual update', user: 'your edit', rollback: 'the last undo',
+};
+const MEMORY_TRIGGER_LABEL_KO: Record<MemoryTrigger, string> = {
+  init: '최초 스캔', 'after-explain': '다이제스트 이후 업데이트', idle: '백그라운드 요약 실행',
+  daily: '일일 점검', manual: '수동 업데이트', user: '직접 수정', rollback: '이전 실행 취소',
+};
+
+export function memoryKindLabel(kind: MemoryKind, lang: Lang = 'en'): string {
+  return (lang === 'ko' ? MEMORY_KIND_LABEL_KO : MEMORY_KIND_LABEL_EN)[kind];
+}
+export function memoryKindNoun(kind: MemoryKind, lang: Lang = 'en'): string {
+  return (lang === 'ko' ? MEMORY_KIND_NOUN_KO : MEMORY_KIND_NOUN_EN)[kind];
+}
+export function memorySourceBadge(source: MemorySource, lang: Lang = 'en'): string {
+  return (lang === 'ko' ? MEMORY_SOURCE_BADGE_KO : MEMORY_SOURCE_BADGE_EN)[source];
+}
+export function memoryTriggerLabel(trigger: MemoryTrigger, lang: Lang = 'en'): string {
+  return (lang === 'ko' ? MEMORY_TRIGGER_LABEL_KO : MEMORY_TRIGGER_LABEL_EN)[trigger];
+}
+
+const MEMORY_EN = {
+  // Entry points (brief §2)
+  linkLabel: 'What DigestIT knows',
+  settingsUsage: (jobsToday: number, share: number) => `Background summaries: ${jobsToday} of ${share} runs today`,
+  groundedLine: (n: number) => `Grounded in ${plural(n, 'memory item')}`,
+  usedLinkLabel: 'What DigestIT used',
+  // Page chrome
+  pageTitle: (projectName: string) => `What DigestIT knows about ${projectName}`,
+  breadcrumbCurrent: 'What DigestIT knows',
+  backToDigest: 'Back to digest',
+  loadError: (msg: string) => `Could not load memory: ${msg}`,
+  // Overview line (brief §3): "Areas 42 · Terms 118 · Ongoing work 3 · Your notes 5"
+  countsSummary: (counts: Record<MemoryKind, number>) =>
+    (['area', 'term', 'thread', 'note'] as const).map((k) => `${MEMORY_KIND_LABEL_EN[k]} ${counts[k]}`).join(' · '),
+  showAllLabel: (total: number) => `Show all ${total}`,
+  activeTab: 'Active',
+  hiddenTab: (n: number) => `Hidden (${n})`,
+  filterPlaceholder: 'Filter items…',
+  filterLabel: 'Filter memory items',
+  // Status and meta (brief §4)
+  staleStatus: 'stale — files changed since checked',
+  hiddenDeletedAt: (when: string) => `Deleted ${when}`,
+  checkedAgo: (when: string) => `checked ${when}`,
+  usedInDigests: (n: number) => `used in ${plural(n, 'digest')}`,
+  pinnedMeta: 'Pinned',
+  overriddenByLabel: 'Overridden by your note',
+  correctsLabel: (kindNoun: string, key: string) => `Corrects: ${kindNoun} ${key}`,
+  contextFileHint: 'from your context file — edit it there',
+  // Row actions
+  correct: 'Correct',
+  pin: 'Pin',
+  unpin: 'Unpin',
+  delete: 'Delete',
+  deleteConfirmLabel: 'Confirm delete?',
+  deleting: 'Deleting…',
+  deleteError: (msg: string) => `Could not delete this item: ${msg}`,
+  restore: 'Restore',
+  restoring: 'Restoring…',
+  restoreError: (msg: string) => `Could not restore this item: ${msg}`,
+  pinError: (msg: string) => `Could not change this item: ${msg}`,
+  edit: 'Edit',
+  changedSinceDigest: 'changed since this digest',
+  // Correct/Edit inline form (decision change 6)
+  correctFormLabel: 'What is right instead',
+  correctCounter: (used: number, max: number) => `${used} / ${max}`,
+  save: 'Save',
+  cancel: 'Cancel',
+  saving: 'Saving…',
+  correctError: (msg: string) => `Could not save the correction: ${msg}`,
+  // Privacy and summaries switch (decision change 8)
+  privacyTopLine: (provider: string) => (provider === 'stub'
+    ? 'Nothing leaves this machine.'
+    : `Stored on this host. When you Explain, the items that match the change are sent to ${provider} with it.`),
+  summariesToggleLabel: 'Background summaries',
+  whatThisSends: 'What this sends',
+  whatThisSendsBody: (provider: string, share: number) =>
+    `DigestIT writes background summaries using ${provider}: a folder's exported names, what it imports and the first paragraph of its README, or the one-line summaries of a line of work. File contents and diffs are not sent. Up to ${share} runs a day, shared across all projects.`,
+  usageLine: (jobsToday: number, share: number, reserve: number) =>
+    `Today: ${jobsToday} of ${share} background summaries used, shared across all your projects. They pause once fewer than ${reserve} of today's Explain calls are left.`,
+  settingsError: (msg: string) => `Could not change this setting: ${msg}`,
+  // Last update / Undo (decision doc §6)
+  lastUpdatedLine: (trigger: string, when: string, changed: number) => `Last updated: ${trigger}, ${when} (${plural(changed, 'item')} changed)`,
+  undoLabel: 'Undo last update',
+  undoConfirmPrompt: (trigger: string, when: string, changed: number) => `Undo the ${trigger} from ${when} — ${plural(changed, 'item')} changed?`,
+  undoConfirmLabel: 'Confirm undo?',
+  undoing: 'Undoing…',
+  undoError: (msg: string) => `Could not undo: ${msg}`,
+  // Export / Clear (decision change 9)
+  exportLabel: 'Export',
+  clearLabel: 'Clear',
+  clearConfirmLabel: 'Confirm clear all memory?',
+  clearConfirmPrompt: (projectName: string, n: number) =>
+    `This deletes all ${plural(n, 'item')} for ${projectName} and can't be undone. Export first if you may want them back. Digests you've already read are not affected.`,
+  clearing: 'Clearing…',
+  clearError: (msg: string) => `Could not clear memory: ${msg}`,
+  // Empty states (brief §7)
+  emptyProject: (projectName: string) => `DigestIT hasn't looked at ${projectName} yet. Areas and terms appear after the first Explain.`,
+  emptyThreads: 'No ongoing work tracked yet — a thread appears once a digest continues something from an earlier one.',
+  emptyNotes: 'Nothing yet. Correct anything you see above, or add project facts to your context file — they show up here.',
+  // Per-digest "used" view (brief §5)
+  usedForHeading: (n: number) => `Used for this digest (${plural(n, 'item')})`,
+  usedForSummary: 'Used for: L0 summary',
+  usedForArea: (area: string) => `Used for: ${area} (L2)`,
+  usedForWalkthrough: (area: string) => `Used for: ${area} (L3)`,
+  droppedForBudget: (n: number) => `${plural(n, 'more item')} considered but left out for space.`,
+  noteTitleCorrection: 'Correction',
+  noteTitleContextFile: 'Note',
+  threadStateOpen: 'open',
+  threadStateClosed: 'closed',
+} as const;
+
+const MEMORY_KO = {
+  linkLabel: 'DigestIT가 아는 것',
+  settingsUsage: (jobsToday: number, share: number) => `백그라운드 요약: 오늘 ${share}회 중 ${jobsToday}회 실행`,
+  groundedLine: (n: number) => `메모리 항목 ${n}개를 근거로 함`,
+  usedLinkLabel: '무엇을 사용했는지 보기',
+  pageTitle: (projectName: string) => `${projectName}에 대해 DigestIT가 아는 것`,
+  breadcrumbCurrent: 'DigestIT가 아는 것',
+  backToDigest: '다이제스트로 돌아가기',
+  loadError: (msg: string) => `메모리를 불러오지 못했습니다: ${msg}`,
+  countsSummary: (counts: Record<MemoryKind, number>) =>
+    (['area', 'term', 'thread', 'note'] as const).map((k) => `${MEMORY_KIND_LABEL_KO[k]} ${counts[k]}개`).join(' · '),
+  showAllLabel: (total: number) => `${total}개 모두 보기`,
+  activeTab: '표시 중',
+  hiddenTab: (n: number) => `숨김 (${n})`,
+  filterPlaceholder: '항목 필터…',
+  filterLabel: '메모리 항목 필터',
+  staleStatus: '오래됨 — 확인 이후 파일이 변경됨',
+  hiddenDeletedAt: (when: string) => `${when} 삭제됨`,
+  checkedAgo: (when: string) => `${when} 확인`,
+  usedInDigests: (n: number) => `다이제스트 ${n}개에서 사용됨`,
+  pinnedMeta: '고정됨',
+  overriddenByLabel: '내가 작성한 메모로 대체됨',
+  correctsLabel: (kindNoun: string, key: string) => `${kindNoun} ${key} 수정`,
+  contextFileHint: '컨텍스트 파일에서 온 항목 — 그 파일에서 수정하세요',
+  correct: '수정',
+  pin: '고정',
+  unpin: '고정 해제',
+  delete: '삭제',
+  deleteConfirmLabel: '삭제 확인',
+  deleting: '삭제하는 중…',
+  deleteError: (msg: string) => `이 항목을 삭제하지 못했습니다: ${msg}`,
+  restore: '복원',
+  restoring: '복원하는 중…',
+  restoreError: (msg: string) => `이 항목을 복원하지 못했습니다: ${msg}`,
+  pinError: (msg: string) => `이 항목을 변경하지 못했습니다: ${msg}`,
+  edit: '편집',
+  changedSinceDigest: '이 다이제스트 이후 변경됨',
+  correctFormLabel: '실제로 맞는 내용',
+  correctCounter: (used: number, max: number) => `${used} / ${max}`,
+  save: '저장',
+  cancel: '취소',
+  saving: '저장하는 중…',
+  correctError: (msg: string) => `수정 내용을 저장하지 못했습니다: ${msg}`,
+  privacyTopLine: (provider: string) => (provider === 'stub'
+    ? '이 기기 밖으로 나가지 않습니다.'
+    : `이 서버에 저장됩니다. Explain을 실행하면 변경 사항과 관련된 항목이 ${provider}로 함께 전송됩니다.`),
+  summariesToggleLabel: '백그라운드 요약',
+  whatThisSends: '무엇을 전송하는지 보기',
+  whatThisSendsBody: (provider: string, share: number) =>
+    `DigestIT는 ${provider}를 사용해 백그라운드 요약을 작성합니다: 폴더가 내보내는 이름, 가져오는 대상, README의 첫 문단, 또는 진행 중인 작업의 한 줄 요약입니다. 파일 내용이나 diff는 전송되지 않습니다. 전체 프로젝트에서 공유되는 하루 ${share}회 한도 안에서 실행됩니다.`,
+  usageLine: (jobsToday: number, share: number, reserve: number) =>
+    `오늘: 전체 프로젝트에서 공유되는 백그라운드 요약 ${share}회 중 ${jobsToday}회 사용됨. 오늘 남은 Explain 호출이 ${reserve}회 미만이 되면 일시 중지됩니다.`,
+  settingsError: (msg: string) => `설정을 변경하지 못했습니다: ${msg}`,
+  lastUpdatedLine: (trigger: string, when: string, changed: number) => `마지막 업데이트: ${trigger}, ${when} (${changed}개 항목 변경)`,
+  undoLabel: '최근 업데이트 실행 취소',
+  undoConfirmPrompt: (trigger: string, when: string, changed: number) => `${when}의 ${trigger}를 취소할까요 — ${changed}개 항목이 변경됩니다?`,
+  undoConfirmLabel: '실행 취소 확인',
+  undoing: '취소하는 중…',
+  undoError: (msg: string) => `취소하지 못했습니다: ${msg}`,
+  exportLabel: '내보내기',
+  clearLabel: '모두 지우기',
+  clearConfirmLabel: '모두 지우기를 확인할까요',
+  clearConfirmPrompt: (projectName: string, n: number) =>
+    `${projectName}의 항목 ${n}개가 모두 삭제되며 되돌릴 수 없습니다. 나중에 필요하면 먼저 내보내세요. 이미 읽은 다이제스트에는 영향이 없습니다.`,
+  clearing: '지우는 중…',
+  clearError: (msg: string) => `메모리를 지우지 못했습니다: ${msg}`,
+  emptyProject: (projectName: string) => `아직 DigestIT가 ${projectName}를 살펴보지 않았습니다. 첫 Explain 이후 영역과 용어가 나타납니다.`,
+  emptyThreads: '아직 추적 중인 진행 작업이 없습니다 — 다이제스트가 이전 작업을 이어받을 때 스레드가 생깁니다.',
+  emptyNotes: '아직 메모가 없습니다. 위의 항목을 수정하거나, 컨텍스트 파일에 프로젝트 사실을 추가하면 여기에 나타납니다.',
+  usedForHeading: (n: number) => `이 다이제스트에서 사용됨 (${n}개)`,
+  usedForSummary: '사용 위치: L0 요약',
+  usedForArea: (area: string) => `사용 위치: ${area} (L2)`,
+  usedForWalkthrough: (area: string) => `사용 위치: ${area} (L3)`,
+  droppedForBudget: (n: number) => `${n}개 항목을 더 검토했지만 공간 제약으로 제외했습니다.`,
+  noteTitleCorrection: '수정 메모',
+  noteTitleContextFile: '메모',
+  threadStateOpen: '진행 중',
+  threadStateClosed: '종료됨',
+} as const;
+
+export function memoryCopy(lang: Lang = 'en') {
+  return lang === 'ko' ? MEMORY_KO : MEMORY_EN;
+}

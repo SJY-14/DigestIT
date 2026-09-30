@@ -12,11 +12,16 @@ class MockApiError extends Error {
 const fetchProjectIgnore = vi.fn(async (_id: number): Promise<ProjectIgnoreDto> => ({ patterns: [], notTracked: [] }));
 const addIgnorePatterns = vi.fn(async (_id: number, patterns: string[]): Promise<ProjectIgnoreDto> => ({ patterns, notTracked: [] }));
 const removeIgnorePattern = vi.fn(async (_id: number, _pattern: string): Promise<ProjectIgnoreDto> => ({ patterns: [], notTracked: [] }));
+const fetchMemory = vi.fn(async (_id: number) => ({
+  projectId: _id, summariesEnabled: false, counts: { area: 0, term: 0, thread: 0, note: 0 }, lastBatch: null,
+  usage: { jobsToday: 0, share: 4, reserve: 10 }, items: [],
+}));
 vi.mock('./v2Api.js', () => ({
   ApiError: MockApiError,
   fetchProjectIgnore: (id: number) => fetchProjectIgnore(id),
   addIgnorePatterns: (id: number, patterns: string[]) => addIgnorePatterns(id, patterns),
   removeIgnorePattern: (id: number, pattern: string) => removeIgnorePattern(id, pattern),
+  fetchMemory: (id: number) => fetchMemory(id),
 }));
 
 const { ProjectHeader } = await import('./ProjectHeader.js');
@@ -33,6 +38,10 @@ beforeEach(() => {
   fetchProjectIgnore.mockResolvedValue({ patterns: [], notTracked: [] });
   addIgnorePatterns.mockImplementation(async (_id: number, patterns: string[]) => ({ patterns, notTracked: [] }));
   removeIgnorePattern.mockResolvedValue({ patterns: [], notTracked: [] });
+  fetchMemory.mockResolvedValue({
+    projectId: fixtureProject.id, summariesEnabled: false, counts: { area: 0, term: 0, thread: 0, note: 0 }, lastBatch: null,
+    usage: { jobsToday: 2, share: 4, reserve: 10 }, items: [],
+  });
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);

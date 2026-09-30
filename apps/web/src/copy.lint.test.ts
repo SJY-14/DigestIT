@@ -8,10 +8,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   apiErrorMessage, callsLeftLabel, contextSummary, digestRowLabel, elapsedLabel, emptyCopy, explainButtonLabel, explainingLabel,
-  explainOutcomeMessage, graphCopy, headerCopy, humanDateTime, ignoreCopy, LANGUAGE_NAMES, levelsCopy, lineDelta, navCopy,
+  explainOutcomeMessage, graphCopy, headerCopy, humanDateTime, ignoreCopy, LANGUAGE_NAMES, levelsCopy, lineDelta, memoryCopy,
+  memoryKindLabel, memoryKindNoun, memorySourceBadge, memoryTriggerLabel, navCopy,
   notTrackedReasonLabel, pickerCopy, plural, projectsCopy, readerCopy, resetsLabel, reviewedCopy, setupCopy, trustCopy,
   walkthroughCopy, welcomeBackCopy, type Lang,
 } from './copy.js';
+import type { MemoryKind, MemorySource, MemoryTrigger } from '@digestit/core';
 
 // --- banned patterns (edit here to extend the lint) -----------------------------------------------
 
@@ -225,6 +227,49 @@ function collectAll(): Entry[] {
       lastActivity: (fn) => fn(SAMPLE.when), unreadCount: (fn) => n4(fn), removeTitle: (fn) => fn(SAMPLE.projectName),
       removeError: (fn) => fn(SAMPLE.msg), allProjectsHeading: (fn) => [fn(3, 0), fn(3, 1), fn(3, 2)],
     });
+
+    const memCounts: Record<MemoryKind, number> = { area: 42, term: 118, thread: 3, note: 5 };
+    addTable(out, 'memoryCopy', lang, memoryCopy(lang), {
+      settingsUsage: (fn) => n4((n) => fn(n, 4)),
+      groundedLine: (fn) => n4(fn),
+      pageTitle: (fn) => fn(SAMPLE.projectName),
+      loadError: (fn) => fn(SAMPLE.msg),
+      countsSummary: (fn) => fn(memCounts),
+      showAllLabel: (fn) => n4(fn),
+      hiddenTab: (fn) => n4(fn),
+      hiddenDeletedAt: (fn) => fn(SAMPLE.when),
+      checkedAgo: (fn) => fn(SAMPLE.when),
+      usedInDigests: (fn) => n4(fn),
+      correctsLabel: (fn) => fn(memoryKindNoun('area', lang), SAMPLE.path),
+      correctCounter: (fn) => fn(120, 2000),
+      correctError: (fn) => fn(SAMPLE.msg),
+      deleteError: (fn) => fn(SAMPLE.msg),
+      restoreError: (fn) => fn(SAMPLE.msg),
+      pinError: (fn) => fn(SAMPLE.msg),
+      privacyTopLine: (fn) => [fn('claude-code'), fn('stub')],
+      whatThisSendsBody: (fn) => fn('claude-code', 4),
+      usageLine: (fn) => n4((n) => fn(n, 4, 10)),
+      settingsError: (fn) => fn(SAMPLE.msg),
+      lastUpdatedLine: (fn) => n4((n) => fn(memoryTriggerLabel('daily', lang), SAMPLE.when, n)),
+      undoConfirmPrompt: (fn) => n4((n) => fn(memoryTriggerLabel('daily', lang), SAMPLE.when, n)),
+      undoError: (fn) => fn(SAMPLE.msg),
+      clearConfirmPrompt: (fn) => n4((n) => fn(SAMPLE.projectName, n)),
+      clearError: (fn) => fn(SAMPLE.msg),
+      emptyProject: (fn) => fn(SAMPLE.projectName),
+      usedForHeading: (fn) => n4(fn),
+      usedForArea: (fn) => fn(SAMPLE.path),
+      usedForWalkthrough: (fn) => fn(SAMPLE.path),
+      droppedForBudget: (fn) => n4(fn),
+    });
+    const memoryKinds: MemoryKind[] = ['area', 'term', 'thread', 'note'];
+    const memorySources: MemorySource[] = ['code', 'digest', 'summary', 'user'];
+    const memoryTriggers: MemoryTrigger[] = ['init', 'after-explain', 'idle', 'daily', 'manual', 'user', 'rollback'];
+    for (const k of memoryKinds) {
+      addStrings(out, 'memoryKindLabel', lang, memoryKindLabel(k, lang), k);
+      addStrings(out, 'memoryKindNoun', lang, memoryKindNoun(k, lang), k);
+    }
+    for (const s of memorySources) addStrings(out, 'memorySourceBadge', lang, memorySourceBadge(s, lang), s);
+    for (const t of memoryTriggers) addStrings(out, 'memoryTriggerLabel', lang, memoryTriggerLabel(t, lang), t);
   }
 
   return out;

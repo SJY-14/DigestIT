@@ -9,6 +9,7 @@ import { Insights } from './Insights.js';
 import { MainV2 } from './MainV2.js';
 import { AllProjects } from './AllProjects.js';
 import { UnitPanel } from './Units.js';
+import { MemoryPage } from './Memory.js';
 import { fetchProjects } from './v2Api.js';
 
 // 'main' is the v2 home screen (DIG-40); 'insights' is the pre-v2 chart dashboard, demoted by UX
@@ -17,8 +18,12 @@ import { fetchProjects } from './v2Api.js';
 // the legacy `unit_event` table. Units, Timeline and Briefing (and the History menu that held all
 // four) are cut entirely; their old paths redirect to Home (see `usePage` below). 'projects' is
 // the All-projects roster (P7), shown in the nav only once 2+ projects exist (`useProjectCount`).
-type Page = 'main' | 'insights' | 'projects';
-const PATH_FOR: Record<Page, string> = { main: '/', insights: '/insights', projects: '/projects' };
+// 'memory' is "What DigestIT knows" (DIG-104, docs/ux/decision-4-memory.md §2): a real route,
+// `?project=&digest=`, with no nav entry of its own — reached from the Settings popover link and
+// the per-digest L0 glance line, both plain `<a>`s (those are mounted deep under MainV2, which has
+// no reference to this router's page state, same reasoning as the legacy-insights link below).
+type Page = 'main' | 'insights' | 'projects' | 'memory';
+const PATH_FOR: Record<Page, string> = { main: '/', insights: '/insights', projects: '/projects', memory: '/memory' };
 // Deep links to the removed pages must not leave a dead entry for Back to land on, so this
 // rewrites the URL with `history.replaceState`, not `pushState`.
 const REDIRECT_TO_HOME = new Set(['/units', '/timeline', '/briefing']);
@@ -27,6 +32,7 @@ function pageFor(path: string): Page {
   const p = path.replace(/\/+$/, '');
   if (p === '/insights' || p === '/metrics') return 'insights';
   if (p === '/projects') return 'projects';
+  if (p === '/memory') return 'memory';
   return 'main';
 }
 
@@ -182,6 +188,8 @@ export function App() {
         <MainV2 onLanguage={onLanguage} />
       ) : page === 'projects' ? (
         <AllProjects onOpenProject={openProject} lang={lang} />
+      ) : page === 'memory' ? (
+        <MemoryPage onOpenDigest={openProject} lang={lang} />
       ) : (
         <div className="split">
           <main>

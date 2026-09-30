@@ -6,10 +6,10 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import type { AboutDto, ExplainLanguage, ProjectDto, ProjectIgnoreDto, ProjectStatusDto } from '@digestit/core';
 import {
   apiErrorMessage, callsLeftLabel, contextSummary, EXPLAIN_LANGUAGE_LIST, explainButtonLabel, explainingLabel,
-  headerCopy, humanDateTime, ignoreCopy, LANGUAGE_NAMES, notTrackedReasonLabel, trustCopy, type Lang,
+  headerCopy, humanDateTime, ignoreCopy, LANGUAGE_NAMES, memoryCopy, notTrackedReasonLabel, trustCopy, type Lang,
 } from './copy.js';
 import { relativeTime } from './format.js';
-import { addIgnorePatterns, ApiError, fetchProjectIgnore, removeIgnorePattern } from './v2Api.js';
+import { addIgnorePatterns, ApiError, fetchMemory, fetchProjectIgnore, removeIgnorePattern } from './v2Api.js';
 import { ProjectPanel } from './ProjectPanel.js';
 
 function ignoreErrorText(e: unknown, lang: Lang): string {
@@ -87,6 +87,10 @@ function InfoPopover({
   const [open, setOpen] = useState(false);
   const [ignore, setIgnore] = useState<ProjectIgnoreDto | null>(null);
   const [ignoreError, setIgnoreError] = useState<string | null>(null);
+  // "What DigestIT knows" (DIG-104, decision-4-memory.md §2): the link itself is a plain, always-
+  // visible <a> (this popover has no reference to App.tsx's router state, same reasoning as the
+  // legacy-insights link below), but the usage line next to it still needs a live number.
+  const [memUsage, setMemUsage] = useState<{ jobsToday: number; share: number } | null>(null);
   const [newPattern, setNewPattern] = useState('');
   const [addingPattern, setAddingPattern] = useState(false);
   const [removingPattern, setRemovingPattern] = useState<string | null>(null);
@@ -120,6 +124,15 @@ function InfoPopover({
       .catch((e: unknown) => { if (active) setIgnoreError(ignoreErrorText(e, lang)); });
     return () => { active = false; };
   }, [open, project.id, lang]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let active = true;
+    fetchMemory(project.id)
+      .then((dto) => { if (active) setMemUsage({ jobsToday: dto.usage.jobsToday, share: dto.usage.share }); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [open, project.id]);
 
   const onAddPattern = (e: FormEvent) => {
     e.preventDefault();
@@ -184,6 +197,11 @@ function InfoPopover({
         </label>
         <p className="muted language-hint">{T.languageHint}</p>
         {languageError && <p role="alert" className="error">{T.languageError(languageError)}</p>}
+
+        <p className="mem-settings-link">
+          <a href={`/memory?project=${project.id}`}>{memoryCopy(lang).linkLabel}</a>
+          {memUsage && <span className="muted"> · {memoryCopy(lang).settingsUsage(memUsage.jobsToday, memUsage.share)}</span>}
+        </p>
 
         <div className="ignore-section">
           <h3>{TI.heading}</h3>

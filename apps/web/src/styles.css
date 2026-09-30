@@ -487,6 +487,9 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .language-field { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .language-field select { font: inherit; padding: 3px 6px; border: 1px solid var(--control-border); border-radius: 3px; background: var(--bg); color: var(--fg); }
 .language-hint { font-size: 12px; }
+/* "What DigestIT knows" link (DIG-104, decision-4-memory.md §2): always visible, placed after the
+   language field and before the ignore-patterns section. */
+.mem-settings-link { margin: 0; font-size: var(--text-ui); }
 
 .info-popover-panel h3 { margin: 4px 0 0; font-size: var(--text-ui); font-weight: 600; color: var(--fg); }
 .ignore-section { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 8px; }
@@ -684,6 +687,12 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .area-glance-meta { color: var(--muted); font: var(--text-meta)/1.5 var(--sans); margin: 0; display: flex; gap: 6px; white-space: nowrap; }
 .area-glance-open { color: var(--accent); font: var(--text-meta)/1.5 var(--sans); white-space: nowrap; }
 
+/* Per-digest "what DigestIT used" line (DIG-104, decision-4-memory.md §2): same section rhythm as
+   .areas-glance just above, kept as its own class since it is a different feature (a link out to
+   /memory, not an in-page area picker). */
+.memory-glance { margin: var(--space-2) 0 0; padding-top: var(--space-2); border-top: 1px solid var(--border); max-width: var(--prose-width); }
+.memory-glance-label { font: var(--text-ui)/1.5 var(--sans); color: var(--fg); margin: 0; }
+
 /* L1 */
 .l1-bullets { margin: 0; padding-left: 1.25rem; font-size: var(--text-prose); line-height: 1.6; max-width: var(--prose-width); }
 .l1-bullets li + li { margin-top: var(--space-1); }
@@ -811,3 +820,69 @@ button.step-badge { cursor: pointer; padding: 0; font-family: inherit; }
   .graph-node .graph-focus-ring { stroke: Highlight; }
   .level-tab[aria-selected='true'] { border-bottom-color: Highlight; }
 }
+
+/* "What DigestIT knows" (DIG-104, docs/ux/decision-4-memory.md, prototype docs/ux/proto/memory):
+   a plain document reusing .area-cards-style hairline rows, not a grid of cards. */
+.mem-page { max-width: var(--prose-width); }
+.mem-head h1 { font-family: var(--serif); font-size: var(--text-title); font-weight: 600; margin: 20px 0 4px; }
+.mem-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-top: 2px; }
+.mem-counts { font-size: var(--text-ui); color: var(--fg); }
+.mem-actions { margin-left: auto; display: flex; gap: 8px; align-items: baseline; }
+.mem-lastbatch { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 6px 0 0; font-size: var(--text-meta); color: var(--muted); }
+.mem-confirm { color: var(--del); font-weight: 600; margin: 4px 0 0; font-size: var(--text-ui); }
+
+.mem-panel { border-top: 1px solid var(--border); margin-top: var(--space-2); padding-top: var(--space-2); display: flex; flex-direction: column; gap: 6px; }
+.mem-privacy-top { margin: 0; font-size: var(--text-ui); }
+.mem-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mem-toggle-label { font-size: var(--text-ui); font-weight: 600; }
+.mem-switch {
+  position: relative; display: inline-flex; align-items: center; width: 38px; height: 22px;
+  border: 1px solid var(--control-border); border-radius: 11px; background: var(--bg-inset); cursor: pointer; padding: 0;
+}
+.mem-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform 0.1s; }
+.mem-switch[aria-pressed='true'] { background: var(--add-bg); border-color: var(--add); }
+.mem-switch[aria-pressed='true']::after { background: var(--add); transform: translateX(16px); }
+.mem-switch:disabled { opacity: 0.6; cursor: default; }
+.mem-sends { margin: 0; font-size: var(--text-ui); line-height: 1.6; max-width: 56ch; }
+.mem-sends summary { cursor: pointer; color: var(--accent); font-size: var(--text-ui); }
+.mem-sends p { margin: 6px 0 0; color: var(--fg); }
+.mem-usage { margin: 0; font-size: var(--text-meta); color: var(--muted); }
+
+.mem-filter-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: var(--space-3) 0 var(--space-1); padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.mem-tabs { display: flex; gap: 4px; }
+.mem-tab { background: none; border: 1px solid transparent; border-radius: 3px; padding: 4px 10px; font-size: var(--text-ui); color: var(--muted); cursor: pointer; }
+.mem-tab[aria-selected='true'] { color: var(--fg); font-weight: 600; background: var(--selected); }
+.mem-filter-input { margin-left: auto; font: inherit; font-size: var(--text-ui); padding: 4px 8px; border: 1px solid var(--control-border); border-radius: 3px; background: var(--bg); color: var(--fg); min-width: 200px; }
+
+.mem-section { margin-top: var(--space-3); }
+.mem-section h2 { font: 600 var(--text-ui)/1.5 var(--sans); color: var(--muted); padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.mem-list { list-style: none; margin: 0; padding: 0; }
+.mem-item { padding: 12px 0; border-bottom: 1px solid var(--border-muted); }
+.mem-item:first-child { padding-top: 10px; }
+.mem-item.is-stale { border-left: 2px dashed var(--muted); padding-left: 10px; margin-left: -12px; }
+.mem-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.mem-item-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.mem-item-title { font: 600 var(--text-body)/1.4 var(--serif); }
+.mem-item-title.mono { font-family: var(--mono); font-size: var(--text-prose); }
+.mem-item-source { margin-left: auto; font-size: var(--text-meta); color: var(--muted); white-space: nowrap; }
+.mem-item-effect { margin: 4px 0 0; color: var(--fg); font-size: var(--text-ui); max-width: 56ch; }
+.mem-item-status { margin: 4px 0 0; font-size: var(--text-meta); color: var(--muted); }
+.mem-item-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 6px; font-size: var(--text-meta); color: var(--muted); }
+.mem-item-actions { margin-left: auto; display: flex; gap: 4px; }
+.mem-item-actions button { background: none; border: 0; padding: 2px 6px; font-size: var(--text-meta); color: var(--accent); cursor: pointer; }
+.mem-item-actions button:hover { text-decoration: underline; }
+.mem-item-actions button.danger { color: var(--del); }
+.mem-item-actions button:disabled { opacity: 0.6; cursor: default; }
+.mem-item-override { margin: 4px 0 0; font-size: var(--text-meta); }
+.mem-item-override-text { color: var(--muted); text-decoration: line-through; margin: 2px 0 0; font-size: var(--text-ui); max-width: 56ch; }
+.mem-used-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.mem-used-tag { border: 1px solid var(--border); border-radius: 2px; padding: 0 6px; font-size: 11px; color: var(--muted); }
+
+.mem-empty { padding: 24px 0; color: var(--muted); max-width: 56ch; font-size: var(--text-ui); }
+.mem-empty-page { padding: var(--space-4) 0; font-family: var(--serif); font-size: var(--text-body); line-height: 1.6; max-width: var(--prose-width); color: var(--fg); }
+
+.mem-correct-box { margin-top: 8px; padding: 10px; border: 1px solid var(--control-border); border-radius: 3px; background: var(--bg-inset); }
+.mem-correct-box label { display: block; font-size: var(--text-meta); color: var(--muted); margin-bottom: 4px; }
+.mem-correct-box textarea { width: 100%; font: var(--text-ui) var(--sans); padding: 6px 8px; border: 1px solid var(--control-border); border-radius: 3px; background: var(--bg); color: var(--fg); resize: vertical; min-height: 56px; }
+.mem-correct-meta { margin-top: 4px; font-size: var(--text-meta); }
+.mem-correct-box .mem-correct-actions { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
