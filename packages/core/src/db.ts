@@ -303,6 +303,12 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX explain_call_job ON explain_call(job_id);
   ALTER TABLE digest ADD COLUMN areas TEXT;
   `,
+  // DIG-87 (UX cycle 2, soft project remove): a removed project keeps its rows and shadow repo --
+  // it is just hidden from listings and per-project routes -- and comes back with its history if
+  // the same root is registered again.
+  `
+  ALTER TABLE repo ADD COLUMN removed_at TEXT;
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {

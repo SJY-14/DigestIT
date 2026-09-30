@@ -123,9 +123,18 @@ const toProjectRow = (r: RepoRow): ProjectRow => ({
   id: r.id, name: r.name, path: r.path, language: r.language, contextPath: r.context_path, createdAt: r.created_at,
 });
 
+/** Excludes removed projects (DIG-87): they keep their rows but are hidden from lists and CLI lookups. */
 export function listProjects(db: DatabaseSync): ProjectRow[] {
-  return (db.prepare("SELECT id, name, path, language, context_path, created_at FROM repo WHERE mode = 'project' ORDER BY id")
-    .all() as unknown as RepoRow[]).map(toProjectRow);
+  return (db.prepare(
+    "SELECT id, name, path, language, context_path, created_at FROM repo WHERE mode = 'project' AND removed_at IS NULL ORDER BY id",
+  ).all() as unknown as RepoRow[]).map(toProjectRow);
+}
+
+/** `DELETE /api/projects/:id` and `digest remove <project>` (DIG-87): hides the project from lists
+ * and per-project routes, but keeps its DB rows and shadow repo -- registering the same root again
+ * restores it with its full history. Caller must check `isExplaining` first (409 while one runs). */
+export function removeProject(db: DatabaseSync, repoId: number, now: () => Date = () => new Date()): void {
+  db.prepare('UPDATE repo SET removed_at = ? WHERE id = ?').run(now().toISOString(), repoId);
 }
 
 /** `PATCH /api/projects/:id {language}` and `digest config <project> --language <l>`. */
@@ -223,8 +232,12 @@ export async function initProject(
   const contextPath = opts.contextPath ? resolve(opts.contextPath) : null;
   if (contextPath && !existsSync(contextPath)) throw new Error(`context file not found: ${contextPath}`);
 
-  const existing = db.prepare("SELECT id, name FROM repo WHERE path = ? AND mode = 'project'").get(path) as { id: number; name: string } | undefined;
+  const existing = db.prepare("SELECT id, name, removed_at AS removedAt FROM repo WHERE path = ? AND mode = 'project'")
+    .get(path) as { id: number; name: string; removedAt: string | null } | undefined;
   if (existing) {
+    // Re-registering the same root restores a removed project (DIG-87), with its history intact --
+    // nothing else in this branch needs to change, since its rows were never deleted.
+    if (existing.removedAt !== null) db.prepare('UPDATE repo SET removed_at = NULL WHERE id = ?').run(existing.id);
     const dataDir = projectDataDir(home, existing.id);
     if (opts.ignorePatterns?.length) {
       ensureDir0700(dataDir);

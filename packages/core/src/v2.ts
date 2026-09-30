@@ -116,6 +116,17 @@ export interface ContextStatusDto {
   hasUserContext: boolean;
 }
 
+/** A project's newest digest, for the switcher/unread count (UX cycle 2, decision-2.md §2).
+ * `seq` matches `DigestSummaryDto.seq` (the digest's ordinal, not a checkpoint or row id), so
+ * unread counting can just subtract a stored `lastSeen.seq` from it. */
+export interface LatestDigestDto {
+  id: number;
+  seq: number;
+  toAt: string;
+  /** The newest digest's L0 line; null until it has been explained. */
+  headline: string | null;
+}
+
 /** GET /api/projects */
 export interface ProjectDto {
   id: number;
@@ -125,6 +136,20 @@ export interface ProjectDto {
   context: ContextStatusDto;
   lastCheckpointAt: string | null;
   digestCount: number;
+  latestDigest: LatestDigestDto | null;
+}
+
+/**
+ * GET /api/about: global, project-independent info the first-run screen and Settings panel need
+ * (UX cycle 2, decision-2.md "Changes to the brief" 1). Never includes paths, env values or
+ * tokens -- `provider`/`model` are just the configured provider name and model id.
+ */
+export interface AboutDto {
+  provider: string;
+  model: string | null;
+  readOnly: true;
+  /** At least one row exists in the pre-v2 `unit_event` table (the legacy Insights view has data). */
+  hasLegacyData: boolean;
 }
 
 /** A suggested ignore pattern (DIG-56): detected on `init` of a folder without its own

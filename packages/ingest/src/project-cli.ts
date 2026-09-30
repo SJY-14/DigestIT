@@ -6,7 +6,8 @@ import { addIgnorePatterns, isValidIgnorePattern, readIgnorePatterns, removeIgno
 import { DEFAULT_DAILY_BUDGET } from './scheduler.js';
 import { intOpt, providerFromArgs } from './watch.js';
 import {
-  ProjectLockedError, findProject, initProject, latestCheckpoint, listProjects, projectStatus, updateProjectLanguage,
+  ProjectLockedError, findProject, initProject, isExplaining, latestCheckpoint, listProjects, projectStatus,
+  removeProject, updateProjectLanguage,
 } from './project.js';
 import { explainProject, retryDigest, type ExplainProjectResult } from './explain-job.js';
 import { refreshContext } from './project-context.js';
@@ -105,6 +106,41 @@ export async function runProjectsCli(argv: string[]): Promise<number> {
       const latest = latestCheckpoint(db, p.id);
       console.log(`${p.id}\t${p.name}\t${p.path}\t${latest ? `checkpoint #${latest.seq} at ${latest.takenAt}` : 'no checkpoints'}`);
     }
+    return 0;
+  } finally {
+    db.close();
+  }
+}
+
+export const REMOVE_USAGE = 'usage: digest remove <project> [--db <file>]';
+
+/** `digest remove <project>` (DIG-87): soft-removes it -- rows and the shadow repo are kept, and
+ * registering the same root again (`digest init`) restores it with its full history. */
+export async function runRemoveCli(argv: string[]): Promise<number> {
+  let values, positionals;
+  try {
+    ({ values, positionals } = parseArgs({ args: argv.slice(1), allowPositionals: true, options: { db: { type: 'string' } } }));
+  } catch (e) {
+    console.error(`${e instanceof Error ? e.message : String(e)}\n${REMOVE_USAGE}`);
+    return 2;
+  }
+  if (!positionals[0]) {
+    console.error(REMOVE_USAGE);
+    return 2;
+  }
+  const { db, home } = openProjectDb(values.db ?? process.env.DIGESTIT_DB);
+  try {
+    const found = findProject(db, positionals[0]);
+    if ('error' in found) {
+      console.error(found.error);
+      return 1;
+    }
+    if (isExplaining(home, found.id)) {
+      console.error(`an explain is currently running for "${found.name}"; try again once it finishes`);
+      return 1;
+    }
+    removeProject(db, found.id);
+    console.log(`removed project "${found.name}" (id ${found.id}); its history is kept and comes back if this root is registered again`);
     return 0;
   } finally {
     db.close();
