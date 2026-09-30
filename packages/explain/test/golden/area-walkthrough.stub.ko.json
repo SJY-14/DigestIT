@@ -1,28 +1,68 @@
 {
- "overview": "이 영역에서 다루는 파일은 App.tsx 및 Settings.tsx입니다. 스텁 제공자는 코드를 읽지 않고 파일별 hunk만 나열합니다.",
+ "overview": "이 영역에서 다루는 파일은 App.tsx 및 Settings.tsx입니다. 스텁 제공자는 코드를 읽지 않고 hunk만 나열합니다.",
  "steps": [
   {
-   "title": "App.tsx 수정",
-   "body": "apps/web/src/App.tsx: hunk 2개, 2줄 추가. 스텁 제공자는 이유를 설명하지 않습니다.",
-   "hunks": [
+   "title": "App.tsx hunk 1 수정",
+   "body": "apps/web/src/App.tsx hunk 1: 1줄 추가. 스텁 제공자는 이유를 설명하지 않습니다.",
+   "ranges": [
     {
      "path": "apps/web/src/App.tsx",
-     "hunk": 1
-    },
+     "side": "new",
+     "start": 2,
+     "end": 2
+    }
+   ],
+   "callouts": [
     {
      "path": "apps/web/src/App.tsx",
-     "hunk": 2
+     "side": "new",
+     "start": 2,
+     "end": 2,
+     "note": "스텁 콜아웃: 분석 없음"
+    }
+   ],
+   "mechanical": false
+  },
+  {
+   "title": "App.tsx hunk 2 수정",
+   "body": "apps/web/src/App.tsx hunk 2: 1줄 추가. 스텁 제공자는 이유를 설명하지 않습니다.",
+   "ranges": [
+    {
+     "path": "apps/web/src/App.tsx",
+     "side": "new",
+     "start": 22,
+     "end": 22
+    }
+   ],
+   "callouts": [
+    {
+     "path": "apps/web/src/App.tsx",
+     "side": "new",
+     "start": 22,
+     "end": 22,
+     "note": "스텁 콜아웃: 분석 없음"
     }
    ],
    "mechanical": false
   },
   {
    "title": "Settings.tsx 추가",
-   "body": "apps/web/src/Settings.tsx: hunk 1개, 2줄 추가. 스텁 제공자는 이유를 설명하지 않습니다.",
-   "hunks": [
+   "body": "apps/web/src/Settings.tsx hunk 1: 2줄 추가. 스텁 제공자는 이유를 설명하지 않습니다.",
+   "ranges": [
     {
      "path": "apps/web/src/Settings.tsx",
-     "hunk": 1
+     "side": "new",
+     "start": 1,
+     "end": 2
+    }
+   ],
+   "callouts": [
+    {
+     "path": "apps/web/src/Settings.tsx",
+     "side": "new",
+     "start": 1,
+     "end": 1,
+     "note": "스텁 콜아웃: 분석 없음"
     }
    ],
    "mechanical": false

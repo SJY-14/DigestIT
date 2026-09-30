@@ -179,6 +179,8 @@ export interface CheckProseOptions {
    * (`<label>: 22 words, target 20`). Such a note never triggers a retry.
    */
   lengthNotes?: string[];
+  /** A Korean limit stated in characters directly, replacing the `charCap` formula (DIG-98 callout notes). */
+  koChars?: number;
 }
 
 /**
@@ -189,7 +191,8 @@ export interface CheckProseOptions {
  * `opts.truncate` is `false`. Boilerplate and tells are reported but never
  * rewritten or truncated on their account (only a retry can replace them).
  * Tells go into `styleWarnings`, never `v`: they are soft signals, not hard
- * violations.
+ * violations. `opts.koChars` states a Korean field's limit in characters
+ * directly instead of the `charCap` formula (a step callout note).
  */
 export function checkProse(
   raw: string, label: string, words: number, language: ExplainLanguage, v: string[], styleWarnings: string[] = [],
@@ -200,10 +203,11 @@ export function checkProse(
   if (hasUnsafeMarkup(raw)) v.push(`${label}: contains HTML or a link`);
   let text = cleanText(raw);
   const n = wordCount(text);
-  const cap = charCap(language, words);
   const chars = charLength(text);
   const maxWords = tolerated(words);
-  const maxChars = charCap(language, maxWords);
+  const koChars = language === 'ko' ? opts.koChars : undefined;
+  const cap = koChars ?? charCap(language, words);
+  const maxChars = koChars !== undefined ? tolerated(koChars) : charCap(language, maxWords);
   if (n > maxWords) v.push(`${label}: ${n} words, limit ${words}`);
   else if (n > words) notes.push(`${label}: ${n} words, target ${words}`);
   if (chars > maxChars) v.push(`${label}: ${chars} characters, limit ${cap}`);

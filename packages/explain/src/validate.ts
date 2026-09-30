@@ -26,6 +26,15 @@ export const LIMITS = {
   walkCheckMin: 1,
   walkCheckMax: 5,
   walkCheckWords: 30,
+  /** A single range's `changedCount` above this is rejected regardless of the file's total (DIG-96 rule 3). */
+  walkRangeMaxChanged: 40,
+  /** A file's total changed lines above this may not be covered by one single range (DIG-96 rule 3). */
+  walkFileChangedMax: 30,
+  /** A callout note, English: words (`wordCount`), like every other prose field. */
+  walkCalloutNoteWords: 12,
+  /** A callout note, Korean: characters (`charLength`), counted directly, not via the generic `charCap` formula. */
+  walkCalloutNoteCharsKo: 25,
+  walkCalloutsMax: 4,
 } as const;
 
 /** Required first L1 bullet of a *commit* (not a digest) with nothing user-visible. */
