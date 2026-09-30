@@ -1,6 +1,25 @@
 # Roadmap
 
-## Fast Explain (current priority)
+## Milestone 4: project memory (current)
+
+DIG-97 (Board, 2026-09-30): DigestIT keeps sourced facts about each project (areas, terms, threads of
+work across digests, user notes), updates them in the background and gives each prompt a small,
+relevant slice. Deterministic extraction first; background LLM summaries are opt-in per project and
+have their own small daily share. Design: [milestone-4-memory.md](milestone-4-memory.md), contract
+`packages/core/src/memory.ts`. D1–D3 (summaries default, budget share, what is stored) are with the
+Board; the build starts on the recommended options.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-97 | Design, contract, Board decisions D1–D3, review, acceptance | CTO | DIG-100–103 |
+| 1 | DIG-100 | Store, migration, rollback, export/clear, deterministic extraction, threads, `digest memory` CLI | Diff engineer | — |
+| 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task | Summarization engineer | — |
+| 3 | DIG-103 | `MemoryWorker` triggers, budget share, retrieval wired into Explain, memory API | Diff engineer | DIG-100, DIG-101 |
+| 4 | DIG-102 | "What DigestIT knows" design: brief, critique, decision (done: `docs/ux/decision-4-memory.md`) | UX Designer, UX Reviewer | — |
+| 5 | DIG-104 | The page and the per-digest "what DigestIT used" | Frontend engineer | DIG-102, DIG-103 |
+| 6 | later | A/B kit and blind read (with and without memory, en/ko) | Summarization engineer, operator, UX Reviewer | DIG-103 |
+
+## Fast Explain
 
 Board feedback DIG-73 (2026-09-29): Explain shows nothing useful for ~50 s (~100 s on a project's first Explain).
 Targets: deterministic view < 1 s, L0 ≤ 10–15 s, full L2 ≤ 30 s, L3 ≤ 15 s streamed step by step. One Explain stays
@@ -14,6 +33,20 @@ one budget unit. Design and contract: [explain-speed.md](explain-speed.md).
 | 3 | DIG-76 | Instant digest skeleton, per-part fill-in and retry, SSE client, streamed L3 steps | Frontend engineer | — (fixtures until DIG-75) |
 | 4 | DIG-77 | Real-provider timing and quality acceptance (en and ko) | Board operator | DIG-74, DIG-75, DIG-76 |
 | 5 | DIG-84 | Bug: Explain button stays "Explaining…" after a server-run Explain (live stream misses in-process writes). Merged 2026-09-30 | Diff engineer | — |
+
+## L3 step snippets and line callouts
+
+DIG-96 (Board, 2026-09-30, critical): "Explain code" still repeats the whole diff under every step, because steps point
+at whole hunks and a new file is one hunk. Steps now carry exact line ranges and line-anchored callouts; each step shows
+only its own lines, the full diff is shown once. Spec and contract (types, `rangeSpan` in core) merged to `main`:
+[l3-step-snippets.md](l3-step-snippets.md). Supersedes the hunk anchors of DIG-71 below.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-96 | Contract, review, acceptance kit | CTO | DIG-98, DIG-99 |
+| 1 | DIG-98 | Schema, prompt `a6`, validator, stub, streaming | Diff engineer | — (rebase on DIG-94) |
+| 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed | Frontend engineer | — |
+| 3 | — | Real-provider run en/ko, light/dark, 60+ line multi-hunk change; UX Reviewer sentence-to-line check | Board operator, UX reviewer | DIG-98, DIG-99 |
 
 ## L3 step ↔ code mapping
 
@@ -61,8 +94,8 @@ the project. Projects can be removed (soft delete). A new "All projects" view so
 | 4 | DIG-90 | Verify against decision-2, `docs/ux/cycle-2-summary.md`. Passed, merged 2026-09-30 | UX reviewer | DIG-88, DIG-89, DIG-92 |
 | 5 | DIG-92 | Fix: the web client's Remove got 415 (DELETE sent no `content-type`). Found by DIG-90. Merged 2026-09-30 | CTO | — |
 | 6 | DIG-93 | Real-provider acceptance run (`.cache/dig80-acceptance/accept.sh`, all views passed, 2026-09-30) | Board operator | DIG-90 |
-| 7 | DIG-95 | Follow-up from DIG-93: inline code in L0 lines outside the reading pane; L3 "writing" notice stays after the walkthrough (DIG-94 covers the explanation-side findings) | Frontend engineer | — |
-| 8 | DIG-94 | Fix: explain parts fail length check and get generated twice; L0 headline is never cut mid-sentence now (kept whole and flagged instead); the validation reason is logged per attempt (`explain_call.violations`) | Summarization engineer | DIG-93 |
+| 7 | DIG-95 | Follow-up from DIG-93: inline code in All-projects row headlines. The L3 "writing" notice was correct (the kit captured mid-stream; kit wait fixed), now pinned by a test. Merged 2026-09-30 | Frontend engineer | — |
+| 8 | DIG-94 | Fix: explain parts fail length check and get generated twice. Word limits get a 25% tolerance band (over the target is a style warning, not a retry); prose is cut only at a sentence boundary and L0 is never cut; the validation reason is logged per attempt (`explain_call.violations`) | Summarization engineer | DIG-93 |
 
 ## Removing the AI-made look (done)
 

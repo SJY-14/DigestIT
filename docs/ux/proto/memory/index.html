@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<title>DigestIT — "What DigestIT knows" (DIG-102 brief)</title>
+<script>
+/* Same reasoning as proto/visual-b-editorial: read the theme from the URL hash before first
+   paint, and toggle by reloading (not a live attribute flip) so a headless screenshot after
+   navigation is the reliable way to capture each theme. */
+document.documentElement.dataset.theme = /^#?dark$/.test(location.hash) ? 'dark' : 'light';
+</script>
+<style>
+/* ============================================================
+   Tokens copied verbatim from apps/web/src/styles.css (real Direction B, not the old
+   visual-b-editorial approximation). Font stacks fall back to Charter/Georgia/Noto since this
+   prototype doesn't bundle the self-hosted Source Serif/Sans files.
+   ============================================================ */
+:root{
+  --serif: Charter, "Source Serif 4", Georgia, "Noto Serif KR", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Source Sans 3", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --text-headline:30px; --text-title:18px; --text-prose:16px; --text-body:15px; --text-ui:13px; --text-meta:12px;
+  --prose-width:68ch;
+  --space-1:8px; --space-2:16px; --space-3:24px; --space-4:40px; --space-5:64px;
+  --bg:#fbfaf7; --bg-inset:#f3f1ea; --fg:#20211d; --muted:#65645a;
+  --border:#e4e1d6; --border-muted:#ece9de; --control-border:#8a8577;
+  --hover:#f3f1ea; --selected:#f1ece1;
+  --accent:#9a5b32; --accent-solid:#9a5b32; --focus:#9a5b32;
+  --shadow:0 8px 24px rgba(32,33,29,.12); --raised:#fbfaf7;
+  --add:#3f6b3f; --del:#a23b3b; --add-bg:#e9f0e4; --del-bg:#f6e6e2;
+}
+html[data-theme="dark"]{
+  --bg:#1b1a17; --bg-inset:#221f1a; --fg:#eae6da; --muted:#a39d8c;
+  --border:#3a362c; --border-muted:#2c2921; --control-border:#7a7466;
+  --hover:#24211c; --selected:#2a2620;
+  --accent:#d99a6c; --accent-solid:#a0603a; --focus:#d99a6c;
+  --shadow:0 8px 24px rgba(0,0,0,.45); --raised:#29251f;
+  --add:#8fbf8f; --del:#e08a8a; --add-bg:rgba(143,191,143,.10); --del-bg:rgba(224,138,138,.10);
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.5;font-size:14px;}
+body:lang(ko){word-break:keep-all;overflow-wrap:anywhere;}
+h1,h2,h3{margin:0;}
+a{color:var(--accent);text-underline-offset:2px;}
+.muted{color:var(--muted);}
+.mono{font-family:var(--mono);font-size:12px;}
+:focus-visible{outline:2px solid var(--focus);outline-offset:-2px;}
+
+/* proto chrome (not part of the app) */
+.proto-bar{position:sticky;top:0;z-index:50;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 16px;background:#20211d;color:#fff;font:12px/1.6 var(--sans);}
+.proto-bar button{font:inherit;background:#3a362c;color:#fff;border:1px solid #4a4638;border-radius:3px;padding:5px 10px;cursor:pointer;}
+.proto-bar a{color:#e6b98c;}
+.proto-bar .sp{margin-left:auto;}
+.screen{border-bottom:12px solid var(--bg-inset);}
+.screen-label{font:600 11px/1 var(--mono);letter-spacing:.02em;color:var(--muted);padding:10px 16px 0;}
+
+/* app chrome, matching styles.css .top / .app */
+.app{max-width:820px;margin:0 auto;padding:0 24px 64px;}
+.top{display:flex;align-items:center;gap:16px;margin:0 0 16px;padding:12px 0;border-bottom:1px solid var(--border);}
+.top .brand{font-weight:600;font-size:14px;}
+.top nav{display:flex;gap:4px;}
+.top nav a{color:var(--muted);text-decoration:none;font-size:13px;padding:3px 6px;border-radius:2px;}
+.top nav a.current{color:var(--fg);font-weight:600;}
+
+/* breadcrumb, matching styles.css .breadcrumb */
+.breadcrumb ol{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;align-items:center;gap:2px;font-size:var(--text-meta);}
+.breadcrumb li+li::before{content:'›';color:var(--muted);padding:0 4px;}
+.crumb{background:none;border:0;padding:2px;color:var(--accent);text-decoration:none;}
+.crumb.current{color:var(--fg);font-weight:600;}
+.back-link{display:inline-block;margin-top:6px;font-size:var(--text-ui);}
+
+.btn{border:1px solid var(--control-border);background:transparent;border-radius:3px;padding:3px 12px;height:28px;font-size:var(--text-ui);cursor:pointer;color:var(--fg);}
+.btn:hover{background:var(--hover);border-color:var(--muted);}
+.btn.primary{background:var(--accent-solid);border-color:var(--accent-solid);color:#fff;font-weight:600;}
+.btn.quiet{border-color:transparent;color:var(--muted);}
+.btn.quiet:hover{color:var(--del);border-color:var(--del);background:none;}
+
+/* --- mem-* : new for this page ------------------------------------------------------------ */
+.mem-page{max-width:var(--prose-width);margin:0 auto;}
+.mem-head h1{font-family:var(--serif);font-size:var(--text-title);font-weight:600;margin:0 0 4px;}
+.mem-summary{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-top:2px;}
+.mem-counts{font-size:var(--text-ui);color:var(--fg);}
+.mem-counts b{font-weight:600;}
+.mem-actions{margin-left:auto;display:flex;gap:8px;}
+.mem-lastbatch{display:flex;align-items:baseline;gap:10px;margin:6px 0 0;font-size:var(--text-meta);color:var(--muted);}
+.mem-lastbatch a{font-size:var(--text-meta);}
+.mem-confirm{color:var(--del);font-weight:600;}
+
+.mem-panel{border-top:1px solid var(--border);margin-top:var(--space-2);padding-top:var(--space-2);}
+.mem-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.mem-toggle-label{font-size:var(--text-ui);font-weight:600;}
+.mem-switch{position:relative;display:inline-flex;align-items:center;width:38px;height:22px;border:1px solid var(--control-border);border-radius:11px;background:var(--bg-inset);cursor:pointer;padding:0;}
+.mem-switch::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--muted);transition:transform .1s;}
+.mem-switch[aria-pressed="true"]{background:var(--add-bg);border-color:var(--add);}
+.mem-switch[aria-pressed="true"]::after{background:var(--add);transform:translateX(16px);}
+.mem-sends{margin:8px 0 0;font-size:var(--text-ui);line-height:1.6;max-width:56ch;}
+.mem-sends summary{cursor:pointer;color:var(--accent);font-size:var(--text-ui);list-style:none;}
+.mem-sends summary::-webkit-details-marker{display:none;}
+.mem-sends p{margin:6px 0 0;color:var(--fg);}
+.mem-usage{margin:10px 0 0;font-size:var(--text-meta);color:var(--muted);}
+
+.mem-filter-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:var(--space-3) 0 var(--space-1);padding-bottom:8px;border-bottom:1px solid var(--border);}
+.mem-tabs{display:flex;gap:4px;}
+.mem-tab{background:none;border:1px solid transparent;border-radius:3px;padding:4px 10px;font-size:var(--text-ui);color:var(--muted);cursor:pointer;}
+.mem-tab[aria-selected="true"]{color:var(--fg);font-weight:600;background:var(--selected);}
+.mem-filter-input{margin-left:auto;font:inherit;font-size:var(--text-ui);padding:4px 8px;border:1px solid var(--control-border);border-radius:3px;background:var(--bg);color:var(--fg);min-width:200px;}
+
+.mem-section{margin-top:var(--space-3);}
+.mem-section h2{font:600 var(--text-ui)/1.5 var(--sans);color:var(--muted);text-transform:none;padding-bottom:6px;border-bottom:1px solid var(--border);}
+.mem-list{list-style:none;margin:0;padding:0;}
+.mem-item{padding:12px 0;border-bottom:1px solid var(--border-muted);}
+.mem-item:first-child{padding-top:10px;}
+.mem-item.is-stale{border-left:2px dashed var(--muted);padding-left:10px;margin-left:-12px;}
+.mem-item-row{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 12px;}
+.mem-item-title{font:600 var(--text-body)/1.4 var(--serif);}
+.mem-item-source{margin-left:auto;font-size:var(--text-meta);color:var(--muted);white-space:nowrap;}
+.mem-item-effect{margin:4px 0 0;color:var(--fg);font-size:var(--text-ui);max-width:56ch;}
+.mem-item-status{margin:4px 0 0;font-size:var(--text-meta);color:var(--muted);}
+.mem-item-foot{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin-top:6px;font-size:var(--text-meta);color:var(--muted);}
+.mem-item-files code{font-size:11px;color:var(--muted);}
+.mem-item-actions{margin-left:auto;display:flex;gap:4px;}
+.mem-item-actions button{background:none;border:0;padding:2px 6px;font-size:var(--text-meta);color:var(--accent);cursor:pointer;}
+.mem-item-actions button:hover{text-decoration:underline;}
+.mem-item-actions button.danger{color:var(--del);}
+.mem-item-override{margin:4px 0 0;font-size:var(--text-meta);}
+.mem-item-override-text{color:var(--muted);text-decoration:line-through;margin:2px 0 0;font-size:var(--text-ui);max-width:56ch;}
+.mem-used-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+.mem-used-tag{border:1px solid var(--border);border-radius:2px;padding:0 6px;font-size:11px;color:var(--muted);}
+
+.mem-empty{padding:24px 0;color:var(--muted);max-width:56ch;font-size:var(--text-ui);}
+.mem-empty-page{padding:var(--space-4) 0;font-family:var(--serif);font-size:var(--text-body);line-height:1.6;max-width:var(--prose-width);color:var(--fg);}
+.mem-empty-page .btn{margin-top:var(--space-2);}
+
+.mem-correct-box{margin-top:8px;padding:10px;border:1px solid var(--control-border);border-radius:3px;background:var(--bg-inset);}
+.mem-correct-box label{display:block;font-size:var(--text-meta);color:var(--muted);margin-bottom:4px;}
+.mem-correct-box textarea{width:100%;font:var(--text-ui) var(--sans);padding:6px 8px;border:1px solid var(--control-border);border-radius:3px;background:var(--bg);color:var(--fg);resize:vertical;min-height:56px;}
+.mem-correct-box .mem-correct-actions{display:flex;gap:8px;margin-top:8px;justify-content:flex-end;}
+
+/* per-digest "used" glance line on L0, echoing .areas-glance */
+.areas-glance{margin:var(--space-3) 0 0;padding-top:var(--space-2);border-top:1px solid var(--border);max-width:var(--prose-width);}
+.areas-glance-label{font:600 var(--text-ui)/1.5 var(--sans);color:var(--fg);margin:0 0 var(--space-1);}
+.l0-headline{font-family:var(--serif);font-size:var(--text-headline);line-height:1.35;font-weight:600;max-width:var(--prose-width);margin:0;}
+.l0-stats{margin:12px 0 0;font-size:var(--text-ui);color:var(--fg);}
+.level-switcher{display:flex;align-items:flex-end;gap:16px;border-bottom:1px solid var(--border);margin-top:20px;}
+.level-tabs{display:flex;gap:24px;}
+.level-tab{background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:8px 0;font-size:var(--text-ui);color:var(--muted);}
+.level-tab[aria-selected="true"]{color:var(--fg);font-weight:600;border-bottom-color:var(--accent);}
+.level-hint{font-size:var(--text-meta);margin-left:auto;padding-bottom:8px;color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="proto-bar">
+  <strong>DigestIT — "What DigestIT knows" (DIG-102)</strong>
+  <a href="#overview">1 Overview</a>
+  <a href="#hidden">2 Hidden filter</a>
+  <a href="#correct">3 Correcting an item</a>
+  <a href="#used">4 Per-digest "used"</a>
+  <a href="#empty">5 Empty (new project)</a>
+  <a href="#overview-ko">6 한국어</a>
+  <span class="sp"></span>
+  <button onclick="location.hash = document.documentElement.dataset.theme==='dark' ? 'light' : 'dark'; location.reload();">Toggle light/dark (then use the screen links above)</button>
+</div>
+
+<!-- ===================== 1. OVERVIEW (light, en, Active) ===================== -->
+<section class="screen" id="overview">
+<div class="screen-label">SCREEN 1 — Project-level page, Active filter, populated</div>
+<div class="app">
+  <div class="top"><span class="brand">DigestIT</span><nav><a>Home</a><a>All projects</a></nav></div>
+  <nav class="breadcrumb"><ol>
+    <li><a class="crumb" href="#">snapback</a></li>
+    <li><span class="crumb current">What DigestIT knows</span></li>
+  </ol></nav>
+  <a class="back-link" href="#">← Back to digest</a>
+
+  <div class="mem-page">
+    <div class="mem-head" style="margin-top:20px;">
+      <h1>What DigestIT knows about snapback</h1>
+      <div class="mem-summary">
+        <span class="mem-counts"><b>42</b> areas · <b>118</b> terms · <b>3</b> ongoing · <b>5</b> your notes</span>
+        <div class="mem-actions"><button class="btn">Export</button><button class="btn quiet">Clear</button></div>
+      </div>
+      <p class="mem-lastbatch">Last updated: daily sweep, today 03:02 (14 items changed) · <a href="#">Undo last update</a></p>
+    </div>
+
+    <div class="mem-panel">
+      <div class="mem-toggle-row">
+        <span class="mem-toggle-label">Background summaries</span>
+        <button class="mem-switch" aria-pressed="false" aria-label="Background summaries"></button>
+      </div>
+      <details class="mem-sends">
+        <summary>▸ What this sends</summary>
+        <p>DigestIT writes a short summary of a folder or a line of work using <b>stub</b> — the
+        same provider Explain uses. Nothing beyond what Explain already sends leaves this machine.</p>
+      </details>
+      <p class="mem-usage">Today: 2 of 4 background summaries used, shared across all your projects.
+      They pause once fewer than 10 of today's 40 Explain calls are left.</p>
+    </div>
+
+    <div class="mem-filter-bar">
+      <div class="mem-tabs" role="tablist" aria-label="Filter">
+        <button class="mem-tab" role="tab" aria-selected="true">Active</button>
+        <button class="mem-tab" role="tab" aria-selected="false">Hidden (3)</button>
+      </div>
+      <input class="mem-filter-input" type="search" placeholder="Filter items…" aria-label="Filter memory items" />
+    </div>
+
+    <section class="mem-section">
+      <h2>Areas (42)</h2>
+      <ul class="mem-list">
+        <li class="mem-item">
+          <div class="mem-item-row">
+            <span class="mem-item-title">src/retry.ts</span>
+            <span class="mem-item-source">From the code · checked 2h ago</span>
+          </div>
+          <p class="mem-item-effect">Retry with exponential backoff. Exports isRetryable, withRetry, RETRYABLE_CODES (+2 more).</p>
+          <div class="mem-item-foot">
+            <span>used in 6 digests</span>
+            <div class="mem-item-actions">
+              <button>Correct</button><button>Pin</button><button class="danger">Delete</button>
+            </div>
+          </div>
+        </li>
+        <li class="mem-item is-stale">
+          <div class="mem-item-row">
+            <span class="mem-item-title">src/upload.ts</span>
+            <span class="mem-item-source">From the code</span>
+          </div>
+          <p class="mem-item-status">stale — files changed since checked</p>
+          <p class="mem-item-effect">Upload failures carry file and attempt count.</p>
+          <div class="mem-item-foot">
+            <span>used in 3 digests</span>
+            <div class="mem-item-actions">
+              <button>Correct</button><button>Pin</button><button class="danger">Delete</button>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <section class="mem-section">
+      <h2>Terms (118)</h2>
+      <ul class="mem-list">
+        <li class="mem-item">
+          <div class="mem-item-row">
+            <span class="mem-item-title mono" style="font-family:var(--mono);font-size:14px;">RETRYABLE_CODES</span>
+            <span class="mem-item-source">From the code · src/retry.ts</span>
+          </div>
+          <p class="mem-item-effect">Error codes worth a retry: connection reset, timeout, DNS lookup, broken pipe.</p>
+          <div class="mem-item-foot">
+            <span>Pinned · used in 4 digests</span>
+            <div class="mem-item-actions">
+              <button>Correct</button><button>Unpin</button><button class="danger">Delete</button>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <section class="mem-section">
+      <h2>Ongoing work (3)</h2>
+      <ul class="mem-list">
+        <li class="mem-item">
+          <div class="mem-item-row">
+            <span class="mem-item-title">Retry work</span>
+            <span class="mem-item-source">From earlier digests · open</span>
+          </div>
+          <p class="mem-item-effect">src/retry.ts, src/upload.ts · 3 digests, Mon–Wed.</p>
+          <div class="mem-item-foot">
+            <span>used in 2 digests</span>
+            <div class="mem-item-actions"><button>Pin</button><button class="danger">Delete</button></div>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <section class="mem-section">
+      <h2>Your notes (5)</h2>
+      <ul class="mem-list">
+        <li class="mem-item">
+          <div class="mem-item-row">
+            <span class="mem-item-title">Retry cap</span>
+            <span class="mem-item-source">From you · from your context file</span>
+          </div>
+          <p class="mem-item-effect">"Retries are capped at 10 — raising this needs sign-off, it's a support-load tradeoff."</p>
+          <div class="mem-item-foot">
+            <span></span>
+            <div class="mem-item-actions"><button>Edit</button><button>Pin</button><button class="danger">Delete</button></div>
+          </div>
+        </li>
+        <li class="mem-item">
+          <div class="mem-item-row">
+            <span class="mem-item-title">Correction</span>
+            <span class="mem-item-source">From you · <a href="#">corrects: Area src/upload.ts ↑</a></span>
+          </div>
+          <p class="mem-item-effect">"This also retries a 429 with Retry-After, not just 5xx."</p>
+          <div class="mem-item-foot">
+            <span></span>
+            <div class="mem-item-actions"><button>Edit</button><button>Pin</button><button class="danger">Delete</button></div>
+          </div>
+        </li>
+      </ul>
+    </section>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 2. HIDDEN FILTER ===================== -->
+<section class="screen" id="hidden">
+<div class="screen-label">SCREEN 2 — Hidden filter, restore</div>
+<div class="app">
+  <div class="top"><span class="brand">DigestIT</span><nav><a>Home</a><a>All projects</a></nav></div>
+  <nav class="breadcrumb"><ol><li><a class="crumb" href="#">snapback</a></li><li><span class="crumb current">What DigestIT knows</span></li></ol></nav>
+  <div class="mem-page">
+    <div class="mem-head" style="margin-top:20px;"><h1>What DigestIT knows about snapback</h1></div>
+    <div class="mem-filter-bar">
+      <div class="mem-tabs" role="tablist" aria-label="Filter">
+        <button class="mem-tab" role="tab" aria-selected="false">Active</button>
+        <button class="mem-tab" role="tab" aria-selected="true">Hidden (3)</button>
+      </div>
+    </div>
+    <section class="mem-section">
+      <h2>Areas</h2>
+      <ul class="mem-list">
+        <li class="mem-item">
+          <div class="mem-item-row">
+            <span class="mem-item-title">scripts/legacy-import.ts</span>
+            <span class="mem-item-source">Deleted 5 days ago</span>
+          </div>
+          <div class="mem-item-foot">
+            <span></span>
+            <div class="mem-item-actions"><button>Restore</button></div>
+          </div>
+        </li>
+      </ul>
+    </section>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 3. CORRECT INTERACTION ===================== -->
+<section class="screen" id="correct">
+<div class="screen-label">SCREEN 3 — Correcting an item (creates a user note that overrides it)</div>
+<div class="app">
+  <div class="top"><span class="brand">DigestIT</span><nav><a>Home</a><a>All projects</a></nav></div>
+  <div class="mem-page">
+    <section class="mem-section" style="margin-top:24px;">
+      <h2>Areas</h2>
+      <ul class="mem-list">
+        <li class="mem-item">
+          <div class="mem-item-row">
+            <span class="mem-item-title">src/retry.ts</span>
+            <span class="mem-item-source">From the code</span>
+          </div>
+          <p class="mem-item-effect">Retry with exponential backoff.</p>
+          <div class="mem-correct-box">
+            <label for="c1">Your correction (replaces this in future digests)</label>
+            <textarea id="c1">Also retries a 429 reply if it carries Retry-After.</textarea>
+            <div class="mem-correct-actions">
+              <button class="btn quiet">Cancel</button>
+              <button class="btn primary">Save correction</button>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </section>
+    <p class="mem-empty" style="padding-top:20px;">After saving: this row keeps its "From the code" text, struck through, with
+    "Overridden by your note →" linking to the new row in <b>Your notes</b>. Nothing is deleted.</p>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 4. PER-DIGEST "USED" ===================== -->
+<section class="screen" id="used">
+<div class="screen-label">SCREEN 4a — L0, the digest-glance entry point</div>
+<div class="app">
+  <div class="top"><span class="brand">DigestIT</span><nav><a>Home</a><a>All projects</a></nav></div>
+  <h1 class="l0-headline" style="margin-top:16px;">Backups now retry failed uploads and keep going past broken files, so one network hiccup no longer aborts a run.</h1>
+  <p class="l0-stats">6 files · +85 −16 · Today, 09:13</p>
+  <div class="areas-glance">
+    <p class="areas-glance-label">Grounded in 6 memory items · <a href="#used-page">What DigestIT used →</a></p>
+  </div>
+  <div class="level-switcher">
+    <div class="level-tabs">
+      <button class="level-tab" aria-selected="true">0 Summary</button>
+      <button class="level-tab">1 Impact</button>
+      <button class="level-tab">2 Structure</button>
+      <button class="level-tab">3 Code</button>
+    </div>
+    <span class="level-hint">Press 0–3 to switch level</span>
+  </div>
+</div>
+</section>
+<section class="screen" id="used-page">
+<div class="screen-label">SCREEN 4b — Digest-scoped "Used for this digest"</div>
+<div class="app">
+  <div class="top"><span class="brand">DigestIT</span><nav><a>Home</a><a>All projects</a></nav></div>
+  <nav class="breadcrumb"><ol><li><a class="crumb" href="#">snapback</a></li><li><span class="crumb current">What DigestIT knows</span></li></ol></nav>
+  <a class="back-link" href="#used">← Back to digest</a>
+  <div class="mem-page">
+    <div class="mem-head" style="margin-top:20px;"><h1>Used for this digest (6 items)</h1>
+      <p class="mem-usage" style="margin-top:6px;">Today, 09:13 · 3 more items were considered but left out for space.</p>
+    </div>
+    <section class="mem-section">
+      <ul class="mem-list">
+        <li class="mem-item">
+          <div class="mem-item-row">
+            <span class="mem-item-title">src/retry.ts</span>
+            <span class="mem-item-source">From the code</span>
+          </div>
+          <p class="mem-item-effect">Retry with exponential backoff.</p>
+          <div class="mem-used-tags">
+            <span class="mem-used-tag">Used for: L0 summary</span>
+            <span class="mem-used-tag">Used for: src/retry.ts (L3)</span>
+          </div>
+          <div class="mem-item-foot">
+            <span></span>
+            <div class="mem-item-actions"><button>Correct</button><button>Pin</button></div>
+          </div>
+        </li>
+        <li class="mem-item">
+          <div class="mem-item-row">
+            <span class="mem-item-title">Retry work (ongoing)</span>
+            <span class="mem-item-source">From earlier digests</span>
+          </div>
+          <p class="mem-item-effect">3 digests, Mon–Wed.</p>
+          <div class="mem-used-tags"><span class="mem-used-tag">Used for: L0 summary</span></div>
+          <div class="mem-item-foot">
+            <span></span>
+            <div class="mem-item-actions"><button>Pin</button></div>
+          </div>
+        </li>
+      </ul>
+    </section>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 5. EMPTY STATE ===================== -->
+<section class="screen" id="empty">
+<div class="screen-label">SCREEN 5 — New project, no checkpoint yet</div>
+<div class="app">
+  <div class="top"><span class="brand">DigestIT</span><nav><a>Home</a><a>All projects</a></nav></div>
+  <nav class="breadcrumb"><ol><li><a class="crumb" href="#">my-project</a></li><li><span class="crumb current">What DigestIT knows</span></li></ol></nav>
+  <div class="mem-page">
+    <h1 style="font-family:var(--serif);font-size:var(--text-title);font-weight:600;margin-top:20px;">What DigestIT knows about my-project</h1>
+    <div class="mem-empty-page">
+      <p>DigestIT hasn't looked at my-project yet. Areas and terms appear after the first Explain.</p>
+      <button class="btn primary">Go to my-project</button>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 6. KOREAN ===================== -->
+<section class="screen" id="overview-ko" lang="ko">
+<div class="screen-label">SCREEN 6 — Overview, 한국어</div>
+<div class="app">
+  <div class="top"><span class="brand">DigestIT</span><nav><a>홈</a><a>전체 프로젝트</a></nav></div>
+  <nav class="breadcrumb"><ol><li><a class="crumb" href="#">snapback</a></li><li><span class="crumb current">DigestIT가 아는 것</span></li></ol></nav>
+  <div class="mem-page">
+    <div class="mem-head" style="margin-top:20px;">
+      <h1>snapback에 대해 DigestIT가 아는 것</h1>
+      <div class="mem-summary">
+        <span class="mem-counts">영역 <b>42</b>개 · 용어 <b>118</b>개 · 진행 중인 작업 <b>3</b>개 · 내 메모 <b>5</b>개</span>
+        <div class="mem-actions"><button class="btn">내보내기</button><button class="btn quiet">모두 지우기</button></div>
+      </div>
+      <p class="mem-lastbatch">마지막 업데이트: 오늘 03:02 일일 점검 (14개 항목 변경) · <a href="#">최근 업데이트 실행 취소</a></p>
+    </div>
+    <div class="mem-panel">
+      <div class="mem-toggle-row">
+        <span class="mem-toggle-label">백그라운드 요약</span>
+        <button class="mem-switch" aria-pressed="false" aria-label="백그라운드 요약"></button>
+      </div>
+      <details class="mem-sends">
+        <summary>▸ 무엇을 전송하는지 보기</summary>
+        <p>DigestIT는 폴더나 진행 중인 작업에 대한 짧은 요약을 <b>stub</b>을 사용해 작성합니다 — Explain과
+        동일한 제공자입니다. Explain이 이미 전송하는 것 이상은 이 기기를 벗어나지 않습니다.</p>
+      </details>
+      <p class="mem-usage">오늘: 전체 프로젝트에서 공유되는 백그라운드 요약 4회 중 2회 사용됨.
+      오늘 남은 Explain 호출이 10회 미만이 되면 일시 중지됩니다.</p>
+    </div>
+    <section class="mem-section">
+      <h2>영역 (42)</h2>
+      <ul class="mem-list">
+        <li class="mem-item">
+          <div class="mem-item-row">
+            <span class="mem-item-title">src/retry.ts</span>
+            <span class="mem-item-source">코드에서 · 2시간 전 확인</span>
+          </div>
+          <p class="mem-item-effect">지수 백오프로 재시도. isRetryable, withRetry, RETRYABLE_CODES 외 2개를 내보냄.</p>
+          <div class="mem-item-foot">
+            <span>다이제스트 6개에서 사용됨</span>
+            <div class="mem-item-actions"><button>수정</button><button>고정</button><button class="danger">삭제</button></div>
+          </div>
+        </li>
+      </ul>
+    </section>
+  </div>
+</div>
+</section>
+
+</body>
+</html>

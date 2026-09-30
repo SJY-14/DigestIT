@@ -121,3 +121,100 @@ export function splitHunks(patch: string): PatchHunk[] {
   }
   return hunks;
 }
+
+// ---- Step ranges and callouts (DIG-96, docs/l3-step-snippets.md) ----------------------------
+// A walkthrough step points at an exact line range of one file, not at whole hunks. These helpers
+// turn such a range into a span of `walkPatch` lines, so the validator (overlap, size, callouts
+// inside their step) and the web UI (the step's snippet, the full diff's step badges) cut the
+// patch the same way.
+
+export type DiffSide = 'old' | 'new';
+
+/**
+ * A contiguous span of one file's `walkPatch(patch)` output: indices `from..to` (inclusive), all
+ * inside hunk `hunk`. Deleted lines between the matched lines are part of the span.
+ */
+export interface LineSpan {
+  hunk: number;
+  from: number;
+  to: number;
+}
+
+export type SpanResult =
+  | { ok: true; span: LineSpan }
+  /** `bad-range`: start/end not positive integers with start ≤ end. `no-lines`: no patch line has
+   * such a number on that side. `crosses-hunks`: the matched lines are in more than one hunk. */
+  | { ok: false; reason: 'bad-range' | 'no-lines' | 'crosses-hunks' };
+
+const isChange = (l: PatchLine): boolean => l.kind === '+' || l.kind === '-';
+
+/**
+ * The span of `lines` (one file's `walkPatch` output) that the range `side` `start..end` covers.
+ * Line numbers are the prompt's (`N+`/`N ` are new-side numbers, `N-` old-side numbers):
+ * - `new` matches added and context lines whose new number is in the range;
+ * - `old` matches deleted and context lines whose old number is in the range.
+ * The span runs from the first to the last matched line, so it also takes the lines of the other
+ * side that sit between them. A `new` span whose first line is an added line also takes the
+ * deleted lines right before it (the removed half of a replacement), so "what replaced what"
+ * always stays together. A range must stay inside one hunk.
+ */
+export function rangeSpan(lines: readonly PatchLine[], side: DiffSide, start: number, end: number): SpanResult {
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) return { ok: false, reason: 'bad-range' };
+  let from = -1;
+  let to = -1;
+  lines.forEach((l, i) => {
+    const no = side === 'new'
+      ? (l.kind === '+' || l.kind === ' ' ? l.newNo : undefined)
+      : (l.kind === '-' || l.kind === ' ' ? l.oldNo : undefined);
+    if (no !== undefined && no >= start && no <= end) {
+      if (from < 0) from = i;
+      to = i;
+    }
+  });
+  if (from < 0) return { ok: false, reason: 'no-lines' };
+  const hunk = lines[from]!.hunk!;
+  if (lines[to]!.hunk !== hunk) return { ok: false, reason: 'crosses-hunks' };
+  if (side === 'new' && lines[from]!.kind === '+') {
+    while (from > 0 && lines[from - 1]!.kind === '-' && lines[from - 1]!.hunk === hunk) from--;
+  }
+  // A "\ No newline at end of file" marker right after the span belongs to its last line.
+  while (to + 1 < lines.length && lines[to + 1]!.kind === '\\' && lines[to + 1]!.hunk === hunk) to++;
+  return { ok: true, span: { hunk, from, to } };
+}
+
+/** Whether two spans of the same file share at least one patch line. */
+export function spansOverlap(a: LineSpan, b: LineSpan): boolean {
+  return a.from <= b.to && b.from <= a.to;
+}
+
+/** Whether `inner` lies completely inside `outer` (same file). */
+export function spanContains(outer: LineSpan, inner: LineSpan): boolean {
+  return outer.from <= inner.from && inner.to <= outer.to;
+}
+
+/** Added plus deleted lines inside `span`, or in the whole file when `span` is omitted. */
+export function changedCount(lines: readonly PatchLine[], span?: LineSpan): number {
+  const part = span ? lines.slice(span.from, span.to + 1) : lines;
+  return part.filter(isChange).length;
+}
+
+/**
+ * Up to `n` unchanged lines of the same hunk right before and right after `span`, for the dimmed
+ * context around a step's snippet. It stops at the first changed line, so a snippet never shows
+ * another step's changes as context.
+ */
+export function spanContext(lines: readonly PatchLine[], span: LineSpan, n = 3): { before: PatchLine[]; after: PatchLine[] } {
+  const before: PatchLine[] = [];
+  for (let i = span.from - 1; i >= 0 && before.length < n; i--) {
+    const l = lines[i]!;
+    if (l.hunk !== span.hunk || l.kind !== ' ') break;
+    before.unshift(l);
+  }
+  const after: PatchLine[] = [];
+  for (let i = span.to + 1; i < lines.length && after.length < n; i++) {
+    const l = lines[i]!;
+    if (l.hunk !== span.hunk || l.kind !== ' ') break;
+    after.push(l);
+  }
+  return { before, after };
+}
