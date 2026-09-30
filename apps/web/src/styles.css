@@ -150,7 +150,7 @@ h1, h2, h3 { margin: 0; }
   border-bottom: 1px solid var(--border);
 }
 .top h1 { font-size: 14px; font-weight: 600; }
-.repo-name, .muted { color: var(--muted); }
+.muted { color: var(--muted); }
 select, button, input { font: inherit; color: inherit; }
 select { background: var(--bg); border: 1px solid var(--control-border); border-radius: 3px; padding: 3px 8px; height: 28px; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
@@ -278,16 +278,10 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .nav a { color: var(--muted); text-decoration: none; padding: 3px 6px; font-size: var(--text-ui); border-radius: 2px; }
 .nav a:hover { color: var(--fg); }
 .nav a[aria-current='page'] { color: var(--fg); font-weight: 600; }
-.conn { margin-left: auto; font-size: 12px; }
 
 .digest { margin-bottom: 16px; }
-.rollup { padding: 12px 0; border-bottom: 1px solid var(--border-muted); }
-.rollup ul { margin: 6px 0 0; padding-left: 1.25rem; }
 .viewbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .view-tabs { border-bottom: 0; margin: 0; padding: 0; }
-.new-pill-slot { min-height: 28px; display: flex; align-items: center; }
-.new-pill { border: 0; border-radius: 3px; padding: 3px 12px; background: var(--accent-solid); color: #fff; font-weight: 600; font-size: var(--text-ui); cursor: pointer; }
-.new-pill:hover { filter: brightness(1.1); }
 
 .units { list-style: none; margin: 0; padding: 0; }
 .unit { border-bottom: 1px solid var(--border-muted); content-visibility: auto; contain-intrinsic-size: auto 56px; }
@@ -324,7 +318,7 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .btn.primary:hover { filter: brightness(1.08); background: var(--accent-solid); }
 /* The global ring is drawn inside the box; on a solid accent fill it would vanish, so draw it
    outside, against the page. */
-.btn.primary:focus-visible, .new-pill:focus-visible { outline-offset: 2px; }
+.btn.primary:focus-visible { outline-offset: 2px; }
 .btn:disabled { opacity: 0.6; cursor: default; }
 
 /* insights page */
@@ -421,22 +415,10 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 }
 
 /* --- v2 main screen (DIG-40/41): project bar, two-pane digest view, area (L3) view --- */
-.history-menu { position: relative; }
-.history-menu > summary { list-style: none; cursor: pointer; color: var(--muted); padding: 3px 6px; font-size: var(--text-ui); border-radius: 2px; }
-.history-menu > summary::-webkit-details-marker { display: none; }
-.history-menu > summary:hover { color: var(--fg); }
-.history-menu[open] > summary { color: var(--fg); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 6px; text-decoration-thickness: 2px; }
-.history-menu-list {
-  position: absolute; top: calc(100% + 6px); left: 0; z-index: 10; display: flex; flex-direction: column; min-width: 240px;
-  background: var(--raised); border-top: 1px solid var(--border); box-shadow: var(--shadow); padding: var(--space-1) 0;
-}
-.history-menu-label { padding: 4px 14px 2px; font-size: var(--text-meta); color: var(--muted); }
-.history-menu-list a { display: flex; flex-direction: column; gap: 1px; padding: 6px 14px; text-decoration: none; color: var(--fg); font-size: var(--text-ui); }
-.history-menu-list a:hover { background: var(--hover); }
-.history-menu-list a[aria-current='page'] { box-shadow: inset 2px 0 0 var(--accent); font-weight: 600; }
-.menu-item-desc { font-size: 12px; font-weight: 400; color: var(--muted); }
 
-/* First run: a short document, not a card. */
+/* A short single-column document: the post-registration ignore-suggestions step, and the
+   unauthorized/no-v2-API guards (MainV2.tsx). Not the first-run screen itself — that's `.firstrun`
+   below (UX cycle 2 P3, decision-2.md: two columns instead of one floated card). */
 .setup { max-width: 520px; margin: var(--space-5) auto; border-top: 0; }
 .setup > .box-head { font-family: var(--serif); font-size: 24px; font-weight: 600; line-height: 1.35; padding: 0 0 var(--space-1); border-bottom: 1px solid var(--border); }
 .setup > p { font-family: var(--serif); font-size: var(--text-body); line-height: 1.6; }
@@ -444,6 +426,35 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .field { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-ui); align-self: stretch; }
 .field input { font: inherit; padding: 6px 8px; border: 1px solid var(--control-border); border-radius: 3px; background: var(--bg); color: var(--fg); }
 .field input:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+
+/* First run (UX cycle 2 P2/P3, decision-2.md): two columns that fill the width and roughly match
+   each other's height, replacing a single 480px card block-centered in the full `.with-panel`
+   width with ~465px of dead space below it (brief-2.md P3's pixel check). Left: the step list plus
+   what-Explain-sends trust box; right: the unchanged form fields in a card stretched to match. */
+.firstrun { display: flex; gap: var(--space-4); padding: var(--space-4) 0; align-items: flex-start; flex-wrap: wrap; }
+.fr-explain { flex: 1 1 360px; max-width: 46ch; }
+.fr-heading { font-family: var(--serif); font-size: 24px; font-weight: 600; line-height: 1.35; margin: 0 0 var(--space-2); }
+.fr-steps { list-style: none; margin: 0 0 var(--space-3); padding: 0; counter-reset: fr; font-family: var(--serif); font-size: var(--text-body); line-height: 1.5; }
+.fr-steps li { counter-increment: fr; position: relative; padding: 0 0 var(--space-2) 34px; }
+.fr-steps li::before {
+  content: counter(fr); position: absolute; left: 0; top: -1px; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--bg-inset); border: 1px solid var(--control-border); color: var(--muted);
+  font: 600 12px/20px var(--sans); text-align: center;
+}
+.fr-steps li:not(:last-child)::after { content: ''; position: absolute; left: 10px; top: 22px; width: 1px; height: calc(100% - 14px); background: var(--border); }
+.fr-trust { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px; padding: var(--space-2); font-size: var(--text-ui); }
+.fr-trust-label { display: block; font-size: var(--text-meta); color: var(--muted); margin-bottom: var(--space-1); font-weight: 600; }
+.fr-trust p { margin: 0 0 8px; }
+.fr-trust p:last-child { margin-bottom: 0; }
+.fr-form { flex: 1 1 320px; max-width: 420px; align-self: stretch; display: flex; flex-direction: column; border-top: 0; }
+.fr-form > .box-head { font-size: var(--text-ui); font-weight: 600; padding: 0 0 var(--space-2); border-bottom: 1px solid var(--border); }
+.fr-form .setup-form { flex: 1; justify-content: space-between; }
+
+/* Settings panel additions (UX cycle 2 P5, decision-2.md): budget/provider/model rows and the
+   read-only line, above the existing context/language/ignore controls. */
+.settings-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: var(--text-ui); }
+.settings-readonly { font-size: var(--text-meta); color: var(--fg); background: var(--add-bg); border: 1px solid var(--add); border-radius: 3px; padding: 6px 8px; }
+.legacy-insights-link { align-self: flex-start; font-size: var(--text-ui); color: var(--muted); }
 
 /* Header (DIG-49): one row, project, digest picker, calls left, info popover, Explain. No box:
    it sits on the page and the level switcher's rule below it does the separating. */

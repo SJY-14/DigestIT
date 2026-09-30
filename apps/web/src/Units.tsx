@@ -134,34 +134,6 @@ export function UnitList({ units, reviews, selectedId, compact, onSelect, onOpen
   );
 }
 
-export function NewPill({ count, onClick }: { count: number; onClick: () => void }) {
-  return (
-    <div className="new-pill-slot" role="status" aria-live="polite">
-      {count > 0 && (
-        <button type="button" className="new-pill" onClick={onClick}>
-          {count} new
-        </button>
-      )}
-    </div>
-  );
-}
-
-const isStr = (v: unknown): v is string => typeof v === 'string';
-const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
-
-export function Rollup({ content }: { content: unknown }) {
-  const c = rec(content);
-  const l0 = rec(c.l0).text;
-  const bullets = Array.isArray(rec(c.l1).bullets) ? (rec(c.l1).bullets as unknown[]).filter(isStr) : [];
-  if (!isStr(l0)) return null;
-  return (
-    <div className="rollup">
-      <p className="l0">{renderProse(l0)}</p>
-      {bullets.length > 0 && <ul>{bullets.map((b, i) => <li key={i}>{renderProse(b)}</li>)}</ul>}
-    </div>
-  );
-}
-
 const MIN_VIEW_MS = 500;
 
 /** Sends `level_viewed` with the time spent when the level or unit changes (or the panel closes). */

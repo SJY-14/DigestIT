@@ -21,7 +21,7 @@ vi.mock('./v2Api.js', () => ({
 
 const { ProjectHeader } = await import('./ProjectHeader.js');
 type ProjectHeaderProps = import('./ProjectHeader.js').ProjectHeaderProps;
-const { fixtureProject, fixtureStatus } = await import('./v2Fixtures.js');
+const { fixtureAbout, fixtureProject, fixtureStatus } = await import('./v2Fixtures.js');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -59,6 +59,7 @@ function baseProps(overrides: Partial<ProjectHeaderProps> = {}): ProjectHeaderPr
     projects: [fixtureProject],
     currentProject: fixtureProject,
     onSwitch: vi.fn(),
+    about: fixtureAbout,
     status: fixtureStatus,
     statusError: null,
     explaining: false,
@@ -169,6 +170,7 @@ describe('ProjectHeader: info popover', () => {
   it('opens on click, shows context status and the language select, closes on Escape and returns focus to the trigger', async () => {
     await render(<ProjectHeader {...baseProps()} />);
     const summary = host.querySelector('.info-popover > summary') as HTMLElement;
+    expect(summary.textContent).toBe('Settings');
     await click(summary);
     expect((host.querySelector('.info-popover') as HTMLDetailsElement).open).toBe(true);
     expect(host.querySelector('.info-popover-panel')?.textContent).toContain('Built');
@@ -177,6 +179,42 @@ describe('ProjectHeader: info popover', () => {
     await key(document, 'Escape');
     expect((host.querySelector('.info-popover') as HTMLDetailsElement).open).toBe(false);
     expect(document.activeElement).toBe(summary);
+  });
+
+  it('shows budget, provider/model and the read-only line (UX cycle 2 P5, decision-2.md)', async () => {
+    await render(<ProjectHeader {...baseProps()} />);
+    await click(host.querySelector('.info-popover > summary'));
+    const rows = [...host.querySelectorAll('.settings-row')].map((r) => r.textContent);
+    expect(rows.some((r) => r?.includes('Daily budget') && r.includes('23 Explains left today'))).toBe(true);
+    expect(rows.some((r) => r?.includes('Provider') && r.includes('claude-code'))).toBe(true);
+    expect(rows.some((r) => r?.includes('Model') && r.includes('claude-sonnet-5-5'))).toBe(true);
+    expect(host.querySelector('.settings-readonly')?.textContent).toContain('never writes to your project folder');
+  });
+
+  it('omits the Model row when the provider has none (e.g. stub)', async () => {
+    await render(<ProjectHeader {...baseProps({ about: { ...fixtureAbout, provider: 'stub', model: null } })} />);
+    await click(host.querySelector('.info-popover > summary'));
+    const rows = [...host.querySelectorAll('.settings-row')].map((r) => r.textContent);
+    expect(rows.some((r) => r?.includes('Provider') && r.includes('stub'))).toBe(true);
+    expect(rows.some((r) => r?.includes('Model'))).toBe(false);
+  });
+
+  it('shows the Legacy insights link only when hasLegacyData is true', async () => {
+    await render(<ProjectHeader {...baseProps()} />);
+    await click(host.querySelector('.info-popover > summary'));
+    expect(host.querySelector('.legacy-insights-link')).toBeNull();
+
+    act(() => root.unmount());
+    host.remove();
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await render(<ProjectHeader {...baseProps({ about: { ...fixtureAbout, hasLegacyData: true } })} />);
+    await click(host.querySelector('.info-popover > summary'));
+    const link = host.querySelector('.legacy-insights-link') as HTMLAnchorElement;
+    expect(link).toBeTruthy();
+    expect(link.getAttribute('href')).toBe('/insights');
+    expect(link.textContent).toContain('Legacy insights (pre-v2 data)');
   });
 
   it('calls onSetLanguage when the language select changes', async () => {

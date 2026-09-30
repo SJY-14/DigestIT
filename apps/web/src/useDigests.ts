@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DigestSummaryDto } from '@digestit/core';
 import { fetchDigests } from './v2Api.js';
 
-/** Paged digest list for the digest picker (newest first), mirroring useTimeline's cursor paging. */
+/** Paged digest list for the digest picker (newest first): a cursor-paged list, newest page first. */
 export function useDigests(projectId: number | null) {
   const [items, setItems] = useState<DigestSummaryDto[]>([]);
   const [done, setDone] = useState(false);

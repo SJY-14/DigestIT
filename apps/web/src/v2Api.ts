@@ -1,7 +1,7 @@
 // v2 API client (docs/direction-v2.md §5, DIG-39 contract in packages/core/src/v2.ts).
 // Component tests use fixtures (v2Fixtures.ts) instead of a live server.
 import type {
-  AreaDetailDto, AreaProgressEvent, ContextStatusDto, CreateProjectResponseDto, DigestDetailDto, DigestPageDto,
+  AboutDto, AreaDetailDto, AreaProgressEvent, ContextStatusDto, CreateProjectResponseDto, DigestDetailDto, DigestPageDto,
   ExplainLanguage, ExplainResultDto, ProjectDto, ProjectGraphDto, ProjectIgnoreDto, ProjectStatusDto,
 } from '@digestit/core';
 
@@ -49,6 +49,12 @@ async function patchJson<T>(url: string, body: unknown, signal?: AbortSignal): P
 
 export function fetchProjects(signal?: AbortSignal): Promise<ProjectDto[]> {
   return getJson('/api/projects', signal);
+}
+
+/** Global, project-independent info the first-run trust box and the Settings panel need
+ * (UX cycle 2 P2/P5, decision-2.md "Changes to the brief" 1). */
+export function fetchAbout(signal?: AbortSignal): Promise<AboutDto> {
+  return getJson('/api/about', signal);
 }
 
 export function createProject(rootPath: string, contextPath: string | null, signal?: AbortSignal): Promise<CreateProjectResponseDto> {
