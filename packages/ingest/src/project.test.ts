@@ -6,7 +6,7 @@ import { openDb } from '@digestit/core';
 import { createProvider, type ExplanationProvider } from '@digestit/explain';
 import {
   ProjectLockedError, budgetStatus, explainingSince, findProject, initProject, isExplaining,
-  latestCheckpoint, listProjects, projectStatus, updateProjectLanguage, type ProjectRow,
+  latestCheckpoint, listProjects, projectStatus, removeProject, updateProjectLanguage, type ProjectRow,
 } from './project.js';
 import { explainProject, retryDigest } from './explain-job.js';
 import type { DatabaseSync } from 'node:sqlite';
@@ -113,6 +113,29 @@ describe('initProject', () => {
     writeFileSync(join(other, 'a.txt'), 'hi\n');
     const r2 = await initProject(db, home, other, { language: 'ko' });
     expect((findProject(db, String(r2.repoId)) as ProjectRow).language).toBe('ko');
+  });
+});
+
+describe('removeProject', () => {
+  it('hides a removed project from listProjects and findProject, but keeps its row and checkpoint', async () => {
+    write('a.txt', 'hello\n');
+    const r = await initProject(db, home, proj, { name: 'demo' });
+    removeProject(db, r.repoId);
+    expect(listProjects(db)).toEqual([]);
+    expect(findProject(db, 'demo')).toEqual({ error: 'no project "demo"' });
+    expect(latestCheckpoint(db, r.repoId)).not.toBeNull(); // row kept, just hidden
+  });
+
+  it('is restored, with its history, by registering the same root again', async () => {
+    write('a.txt', 'hello\n');
+    const r = await initProject(db, home, proj, { name: 'demo' });
+    removeProject(db, r.repoId);
+
+    const again = await initProject(db, home, proj);
+    expect(again.repoId).toBe(r.repoId);
+    expect(listProjects(db)).toHaveLength(1);
+    expect(listProjects(db)[0]!.name).toBe('demo');
+    expect(latestCheckpoint(db, r.repoId)!.seq).toBe(1); // no new checkpoint; the old one still stands
   });
 });
 

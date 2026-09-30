@@ -8,9 +8,12 @@ vi.mock('./watch.js', () => ({ runWatchCli, runManualExplainCli }));
 const runInitCli = vi.fn(async (_argv: string[]) => 0);
 const runIgnoreCli = vi.fn(async (_argv: string[]) => 0);
 const runProjectsCli = vi.fn(async (_argv: string[]) => 0);
+const runRemoveCli = vi.fn(async (_argv: string[]) => 0);
 const runStatusCli = vi.fn(async (_argv: string[]) => 0);
 const runProjectExplainCli = vi.fn(async (_argv: string[]) => 0);
-vi.mock('./project-cli.js', () => ({ runInitCli, runIgnoreCli, runProjectsCli, runStatusCli, runProjectExplainCli }));
+vi.mock('./project-cli.js', () => (
+  { runInitCli, runIgnoreCli, runProjectsCli, runRemoveCli, runStatusCli, runProjectExplainCli }
+));
 const { routeDigest } = await import('./route.js');
 
 describe('routeDigest', () => {
@@ -64,12 +67,17 @@ describe('routeDigest', () => {
     expect(await routeDigest(['status', 'my-project'])).toBe(0);
     expect(runStatusCli).toHaveBeenCalledWith(['status', 'my-project']);
   });
+  it('delegates `remove <project>` to the project CLI', async () => {
+    expect(await routeDigest(['remove', 'my-project'])).toBe(0);
+    expect(runRemoveCli).toHaveBeenCalledWith(['remove', 'my-project']);
+  });
   it('rejects unknown commands with usage', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await routeDigest(['bogus'])).toBe(2);
     expect(await routeDigest(['ingest'])).toBe(2);
     expect(await routeDigest(['init'])).toBe(2);
     expect(await routeDigest(['ignore'])).toBe(2);
+    expect(await routeDigest(['remove'])).toBe(2);
     err.mockRestore();
   });
 });

@@ -2,10 +2,12 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openProjectDb } from './datahome.js';
+import { ensureDir0700, openProjectDb, projectDataDir } from './datahome.js';
 import { readIgnorePatterns } from './ignore.js';
 import { listProjects } from './project.js';
-import { runConfigCli, runIgnoreCli, runInitCli, runProjectExplainCli, runProjectsCli, runStatusCli } from './project-cli.js';
+import {
+  runConfigCli, runIgnoreCli, runInitCli, runProjectExplainCli, runProjectsCli, runRemoveCli, runStatusCli,
+} from './project-cli.js';
 
 function listFiles(dir: string, base = dir): string[] {
   const out: string[] = [];
@@ -223,6 +225,62 @@ describe('runProjectsCli / runStatusCli', () => {
   it('reports no projects registered', async () => {
     expect(await runProjectsCli(['projects', '--db', dbPath])).toBe(0);
     expect(logs.join('\n')).toContain('no projects registered');
+  });
+});
+
+describe('runRemoveCli', () => {
+  it('removes a registered project; it no longer shows up in `digest projects`', async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    logs = [];
+
+    const code = await runRemoveCli(['remove', 'demo', '--db', dbPath]);
+    expect(code).toBe(0);
+    expect(logs.join('\n')).toContain('removed project "demo"');
+
+    logs = [];
+    expect(await runProjectsCli(['projects', '--db', dbPath])).toBe(0);
+    expect(logs.join('\n')).toContain('no projects registered');
+  });
+
+  it('restores the project, with its history, on a later `digest init` of the same path', async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    await runRemoveCli(['remove', 'demo', '--db', dbPath]);
+
+    logs = [];
+    const code = await runInitCli(['init', proj, '--db', dbPath]);
+    expect(code).toBe(0);
+    expect(logs.join('\n')).toContain('already registered');
+
+    logs = [];
+    expect(await runProjectsCli(['projects', '--db', dbPath])).toBe(0);
+    expect(logs.join('\n')).toContain('demo');
+  });
+
+  it('refuses to remove a project while an explain is running for it', async () => {
+    write('a.txt', 'hi\n');
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    const { db } = openProjectDb(dbPath);
+    const repoId = listProjects(db)[0]!.id;
+    db.close();
+    const dataDir = projectDataDir(join(root, 'home'), repoId);
+    ensureDir0700(dataDir);
+    writeFileSync(join(dataDir, 'explain.lock'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+
+    const code = await runRemoveCli(['remove', 'demo', '--db', dbPath]);
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toContain('an explain is currently running');
+  });
+
+  it('fails for an unknown project', async () => {
+    const code = await runRemoveCli(['remove', 'nope', '--db', dbPath]);
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toContain('no project "nope"');
+  });
+
+  it('requires a project argument', async () => {
+    expect(await runRemoveCli(['remove'])).toBe(2);
   });
 });
 
