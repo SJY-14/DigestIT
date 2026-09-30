@@ -1,6 +1,6 @@
 import type { ExplainLanguage } from '@digestit/core';
 import { aiTells } from './tells.js';
-import { cleanText, hasUnsafeMarkup, truncateWords, wordCount } from './validate.js';
+import { charLength, cleanText, fitProse, hasUnsafeMarkup, tolerated, wordCount } from './validate.js';
 
 // Shared voice, language and boilerplate rules for the digest, area and context prompts (DIG-48).
 
@@ -28,34 +28,6 @@ export function charCap(language: ExplainLanguage, words: number): number {
   return language === 'ko' ? words * KO_CHARS_PER_WORD : words * 12;
 }
 
-/** Truncates to `max` characters on a character boundary, with an ellipsis. */
-export function truncateChars(s: string, max: number): string {
-  const chars = [...s.trim()];
-  return chars.length <= max ? s.trim() : `${chars.slice(0, Math.max(0, max - 1)).join('').trimEnd()}…`;
-}
-
-export const charLength = (s: string): number => [...s].length;
-
-const ABBREVIATIONS = /\b(?:e\.g|i\.e|etc|vs|cf|approx|incl)\./gi;
-
-/** Sentences in `s`: ends at `.`, `!`, `?` (or `。`) followed by whitespace or the end; abbreviations and `a.b` identifiers do not end one. */
-export function sentenceCount(s: string): number {
-  const t = s.replace(ABBREVIATIONS, 'x').trim();
-  if (t === '') return 0;
-  return t.split(/(?<=[.!?。])\s+/).filter((p) => p.trim() !== '').length;
-}
-
-/** The first `max` sentences of `s` (split as in `sentenceCount`); `s` itself when it has no more. */
-export function truncateSentences(s: string, max: number): string {
-  const t = s.trim();
-  const masked = t.replace(ABBREVIATIONS, (m) => 'x'.repeat(m.length));
-  const boundary = /(?<=[.!?。])\s+/g;
-  let seen = 0;
-  for (let m = boundary.exec(masked); m; m = boundary.exec(masked)) {
-    if (++seen === max) return t.slice(0, m.index);
-  }
-  return t;
-}
 
 interface Pattern {
   re: RegExp;
@@ -112,59 +84,6 @@ export function isStatsLine(text: string): boolean {
     /^\s*\d+\s*개\s*파일/.test(text);
 }
 
-/**
- * Word and character limits are targets, not cut-offs (DIG-94): the prompts state the exact limit,
- * and the validator accepts up to `ceil(limit * LENGTH_TOLERANCE)` without a retry (a length note
- * instead). Real output that names flags and numbers ("`--retries <n>`", "408, 429 and 5xx") runs a
- * few words past a hard 20/30-word cap even after the retry, and cutting it left fragments.
- */
-export const LENGTH_TOLERANCE = 1.25;
-
-/** The most words (or characters) a field may use before it is a hard violation. */
-export const tolerated = (limit: number): number => Math.ceil(limit * LENGTH_TOLERANCE);
-
-/** The longest run of whole sentences of `text` that fits `maxWords`/`maxChars`; `null` when not even the first does. */
-function wholeSentences(text: string, maxWords: number, maxChars: number): string | null {
-  const fits = (s: string): boolean => wordCount(s) <= maxWords && charLength(s) <= maxChars;
-  if (fits(text)) return text;
-  for (let keep = sentenceCount(text) - 1; keep >= 1; keep--) {
-    const head = truncateSentences(text, keep);
-    if (fits(head)) return head;
-  }
-  return null;
-}
-
-/**
- * Fits `text` into `maxWords`/`maxChars` without cutting a sentence (DIG-94): keeps the longest run
- * of whole sentences that fits, and falls back to a word/character cut with an ellipsis only when
- * even the first sentence is too long.
- */
-export function fitProse(text: string, maxWords: number, maxChars: number): string {
-  const t = text.trim();
-  return wholeSentences(t, maxWords, maxChars) ?? truncateChars(truncateWords(t, maxWords), maxChars);
-}
-
-/**
- * Fits a bullet list into `maxWords` words in total (DIG-94): whole bullets first, then the first
- * bullet that does not fit is cut at a sentence boundary, or dropped when no sentence fits (cut
- * with an ellipsis only when it is the first bullet), and the rest go.
- */
-export function fitBullets(bullets: readonly string[], maxWords: number): string[] {
-  const out: string[] = [];
-  let budget = maxWords;
-  for (const b of bullets) {
-    if (wordCount(b) <= budget) {
-      out.push(b);
-      budget -= wordCount(b);
-      continue;
-    }
-    const head = budget > 0 ? wholeSentences(b.trim(), budget, Infinity) : null;
-    if (head !== null) out.push(head);
-    else if (out.length === 0) out.push(truncateWords(b, maxWords));
-    break;
-  }
-  return out;
-}
 
 export interface CheckProseOptions {
   /**

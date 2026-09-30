@@ -16,10 +16,8 @@ import { logJobCall } from './jobs.js';
 import { loadChange } from './pipeline.js';
 import { DEFAULT_PREPARE_OPTIONS, prepareInput, type PrepareOptions, type RawChange } from './prepare.js';
 import { redact } from './redact.js';
-import {
-  DEFAULT_LANGUAGE, VOICE, callReasons, checkProse, languageInstruction, sentenceCount, softCount, truncateSentences,
-} from './style.js';
-import { LIMITS } from './validate.js';
+import { DEFAULT_LANGUAGE, VOICE, callReasons, checkProse, languageInstruction, softCount } from './style.js';
+import { LIMITS, sentenceCount, truncateSentences } from './validate.js';
 
 /** Bump whenever the instructions or the rendering below change. `a1` was the why/design/risks/notes shape; `a2` allowed a 120-word body paragraph; `a4` (DIG-65) added the AI-tell style rules; `a5` (DIG-70) asked for backticks around code identifiers/flags/paths; `a6` (DIG-96/98) replaced whole-hunk `hunks` with exact `ranges` and line-anchored `callouts` (docs/l3-step-snippets.md). A row stored under an older version is never read back (`explainArea` reads only the current version), so older walkthroughs simply show as not generated. */
 export const AREA_PROMPT_VERSION = 'a6';

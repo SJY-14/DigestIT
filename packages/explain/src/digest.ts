@@ -12,11 +12,9 @@ import { logJobCall } from './jobs.js';
 import { loadChange, storeLevels } from './pipeline.js';
 import { DEFAULT_PREPARE_OPTIONS, prepareInput, type PrepareOptions, type RawChange } from './prepare.js';
 import { redact } from './redact.js';
+import { DEFAULT_LANGUAGE, VOICE, callReasons, checkProse, isStatsLine, languageInstruction, softCount } from './style.js';
 import {
-  DEFAULT_LANGUAGE, VOICE, callReasons, checkProse, fitBullets, isStatsLine, languageInstruction, sentenceCount, softCount, tolerated,
-} from './style.js';
-import {
-  FILE_REF, LIMITS, cleanText, hasUnsafeMarkup, notAnalysedList, stringArray, wordCount,
+  FILE_REF, LIMITS, cleanText, fitBullets, hasUnsafeMarkup, notAnalysedList, sentenceCount, stringArray, tolerated, wordCount,
 } from './validate.js';
 
 /** Bump whenever the instructions or the rendering below change; see PROMPT_VERSION for the commit prompt. `d3` (DIG-65) added the AI-tell style rules. `d4` (DIG-70) asked for backticks around code identifiers/flags/paths in l1/l2. `d5` (DIG-94) stops cutting an over-limit l0 mid-sentence. */

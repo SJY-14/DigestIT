@@ -13,8 +13,8 @@ import {
   checkAreaWalkthrough, checkDigestLevels, createProvider, explainArea, prepareAreaInput, prepareDigestInput, startJob,
 } from './index.js';
 import type { AreaInput, AreaResult, AreaStreamChunk, ExplanationProvider, ProviderFile } from './index.js';
-import { LIMITS } from './validate.js';
-import { truncateSentences } from './style.js';
+import { LIMITS, tolerated, truncateSentences } from './validate.js';
+import { charCap } from './style.js';
 
 function seedArea(
   db: DatabaseSync,
@@ -478,13 +478,13 @@ describe('checkAreaWalkthrough', () => {
   });
 
   it('rejects a too-long callout note: English words, Korean characters', () => {
-    const longNote = Array(15).fill('word').join(' ');
+    const longNote = Array(16).fill('word').join(' '); // past the DIG-94 band of 15
     const en = {
       ...validReply,
       steps: [validReply.steps[0]!, { ...validReply.steps[1]!, callouts: [{ ...validReply.steps[1]!.callouts[0]!, note: longNote }, validReply.steps[1]!.callouts[1]!] }],
     };
     expect(checkAreaWalkthrough(en, FILES)?.violations).toEqual(expect.arrayContaining([
-      expect.stringMatching(/callout 1 note: 15 words, limit 12/),
+      expect.stringMatching(/callout 1 note: 16 words, limit 12/),
     ]));
 
     const koLong = '가나다라마바사아자차'.repeat(4);
@@ -586,8 +586,9 @@ describe('checkAreaWalkthrough', () => {
     expect(r.violations).toEqual(expect.arrayContaining([
       'step 1 title: 150 words, limit 8', 'step 1 body: 150 words, limit 70', 'step 1 body: 1 sentences, need 2-4', 'check: 7 items, limit 5',
     ]));
-    expect(r.content.steps[0]!.title.split(' ').length).toBeLessThanOrEqual(9);
-    expect(r.content.steps[0]!.body.split(' ').length).toBeLessThanOrEqual(71);
+    // No sentence boundary to cut at, so the fallback word cut to the DIG-94 band applies.
+    expect(r.content.steps[0]!.title.split(' ').length).toBe(tolerated(LIMITS.walkTitleWords));
+    expect(r.content.steps[0]!.body.split(' ').length).toBe(tolerated(LIMITS.walkBodyWords));
     expect(r.content.check).toHaveLength(5);
   });
 
@@ -615,25 +616,30 @@ describe('checkAreaWalkthrough', () => {
     expect(truncateSentences('Only one.', 4)).toBe('Only one.');
   });
 
-  it('rejects an over-long English body by word count, even with a valid sentence count', () => {
+  it('rejects an over-long English body by word count, even with a valid sentence count, and cuts it at a sentence', () => {
     const filler = Array(10).fill('additionally').join(' ');
     const sentence = (n: number) => `This step touches several small helpers across the module and ${filler}, adjusting behaviour in change ${n} of the sequence.`;
-    const body = [sentence(1), sentence(2), sentence(3)].join(' ');
+    const body = [sentence(1), sentence(2), sentence(3), sentence(4)].join(' '); // 4 x 28 words
     const reply = { ...validReply, steps: [{ ...validReply.steps[0]!, body }, validReply.steps[1]!] };
     const r = checkAreaWalkthrough(reply, FILES)!;
-    expect(r.violations).toEqual(expect.arrayContaining([expect.stringMatching(/^step 1 body: \d+ words, limit 70$/)]));
+    expect(r.violations).toEqual(expect.arrayContaining(['step 1 body: 112 words, limit 70']));
     expect(r.violations).not.toEqual(expect.arrayContaining([expect.stringMatching(/^step 1 body: \d+ sentences, need 2-4$/)]));
-    expect(r.content.steps[0]!.body.split(' ').length).toBeLessThanOrEqual(71);
+    expect(r.content.steps[0]!.body).toBe([sentence(1), sentence(2), sentence(3)].join(' '));
+
+    // Three of them (84 words) are inside the DIG-94 band: kept whole, noted, not a violation.
+    const inBand = checkAreaWalkthrough({ ...validReply, steps: [{ ...validReply.steps[0]!, body: [sentence(1), sentence(2), sentence(3)].join(' ') }, validReply.steps[1]!] }, FILES)!;
+    expect(inBand.violations).toEqual([]);
+    expect(inBand.lengthNotes).toEqual(['step 1 body: 84 words, target 70']);
   });
 
   it('rejects an over-long Korean body by word count, in sentences that still parse as 2-4', () => {
     const filler = Array(12).fill('추가로').join(' ');
     const sentence = (n: number) => `이 단계는 여러 파일에 걸쳐 작은 도우미 함수 ${filler} 조금씩 손보는 변경 ${n}을 설명합니다.`;
-    const body = [sentence(1), sentence(2), sentence(3)].join(' ');
+    const body = [sentence(1), sentence(2), sentence(3), sentence(4)].join(' '); // 4 x 25 어절
     const r = checkAreaWalkthrough({ ...KO_REPLY, steps: [{ ...KO_REPLY.steps[0]!, body }, KO_REPLY.steps[1]!] }, FILES, 'ko')!;
-    expect(r.violations).toEqual(expect.arrayContaining([expect.stringMatching(/^step 1 body: \d+ words, limit 70$/)]));
+    expect(r.violations).toEqual(expect.arrayContaining(['step 1 body: 100 words, limit 70']));
     expect(r.violations).not.toEqual(expect.arrayContaining([expect.stringMatching(/^step 1 body: \d+ sentences, need 2-4$/)]));
-    expect(r.content.steps[0]!.body.split(' ').length).toBeLessThanOrEqual(71);
+    expect(r.content.steps[0]!.body).toBe([sentence(1), sentence(2), sentence(3)].join(' '));
   });
 
   it('needs at least one check item', () => {
@@ -641,10 +647,10 @@ describe('checkAreaWalkthrough', () => {
   });
 
   it('caps Korean text by characters too', () => {
-    const body = '가나다라마바사아자차'.repeat(40);
+    const body = '가나다라마바사아자차'.repeat(50);
     const r = checkAreaWalkthrough({ ...KO_REPLY, steps: [{ ...KO_REPLY.steps[0]!, body }, KO_REPLY.steps[1]!] }, FILES, 'ko')!;
-    expect(r.violations).toEqual(['step 1 body: 400 characters, limit 350', 'step 1 body: 1 sentences, need 2-4']);
-    expect([...r.content.steps[0]!.body].length).toBeLessThanOrEqual(350);
+    expect(r.violations).toEqual(['step 1 body: 500 characters, limit 350', 'step 1 body: 1 sentences, need 2-4']);
+    expect([...r.content.steps[0]!.body].length).toBe(charCap('ko', tolerated(LIMITS.walkBodyWords)));
   });
 
   it.each([

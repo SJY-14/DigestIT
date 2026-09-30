@@ -73,9 +73,9 @@ export interface JobCallLog {
   durationMs: number;
   outcome: 'ok' | 'error';
   /**
-   * Why this attempt was not accepted as delivered (DIG-94): the hard violations and style
-   * warnings the validator found, joined with "; ", or the unusable-shape message. Unset when the
-   * call's own outcome is `error` (no output to validate) or the output was clean.
+   * What the validator found for this attempt (DIG-94): hard violations, style warnings and
+   * in-band length notes, joined with "; ", or the unusable-shape message. Unset when the call's
+   * own outcome is `error` (no output to validate) or the output was clean.
    */
   violations?: string;
 }

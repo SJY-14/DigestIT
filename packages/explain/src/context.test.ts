@@ -9,7 +9,7 @@ import { openDb } from '@digestit/core';
 import type { ProjectContextContent } from '@digestit/core';
 import {
   CONTEXT_LIMITS, CONTEXT_PROMPT_VERSION, ClaudeCodeProvider, StubProvider, buildContextPrompt, buildProjectContext,
-  buildProjectMap, checkContext, compactContext, contextSourceHash, explainContext, hashUserMd, needsRefresh,
+  buildProjectMap, checkContext, compactContext, contextSourceHash, explainContext, hashUserMd, needsRefresh, tolerated,
 } from './index.js';
 import type { ContextInput, ContextResult, ExplanationProvider, ProjectMap, ProviderResult, SpawnFn } from './index.js';
 
@@ -270,7 +270,7 @@ describe('checkContext', () => {
   it('truncates an over-limit purpose and records a violation', () => {
     const long = Array(80).fill('word').join(' ');
     const r = checkContext({ purpose: long, modules: [], glossary: [], conventions: [] }, map)!;
-    expect(r.content.purpose.split(/\s+/)).toHaveLength(CONTEXT_LIMITS.purposeWords); // ellipsis is attached to the last word
+    expect(r.content.purpose.split(/\s+/)).toHaveLength(tolerated(CONTEXT_LIMITS.purposeWords)); // no sentence to cut at: word cut to the DIG-94 band
     expect(r.violations.some((v) => v.includes('purpose'))).toBe(true);
   });
 

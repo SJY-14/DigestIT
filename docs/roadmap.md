@@ -40,8 +40,8 @@ DIG-96 (Board, 2026-09-30, critical): "Explain code" still repeats the whole dif
 at whole hunks and a new file is one hunk. Steps now carry exact line ranges and line-anchored callouts; each step shows
 only its own lines, the full diff is shown once. Spec and contract (types, `rangeSpan` in core) merged to `main`:
 [l3-step-snippets.md](l3-step-snippets.md). Supersedes the hunk anchors of DIG-71 below. DIG-98 and DIG-99 merged
-together (the web UI needs the new required `ranges`); DIG-94 still has to merge `main` in (small `checkProse` conflict
-in `style.ts`). Next: the real-provider acceptance run (row 3).
+together (the web UI needs the new required `ranges`); DIG-94 has merged `main` in (the `checkProse` conflict in
+`style.ts` is resolved: `koCharsOverride` is now the `koChars` option). Next: the real-provider acceptance run (row 3).
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|

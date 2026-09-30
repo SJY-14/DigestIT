@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkLevels, cleanText, hasUnsafeMarkup } from './validate.js';
+import { LENGTH_TOLERANCE, checkLevels, cleanText, fitBullets, fitProse, hasUnsafeMarkup, tolerated } from './validate.js';
 import type { ProviderFile } from './provider.js';
 
 const files: ProviderFile[] = [
@@ -50,6 +50,26 @@ describe('checkLevels', () => {
     expect(r.levels.l0.text.endsWith('…')).toBe(false);
   });
 
+  it('accepts L0-L3 up to the DIG-94 tolerance band with a length note, not a violation', () => {
+    const g = good();
+    g.l0.text = w(24);
+    g.l1.bullets = [w(40), w(30)];
+    g.l3.annotations[0]!.note = w(36);
+    const r = checkLevels(g, files)!;
+    expect(r.violations).toEqual([]);
+    expect(r.lengthNotes).toEqual(['l0: 24 words, target 20', 'l1: 70 words, target 60', 'l3: annotation 0 has 36 words, target 30']);
+    expect(r.levels.l3.annotations[0]!.note).toBe(w(36));
+  });
+
+  it('cuts an L3 note past the band at a sentence boundary (DIG-94)', () => {
+    const g = good();
+    const first = 'withRetry now wraps the PUT, so a 503 from the server is retried with backoff before the upload gives up on the file.';
+    g.l3.annotations[0]!.note = `${first} The base delay of 200 ms and the cap of ten retries both come from the new config defaults added in this change.`;
+    const r = checkLevels(g, files)!;
+    expect(r.violations).toEqual([expect.stringMatching(/^l3: annotation 0 has \d+ words, limit 30$/)]);
+    expect(r.levels.l3.annotations[0]!.note).toBe(first);
+  });
+
   it('drops anchors that do not exist in the diff or point at filtered files', () => {
     const g = good();
     g.l3.annotations = [
@@ -94,5 +114,26 @@ describe('markup check', () => {
     expect(hasUnsafeMarkup('runQueue now returns Outcome<R> records and Promise<void>.')).toBe(false);
     expect(hasUnsafeMarkup('App renders <Settings /> under /settings.')).toBe(false);
     expect(cleanText('returns Outcome<R> records')).toBe('returns Outcome<R> records');
+  });
+});
+
+describe('tolerance band and sentence-boundary cuts (DIG-94)', () => {
+  it('tolerates a quarter over each limit, rounded up', () => {
+    expect(LENGTH_TOLERANCE).toBe(1.25);
+    expect([8, 20, 30, 60, 70].map(tolerated)).toEqual([10, 25, 38, 75, 88]);
+  });
+
+  it('fitProse keeps whole sentences and only word-cuts a single over-long sentence', () => {
+    expect(fitProse('One two three. Four five six. Seven eight.', 6, 100)).toBe('One two three. Four five six.');
+    expect(fitProse('Use e.g. config.ts first. Then more words here.', 5, 100)).toBe('Use e.g. config.ts first.');
+    expect(fitProse('One two three four five six.', 4, 100)).toBe('One two three four…');
+    expect(fitProse('Short.', 4, 100)).toBe('Short.');
+    expect(fitProse('가나다. 라마바사아자.', 10, 5)).toBe('가나다.');
+  });
+
+  it('fitBullets keeps whole bullets, cuts the next at a sentence, and drops one that has no sentence to keep', () => {
+    expect(fitBullets(['a b c.', 'd e. f g h.', 'i.'], 5)).toEqual(['a b c.', 'd e.']);
+    expect(fitBullets(['a b c.', 'd e f g.'], 5)).toEqual(['a b c.']);
+    expect(fitBullets(['a b c d e f g.'], 5)).toEqual(['a b c d e…']);
   });
 });
