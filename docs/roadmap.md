@@ -54,12 +54,13 @@ the project. Projects can be removed (soft delete). A new "All projects" view so
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-80 | Audit, brief, critique, decision, acceptance | CTO | DIG-90 |
+| 0 | DIG-80 | Audit, brief, critique, decision, acceptance | CTO | DIG-93 |
 | 1 | DIG-87 | `GET /api/about`, `ProjectDto.latestDigest`, soft remove (API + `digest remove`). Merged 2026-09-30 | Diff engineer | — |
 | 2 | DIG-88 | IA cleanup, first-run trust + layout, Settings & trust panel (P1, P2, P3, P5). Merged 2026-09-30 | Frontend engineer | — |
 | 3 | DIG-89 | Project panel with unread + Remove, All projects view (P4, P7). Merged 2026-09-30 | Frontend engineer | — |
 | 4 | DIG-90 | Verify against decision-2, `docs/ux/cycle-2-summary.md`. Passed, merged 2026-09-30 | UX reviewer | DIG-88, DIG-89, DIG-92 |
 | 5 | DIG-92 | Fix: the web client's Remove got 415 (DELETE sent no `content-type`). Found by DIG-90. Merged 2026-09-30 | CTO | — |
+| 6 | DIG-93 | Real-provider acceptance run (`.cache/dig80-acceptance/accept.sh`, stub dry run passed) | Board operator | DIG-90 |
 
 ## Removing the AI-made look (done)
 
