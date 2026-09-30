@@ -79,7 +79,7 @@ function memoryItemTitle(item: MemoryItemDto, lang: Lang): string {
 
 /** One line of derived text under the title (brief §3's row anatomy). `null` when a kind has
  * nothing worth showing (e.g. a term with no meaning yet). */
-function memoryItemEffect(item: MemoryItemDto, lang: Lang): string | null {
+export function memoryItemEffect(item: MemoryItemDto, lang: Lang): string | null {
   const T = memoryCopy(lang);
   const c = item.content;
   if (c.kind === 'area') {
@@ -92,7 +92,9 @@ function memoryItemEffect(item: MemoryItemDto, lang: Lang): string | null {
   }
   if (c.kind === 'term') return c.meaning;
   if (c.kind === 'thread') {
-    const areas = c.areas.join(', ');
+    // c.areas can include the project-root area, whose path is '' (memoryItemTitle shows it as
+    // "/"); joining it unfiltered left a stray leading ", " (DIG-110 verify).
+    const areas = c.areas.filter(Boolean).join(', ');
     const state = c.state === 'open' ? T.threadStateOpen : T.threadStateClosed;
     return `${areas ? `${areas} · ` : ''}${plural(c.digests.length, 'digest')} · ${state}`;
   }

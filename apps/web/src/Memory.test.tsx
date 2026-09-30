@@ -34,7 +34,7 @@ vi.mock('./v2Api.js', () => ({
   memoryExportUrl: (id: number) => `/api/projects/${id}/memory/export`,
 }));
 
-const { MemoryPage, sortMemoryItems, filterMemoryItems, memoryItemSearchText } = await import('./Memory.js');
+const { MemoryPage, sortMemoryItems, filterMemoryItems, memoryItemSearchText, memoryItemEffect } = await import('./Memory.js');
 const { fixtureAbout, fixtureProject2 } = await import('./v2Fixtures.js');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -68,6 +68,23 @@ describe('sortMemoryItems (decision-4-memory.md change 5: pinned, then stale, th
     // c: pinned wins outright. b: stale beats a/d despite lower usedInDigests. a vs d: same
     // usedInDigests, tie-break by key ascending.
     expect(sortMemoryItems([a, b, c, d]).map((x) => x.id)).toEqual([3, 2, 4, 1]);
+  });
+});
+
+describe('memoryItemEffect (thread row text)', () => {
+  it('drops the project-root area (path "") instead of leaving a stray leading comma', () => {
+    const t = item({
+      id: 1, kind: 'thread', key: 'd1',
+      content: {
+        kind: 'thread', title: 'Retry work', areas: ['', 'src', 'test'], terms: [],
+        digests: [
+          { digestId: 1, seq: 1, at: '2026-09-30T00:00:00Z', l0: 'a' },
+          { digestId: 2, seq: 2, at: '2026-09-30T00:00:00Z', l0: 'b' },
+        ],
+        state: 'open', summary: null,
+      },
+    });
+    expect(memoryItemEffect(t, 'en')).toBe('src, test · 2 digests · open');
   });
 });
 
