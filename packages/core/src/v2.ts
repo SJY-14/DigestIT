@@ -71,13 +71,43 @@ export interface HunkRef {
   hunk: number;
 }
 
+/**
+ * An exact line range of one file in the area's diff (DIG-96, docs/l3-step-snippets.md), 1-based
+ * and inclusive, numbered like the prompt's `N+`/`N `/`N-` prefixes: side `new` for added and
+ * context lines, `old` for deleted lines. It must stay inside one hunk. `rangeSpan` in
+ * `@digestit/core/hunks` turns it into the patch lines the validator checks and the UI shows.
+ */
+export interface LineRange {
+  path: string;
+  side: 'old' | 'new';
+  start: number;
+  end: number;
+}
+
+/** A review-comment-style note anchored to one line (start = end) or a small line group inside one of its step's ranges. */
+export interface StepCallout extends LineRange {
+  /** "This line/part does X": at most 12 words (en) or 25 characters (ko). */
+  note: string;
+}
+
 export interface WalkthroughStep {
   /** Short title, ≤ 8 words, in the explanation language. */
   title: string;
   /** Prose: what this code does now, what it did before, and why it was changed this way. */
   body: string;
-  /** The hunks this step explains, in reading order; at least one. Shown right under `body`. */
+  /**
+   * The hunks this step explains, in reading order; at least one. Shown right under `body`.
+   * Superseded by `ranges` (DIG-96): only walkthroughs stored before area prompt a6 have it.
+   */
   hunks: HunkRef[];
+  /**
+   * DIG-96 (area prompt a6 on): the exact lines this step explains, in reading order; at least
+   * one. No patch line is in two steps' ranges. The UI shows only these lines (plus up to three
+   * dimmed context lines) under `body`. Becomes required, and `hunks` goes, in the DIG-96 build.
+   */
+  ranges?: LineRange[];
+  /** DIG-96: line-anchored notes, each inside one of this step's `ranges`. */
+  callouts?: StepCallout[];
   /** True only for the (at most one) step that groups mechanical changes: renames, formatting, moves. */
   mechanical: boolean;
 }
