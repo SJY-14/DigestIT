@@ -7,7 +7,7 @@ import type {
   AboutDto, MemoryItemDto, MemoryKind, MemoryTrigger, MemoryUsedItemDto, NoteMemory, ProjectDto,
 } from '@digestit/core';
 import {
-  apiErrorMessage, headerCopy, humanDateTime, memoryCopy, memoryKindLabel, memoryKindNoun, memorySourceBadge,
+  apiErrorMessage, headerCopy, humanDateTime, memoryCopy, readerCopy, memoryKindLabel, memoryKindNoun, memorySourceBadge,
   memoryTriggerLabel, plural, type Lang,
 } from './copy.js';
 import { relativeTime } from './format.js';
@@ -180,6 +180,9 @@ function MemoryRow({
         <span className={isMonoTitle ? 'mem-item-title mono' : 'mem-item-title'}>{title}</span>
         {mode === 'hidden' ? (
           <span className="mem-item-source">{T.hiddenDeletedAt(relativeTime(item.updatedAt, now, lang))}</span>
+        ) : overriddenByItem && mode === 'used' ? (
+          // The note is not in this digest's list, so there is nothing on this page to jump to.
+          <span className="mem-item-source">{T.overriddenByLabel}</span>
         ) : overriddenByItem ? (
           <a className="mem-item-source" href={`#mem-item-${overriddenByItem.id}`} onClick={() => actions.onScrollToItem(overriddenByItem.id)}>
             {T.overriddenByLabel} <span aria-hidden="true">→</span>
@@ -359,6 +362,10 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
   const [summariesError, setSummariesError] = useState<string | null>(null);
 
   const buttonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+  // Where focus goes once the next refresh has rendered (an element id): the new note after
+  // Correct → Save (decision-4-memory.md change 6), the next row after Delete/Restore removes the
+  // current one, the page title after Clear. Without this, focus falls back to <body>.
+  const [pendingFocus, setPendingFocus] = useState<string | null>(null);
 
   const project = projects?.find((p) => p.id === projectId) ?? null;
   const lang: Lang = project?.language ?? chromeLang;
@@ -385,16 +392,41 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
     refreshList(projectId);
   }, [projectId, refreshList]);
 
+  const loadUsed = useCallback((id: number, signal?: AbortSignal) => {
+    fetchMemoryUsed(id, signal).then(
+      (dto) => { setUsedItems(dto.items); setUsedDropped(dto.droppedForBudget); setUsedError(null); },
+      (e: unknown) => { if (!signal?.aborted) setUsedError(errorText(e, lang)); },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (digestId === null) return;
     const ac = new AbortController();
-    fetchMemoryUsed(digestId, ac.signal).then(
-      (dto) => { setUsedItems(dto.items); setUsedDropped(dto.droppedForBudget); setUsedError(null); },
-      (e: unknown) => { if (!ac.signal.aborted) setUsedError(errorText(e, lang)); },
-    );
+    loadUsed(digestId, ac.signal);
     return () => ac.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [digestId]);
+  }, [digestId, loadUsed]);
+
+  // After a write: the per-digest view renders `usedItems`, not `list`, so it needs its own
+  // re-fetch or Pin/Unpin and Correct would never show there.
+  const refresh = useCallback((id: number) => {
+    refreshList(id);
+    if (digestId !== null) loadUsed(digestId);
+  }, [refreshList, loadUsed, digestId]);
+
+  useEffect(() => {
+    if (pendingFocus === null) return;
+    const el = document.getElementById(pendingFocus);
+    if (el) { el.focus(); setPendingFocus(null); }
+  }, [pendingFocus, list, usedItems]);
+
+  /** The row after `id` in its list (else the one before), so focus has somewhere to land when
+   * Delete or Restore takes `id` out of the current list; the page title if it was the last one. */
+  const focusTargetAfterRemoving = (id: number): string => {
+    const li = document.getElementById(`mem-item-${id}`);
+    const next = (li?.nextElementSibling ?? li?.previousElementSibling) as HTMLElement | null | undefined;
+    return next?.id || 'mem-title';
+  };
 
   const closeForm = useCallback((focusId: number) => {
     setFormItemId(null);
@@ -423,14 +455,22 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
     setFormError(null);
     const req = formMode === 'correct' ? correctMemoryItem(item.id, formText) : patchMemoryItem(item.id, { text: formText });
     req.then(
-      () => {
+      (saved) => {
         setFormSaving(false);
-        closeForm(item.id);
-        refreshList(projectId);
+        if (formMode === 'correct' && digestId === null) {
+          // Change 6: focus moves to the new note (the per-digest view doesn't list it, so there
+          // it returns to the Correct button like Cancel does).
+          setFormItemId(null);
+          setFormText('');
+          setPendingFocus(`mem-item-${saved.id}`);
+        } else {
+          closeForm(item.id);
+        }
+        refresh(projectId);
       },
       (e: unknown) => { setFormSaving(false); setFormError(actionErrorText(e, lang, T.correctError)); },
     );
-  }, [projectId, formMode, formText, closeForm, refreshList, lang]);
+  }, [projectId, digestId, formMode, formText, closeForm, refresh, lang]);
 
   const setRowState = (id: number, patch: RowState | null) => {
     setRowStates((prev) => {
@@ -445,10 +485,10 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
     if (projectId === null) return;
     setRowState(item.id, { busy: 'pin' });
     patchMemoryItem(item.id, { pinned: !item.pinned }).then(
-      () => { setRowState(item.id, null); refreshList(projectId); },
+      () => { setRowState(item.id, null); refresh(projectId); },
       (e: unknown) => setRowState(item.id, { busy: undefined, error: actionErrorText(e, lang, T.pinError) }),
     );
-  }, [projectId, refreshList, lang, T]);
+  }, [projectId, refresh, lang, T]);
 
   const onDeleteStep = useCallback((item: MemoryItemDto) => {
     const current = rowStates[item.id]?.busy;
@@ -456,20 +496,21 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
     if (projectId === null) return;
     setRowState(item.id, { busy: 'deleting' });
     patchMemoryItem(item.id, { status: 'hidden' }).then(
-      () => { setRowState(item.id, null); refreshList(projectId); },
+      () => { setRowState(item.id, null); setPendingFocus(focusTargetAfterRemoving(item.id)); refresh(projectId); },
       (e: unknown) => setRowState(item.id, { busy: undefined, error: actionErrorText(e, lang, T.deleteError) }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowStates, projectId, refreshList, lang, T]);
+  }, [rowStates, projectId, refresh, lang, T]);
 
   const onRestore = useCallback((item: MemoryItemDto) => {
     if (projectId === null) return;
     setRowState(item.id, { busy: 'restoring' });
     patchMemoryItem(item.id, { status: 'active' }).then(
-      () => { setRowState(item.id, null); refreshList(projectId); },
+      () => { setRowState(item.id, null); setPendingFocus(focusTargetAfterRemoving(item.id)); refresh(projectId); },
       (e: unknown) => setRowState(item.id, { busy: undefined, error: actionErrorText(e, lang, T.restoreError) }),
     );
-  }, [projectId, refreshList, lang, T]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, refresh, lang, T]);
 
   const scrollToItem = useCallback((id: number) => {
     document.getElementById(`mem-item-${id}`)?.focus();
@@ -507,7 +548,7 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
     setClearState('busy');
     setClearError(null);
     clearProjectMemory(projectId).then(
-      () => { setClearState('idle'); refreshList(projectId); },
+      () => { setClearState('idle'); setPendingFocus('mem-title'); refreshList(projectId); },
       (e: unknown) => { setClearState('idle'); setClearError(actionErrorText(e, lang, T.clearError)); },
     );
   }, [projectId, clearState, refreshList, lang, T]);
@@ -577,7 +618,7 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
 
   return (
     <div className="mem-page">
-      <nav className="breadcrumb" aria-label={H.settingsLabel}>
+      <nav className="breadcrumb" aria-label={readerCopy(lang).breadcrumbLabel}>
         <ol>
           <li><button type="button" className="crumb" onClick={() => onOpenDigest(project.id, digestId)}>{project.name}</button></li>
           <li><span className="crumb current" aria-current="location">{T.breadcrumbCurrent}</span></li>
@@ -591,12 +632,12 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
 
       {digestId !== null ? (
         <div className="mem-head">
-          <h1>{usedError ? T.loadError(usedError) : usedItems === null ? H.loadingStatus : T.usedForHeading(usedItems.length)}</h1>
+          <h1 id="mem-title" tabIndex={-1}>{usedError ? T.loadError(usedError) : usedItems === null ? H.loadingStatus : T.usedForHeading(usedItems.length)}</h1>
           {usedDropped > 0 && <p className="mem-usage">{T.droppedForBudget(usedDropped)}</p>}
         </div>
       ) : (
         <div className="mem-head">
-          <h1>{T.pageTitle(project.name)}</h1>
+          <h1 id="mem-title" tabIndex={-1}>{T.pageTitle(project.name)}</h1>
           {!isEmptyProject && (
             <>
               <div className="mem-summary">
@@ -610,7 +651,7 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
                   />
                 </div>
               </div>
-              {clearState === 'confirm' && <p className="mem-confirm">{T.clearConfirmPrompt(project.name, activeItems.length + hiddenItems.length)}</p>}
+              {clearState === 'confirm' && <p className="mem-confirm">{T.clearConfirmPrompt(project.name, list.items.length)}</p>}
               {list.lastBatch && (
                 <p className="mem-lastbatch">
                   {T.lastUpdatedLine(memoryTriggerLabel(list.lastBatch.trigger as MemoryTrigger, lang), humanDateTime(list.lastBatch.startedAt, now, lang), list.lastBatch.changed)}
@@ -728,6 +769,7 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
                 mode="used"
                 usedFor={u.usedFor}
                 changedSince={u.usedVersion < u.version}
+                overriddenByItem={u.overriddenBy !== null ? byId.get(u.overriddenBy) ?? null : null}
                 state={rowStates[u.id] ?? {}}
                 actions={rowActions}
                 formOpen={formItemId === u.id}

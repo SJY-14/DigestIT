@@ -231,6 +231,38 @@ describe('MemoryPage', () => {
     await waitFor(() => host.querySelector('.mem-correct-box') === null);
   });
 
+  it('Correct -> Save moves focus to the new note once the list reloads (decision change 6)', async () => {
+    const a = item({ id: 1, content: areaContent('src/retry.ts', 'Retry with exponential backoff') });
+    const note = item({ id: 99, kind: 'note', key: 'correct:area:src/retry.ts', source: 'user', content: noteContent('it retries 429s too', { kind: 'area', key: 'src/retry.ts' }) });
+    fetchMemory.mockResolvedValue(defaultList([a]));
+    correctMemoryItem.mockResolvedValue(note);
+    await render(<MemoryPage onOpenDigest={vi.fn()} />);
+    await waitFor(() => host.querySelector('.mem-item') !== null);
+
+    await click([...host.querySelectorAll('.mem-item-actions button')].find((b) => b.textContent === 'Correct'));
+    await typeInto(host.querySelector('.mem-correct-box textarea') as HTMLTextAreaElement, 'it retries 429s too');
+    fetchMemory.mockResolvedValue(defaultList([{ ...a, overriddenBy: 99 }, note]));
+    await click([...host.querySelectorAll('.mem-correct-actions button')].find((b) => b.textContent === 'Save'));
+    await waitFor(() => document.activeElement?.id === 'mem-item-99');
+    expect(host.querySelector('#mem-item-1 .mem-item-source')?.textContent).toContain('Overridden by your note');
+  });
+
+  it('Delete moves focus to the next row instead of dropping it on <body>', async () => {
+    const a = item({ id: 1, content: areaContent('src/a.ts') });
+    const b = item({ id: 2, content: areaContent('src/b.ts') });
+    fetchMemory.mockResolvedValue(defaultList([a, b]));
+    patchMemoryItem.mockResolvedValue({ ...a, status: 'hidden' });
+    await render(<MemoryPage onOpenDigest={vi.fn()} />);
+    await waitFor(() => host.querySelectorAll('.mem-item').length === 2);
+
+    const del = () => host.querySelector('#mem-item-1 .mem-item-actions button.danger');
+    await click(del());
+    fetchMemory.mockResolvedValue(defaultList([{ ...a, status: 'hidden' }, b]));
+    await click(del());
+    await waitFor(() => host.querySelector('#mem-item-1') === null);
+    expect(document.activeElement?.id).toBe('mem-item-2');
+  });
+
   it('shows the existing unauthorized copy, not the generic pin error, on a 401', async () => {
     const a = item({ id: 1, content: areaContent('src/retry.ts') });
     fetchMemory.mockResolvedValue(defaultList([a]));
@@ -254,5 +286,21 @@ describe('MemoryPage', () => {
     expect(host.querySelector('.mem-usage')?.textContent).toContain('3 more items considered but left out for space.');
     expect(host.querySelector('.mem-used-tag')?.textContent).toBe('Used for: L0 summary');
     expect([...host.querySelectorAll('.mem-item-actions button')].some((b) => b.textContent === 'Delete')).toBe(false);
+  });
+
+  it('the per-digest view re-fetches its own list after Pin, so the label flips there too', async () => {
+    history.pushState(null, '', `/memory?project=${PROJECT.id}&digest=42`);
+    const base = item({ id: 1, content: areaContent('src/retry.ts') });
+    const used = { ...base, usedVersion: 1, usedFor: [{ part: 'summary' as const, area: null }] };
+    fetchMemory.mockResolvedValue(defaultList([base]));
+    fetchMemoryUsed.mockResolvedValue({ digestId: 42, items: [used], droppedForBudget: 0 });
+    patchMemoryItem.mockResolvedValue({ ...base, pinned: true });
+    await render(<MemoryPage onOpenDigest={vi.fn()} />);
+    await waitFor(() => host.querySelector('.mem-item') !== null);
+
+    fetchMemoryUsed.mockResolvedValue({ digestId: 42, items: [{ ...used, pinned: true }], droppedForBudget: 0 });
+    await click([...host.querySelectorAll('.mem-item-actions button')].find((b) => b.textContent === 'Pin'));
+    expect(patchMemoryItem).toHaveBeenCalledWith(1, { pinned: true });
+    await waitFor(() => [...host.querySelectorAll('.mem-item-actions button')].some((b) => b.textContent === 'Unpin'));
   });
 });
