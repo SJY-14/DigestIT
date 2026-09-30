@@ -157,8 +157,15 @@ export class ExplainJobRunner {
   /** One repo-wide read of active memory (docs/milestone-4-memory.md §3), shared by every part of
    * one job/area call so a job's several `selectMemory` calls see the same snapshot. `knownTerms`
    * is every term item's name plus every area item's export names -- what `identifiersInDiff` may
-   * match in the diff. */
+   * match in the diff.
+   *
+   * Test-only: `DIGESTIT_MEMORY_TEST_OFF` (any non-empty value) makes every `selectMemory` call
+   * below see no items, i.e. an empty `<memory>` block, without touching `selectMemory` itself
+   * (still pure) or the store. This is the memory A/B kit's off arm (DIG-107,
+   * docs/milestone-4-memory.md §6): same job runner, same prompts, memory retrieval only. Never
+   * read outside this method; unset in every real deployment. */
   private loadMemoryContext(repoId: number): { items: MemoryItem[]; knownTerms: string[] } {
+    if (process.env.DIGESTIT_MEMORY_TEST_OFF) return { items: [], knownTerms: [] };
     const items = listMemoryItems(this.db, repoId);
     const knownTerms = [
       ...items.filter((it) => it.kind === 'term').map((it) => (it.content as TermMemory).term),

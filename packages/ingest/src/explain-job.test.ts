@@ -175,6 +175,28 @@ describe('ExplainJobRunner.start', () => {
     expect(usedInDigests.get(serverAreaItem.id)).toBe(1);
   });
 
+  it('DIG-107: DIGESTIT_MEMORY_TEST_OFF makes every part see an empty memory slice', async () => {
+    const project = await initAndEdit();
+    await updateProjectMemory(db, home, project, 'manual');
+    const before = process.env.DIGESTIT_MEMORY_TEST_OFF;
+    process.env.DIGESTIT_MEMORY_TEST_OFF = '1';
+    try {
+      const p = provider();
+      const runner = new ExplainJobRunner(db, home);
+      const r = await runner.start(project, p);
+      await settle(runner, r.digestId!);
+      await r.settled;
+
+      // The same digest that carried `server`/`web` memory into its prompts in the test above
+      // carries nothing here: `memory_use` is only written when `slice.items` is non-empty.
+      const rows = db.prepare('SELECT part FROM memory_use WHERE change_unit_id = ?').all(r.digestId) as { part: string }[];
+      expect(rows).toHaveLength(0);
+    } finally {
+      if (before === undefined) delete process.env.DIGESTIT_MEMORY_TEST_OFF;
+      else process.env.DIGESTIT_MEMORY_TEST_OFF = before;
+    }
+  });
+
   it('DIG-103: matches memory by area path, not by the digest area id, for nested areas', async () => {
     for (const pkg of ['core', 'web']) for (const f of ['a', 'b', 'c']) write(`packages/${pkg}/${f}.ts`, `export const ${pkg}_${f} = 1;\n`);
     const init = await initProject(db, home, proj);
