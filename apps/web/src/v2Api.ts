@@ -2,7 +2,8 @@
 // Component tests use fixtures (v2Fixtures.ts) instead of a live server.
 import type {
   AboutDto, AreaDetailDto, AreaProgressEvent, ContextStatusDto, CreateProjectResponseDto, DigestDetailDto, DigestPageDto,
-  ExplainLanguage, ExplainResultDto, ProjectDto, ProjectGraphDto, ProjectIgnoreDto, ProjectStatusDto,
+  ExplainLanguage, ExplainResultDto, MemoryItemDto, MemoryKind, MemoryOverviewDto, MemoryStatus, MemoryUsedDto,
+  ProjectDto, ProjectGraphDto, ProjectIgnoreDto, ProjectStatusDto,
 } from '@digestit/core';
 
 export class ApiError extends Error {
@@ -39,6 +40,17 @@ async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Pr
 async function patchJson<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, {
     method: 'PATCH',
+    signal,
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'x-digestit': '1' },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as T;
+}
+
+async function putJson<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, {
+    method: 'PUT',
     signal,
     headers: { 'content-type': 'application/json', accept: 'application/json', 'x-digestit': '1' },
     body: JSON.stringify(body ?? {}),
@@ -208,4 +220,58 @@ export function openDigestEvents(digestId: number, d: DigestEventsDeps): () => v
     stopPolling();
     es?.close();
   };
+}
+
+// --- Project memory (DIG-97/102/103/104): "What DigestIT knows" ---------------------------------
+
+export interface MemoryListDto extends MemoryOverviewDto {
+  items: MemoryItemDto[];
+}
+
+export function fetchMemory(
+  projectId: number, opts: { kind?: MemoryKind; status?: MemoryStatus } = {}, signal?: AbortSignal,
+): Promise<MemoryListDto> {
+  const q = new URLSearchParams();
+  if (opts.kind) q.set('kind', opts.kind);
+  if (opts.status) q.set('status', opts.status);
+  const qs = q.toString();
+  return getJson(`/api/projects/${projectId}/memory${qs ? `?${qs}` : ''}`, signal);
+}
+
+export function patchMemoryItem(
+  itemId: number, body: { pinned?: boolean; status?: 'active' | 'hidden'; text?: string }, signal?: AbortSignal,
+): Promise<MemoryItemDto> {
+  return patchJson(`/api/memory/${itemId}`, body, signal);
+}
+
+export function correctMemoryItem(itemId: number, text: string, signal?: AbortSignal): Promise<MemoryItemDto> {
+  return postJson(`/api/memory/${itemId}/correct`, { text }, signal);
+}
+
+export interface MemoryRollbackResultDto {
+  batchId: number;
+  restored: number;
+  overview: MemoryOverviewDto;
+}
+
+export function rollbackMemory(projectId: number, signal?: AbortSignal): Promise<MemoryRollbackResultDto> {
+  return postJson(`/api/projects/${projectId}/memory/rollback`, {}, signal);
+}
+
+/** `GET /api/projects/:id/memory/export` returns the JSON directly; used as an `<a href>` target
+ * (decision-4-memory.md §6: "no confirm — it's non-destructive"), not fetched from script. */
+export function memoryExportUrl(projectId: number): string {
+  return `/api/projects/${projectId}/memory/export`;
+}
+
+export function clearProjectMemory(projectId: number, signal?: AbortSignal): Promise<{ itemsDeleted: number; batchesDeleted: number }> {
+  return postJson(`/api/projects/${projectId}/memory/clear`, {}, signal);
+}
+
+export function setMemorySummariesEnabled(projectId: number, summariesEnabled: boolean, signal?: AbortSignal): Promise<MemoryOverviewDto> {
+  return putJson(`/api/projects/${projectId}/memory/settings`, { summariesEnabled }, signal);
+}
+
+export function fetchMemoryUsed(digestId: number, signal?: AbortSignal): Promise<MemoryUsedDto> {
+  return getJson(`/api/digests/${digestId}/memory-used`, signal);
 }

@@ -1,10 +1,11 @@
 // Reading flow (DIG-50, docs/ux-v3.md §1): the level switcher, the breadcrumb, and one focused
 // view per level. L0 is the headline, L1 the impact bullets, L2 the area cards, L3 without an
 // area an area picker (the walkthrough itself is in Walkthrough.tsx). MainV2 composes these.
-import { useRef, type KeyboardEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { DigestDetailDto, DigestL2Item, DigestPartsDto, PartStatus } from '@digestit/core';
-import { humanDateTime, levelsCopy, readerCopy, reviewedCopy, type Lang } from './copy.js';
+import { humanDateTime, levelsCopy, memoryCopy, readerCopy, reviewedCopy, type Lang } from './copy.js';
 import { renderProse } from './prose.js';
+import { fetchMemoryUsed } from './v2Api.js';
 import type { ReadingLevel } from './v2Url.js';
 
 // --- Fast Explain (DIG-73/76): one row per area, merging the deterministic skeleton (always
@@ -275,7 +276,36 @@ export function SummaryView({
       </p>
       {digest.parts?.context === 'running' && <p className="notice muted context-building" role="status">{T.contextBuilding}</p>}
       <NextLevel level={0} onLevel={onLevel} lang={lang} />
+      <MemoryGlance projectId={digest.projectId} digestId={digest.id} lang={lang} />
       <AreasGlance digest={digest} onOpenArea={onOpenArea} onHoverArea={onHoverArea} lang={lang} />
+    </section>
+  );
+}
+
+/** "Grounded in N memory items · What DigestIT used" (DIG-104, decision-4-memory.md §2): the
+ * per-digest entry point into "What DigestIT knows", sitting in the same below-headline/stats/Next
+ * rhythm as `AreasGlance` above. Fetched lazily (its own request, not part of the digest DTO) and
+ * omitted entirely when nothing was used — an empty "0 memory items" line reads as alarming, not
+ * informative (brief §2). A plain `<a>`, not a router push: this is mounted deep under MainV2,
+ * which has no reference to App.tsx's page state (same reasoning as the legacy-insights link). */
+function MemoryGlance({ projectId, digestId, lang = 'en' }: { projectId: number; digestId: number; lang?: Lang }) {
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    setCount(null);
+    const ac = new AbortController();
+    fetchMemoryUsed(digestId, ac.signal).then(
+      (dto) => setCount(dto.items.length),
+      () => undefined,
+    );
+    return () => ac.abort();
+  }, [digestId]);
+  if (!count) return null;
+  const T = memoryCopy(lang);
+  return (
+    <section className="memory-glance">
+      <p className="memory-glance-label">
+        {T.groundedLine(count)} · <a href={`/memory?project=${projectId}&digest=${digestId}`}>{T.usedLinkLabel} <span aria-hidden="true">→</span></a>
+      </p>
     </section>
   );
 }

@@ -2,14 +2,24 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AreaPicker, Breadcrumb, digestAreaRows, LevelSwitcher, partsSettled, readerKey, StructureView, SummaryView } from './Reader.js';
-import { fixtureDigest, fixtureDigestDone, fixtureDigestPartial, fixtureDigestPending } from './v2Fixtures.js';
+
+const fetchMemoryUsed = vi.fn(
+  async (_id: number): Promise<{ digestId: number; items: { id: number }[]; droppedForBudget: number }> => ({ digestId: _id, items: [], droppedForBudget: 0 }),
+);
+vi.mock('./v2Api.js', () => ({ fetchMemoryUsed: (id: number) => fetchMemoryUsed(id) }));
+
+const {
+  AreaPicker, Breadcrumb, digestAreaRows, LevelSwitcher, partsSettled, readerKey, StructureView, SummaryView,
+} = await import('./Reader.js');
+const { fixtureDigest, fixtureDigestDone, fixtureDigestPartial, fixtureDigestPending } = await import('./v2Fixtures.js');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root;
 let host: HTMLElement;
 beforeEach(() => {
+  fetchMemoryUsed.mockReset();
+  fetchMemoryUsed.mockImplementation(async (id: number) => ({ digestId: id, items: [], droppedForBudget: 0 }));
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -100,6 +110,25 @@ describe('level views', () => {
     await render(<SummaryView digest={fixtureDigest} onLevel={vi.fn()} onOpenArea={vi.fn()} onHoverArea={vi.fn()} />);
     expect(host.querySelector('h2.l0-headline')?.textContent).toBe(fixtureDigest.l0!.text);
     expect(host.querySelector('.l0-stats')?.textContent).toMatch(/^12 files · \+340 −25/);
+  });
+  it('L0: omits the "Grounded in N memory items" line when nothing was used (DIG-104)', async () => {
+    fetchMemoryUsed.mockResolvedValue({ digestId: fixtureDigest.id, items: [], droppedForBudget: 0 });
+    await render(<SummaryView digest={fixtureDigest} onLevel={vi.fn()} onOpenArea={vi.fn()} onHoverArea={vi.fn()} />);
+    await act(async () => undefined);
+    expect(host.querySelector('.memory-glance')).toBeNull();
+  });
+  it('L0: links to "What DigestIT used" once the digest used at least one memory item', async () => {
+    fetchMemoryUsed.mockResolvedValue({
+      digestId: fixtureDigest.id,
+      items: [{ id: 1 }, { id: 2 }, { id: 3 }],
+      droppedForBudget: 0,
+    });
+    await render(<SummaryView digest={fixtureDigest} onLevel={vi.fn()} onOpenArea={vi.fn()} onHoverArea={vi.fn()} />);
+    await act(async () => undefined);
+    expect(fetchMemoryUsed).toHaveBeenCalledWith(fixtureDigest.id);
+    expect(host.querySelector('.memory-glance-label')?.textContent).toContain('Grounded in 3 memory items');
+    const link = host.querySelector('.memory-glance-label a') as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe(`/memory?project=${fixtureDigest.projectId}&digest=${fixtureDigest.id}`);
   });
   it('L0: a compact "Areas in this digest" card per area, landing on L2 (not L3) with that area', async () => {
     const onOpenArea = vi.fn();
