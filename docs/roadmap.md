@@ -15,6 +15,20 @@ one budget unit. Design and contract: [explain-speed.md](explain-speed.md).
 | 4 | DIG-77 | Real-provider timing and quality acceptance (en and ko) | Board operator | DIG-74, DIG-75, DIG-76 |
 | 5 | DIG-84 | Bug: Explain button stays "Explaining…" after a server-run Explain (live stream misses in-process writes). Merged 2026-09-30 | Diff engineer | — |
 
+## L3 step snippets and line callouts
+
+DIG-96 (Board, 2026-09-30, critical): "Explain code" still repeats the whole diff under every step, because steps point
+at whole hunks and a new file is one hunk. Steps now carry exact line ranges and line-anchored callouts; each step shows
+only its own lines, the full diff is shown once. Spec and contract (types, `rangeSpan` in core) merged to `main`:
+[l3-step-snippets.md](l3-step-snippets.md). Supersedes the hunk anchors of DIG-71 below.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-96 | Contract, review, acceptance kit | CTO | DIG-98, DIG-99 |
+| 1 | DIG-98 | Schema, prompt `a6`, validator, stub, streaming | Diff engineer | — (rebase on DIG-94) |
+| 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed | Frontend engineer | — (after DIG-95) |
+| 3 | — | Real-provider run en/ko, light/dark, 60+ line multi-hunk change; UX Reviewer sentence-to-line check | Board operator, UX reviewer | DIG-98, DIG-99 |
+
 ## L3 step ↔ code mapping
 
 DIG-71 (Board, 2026-09-29): it isn't obvious which lines each walkthrough step covers. Brief rev 2
