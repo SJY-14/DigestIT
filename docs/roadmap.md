@@ -40,9 +40,9 @@ which fonts the host has. CSP is unchanged (`default-src 'self'` covers fonts).
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-72 | Directions, Board pick, review, macOS font check with the owner | CTO | DIG-82, DIG-83 |
+| 0 | DIG-72 | Directions, Board pick, review, macOS font check with the owner | CTO | DIG-83 (owner macOS check) |
 | 1 | DIG-82 | Direction B token pass: fonts, type/spacing/color tokens, de-boxing, graph dots, en/ko, light/dark. Merged 2026-09-30 | Frontend engineer | — |
-| 2 | DIG-83 | Verify: before/after of every view (en/ko, light/dark), contrast table, font-resolution evidence | UX reviewer | DIG-82 |
+| 2 | DIG-83 | Verify: before/after of every view (en/ko, light/dark), contrast table, font-resolution evidence. No findings above Minor; macOS check doc merged 2026-09-30, owner run pending | UX reviewer | DIG-82 |
 
 ## UX improvement cycle 2
 
