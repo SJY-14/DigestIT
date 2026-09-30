@@ -112,6 +112,13 @@ describe('ProjectRow', () => {
     expect(host.querySelector('.proj-headline')?.textContent).toBe('Backups now retry failed uploads');
   });
 
+  it('renders inline code in the headline instead of raw backticks', async () => {
+    await render(<ProjectRow {...baseProps({ headline: 'Preview a backup with `--dry-run`' })} />);
+    const headline = host.querySelector('.proj-headline')!;
+    expect(headline.querySelector('code.inline-code')?.textContent).toBe('--dry-run');
+    expect(headline.textContent).toBe('Preview a backup with --dry-run');
+  });
+
   it('dims a caught-up row with the quiet style', async () => {
     await render(<ProjectRow {...baseProps({ quiet: true, headline: 'You’re caught up' })} />);
     expect(host.querySelector('.proj-row')?.className).toContain('caught-up');
