@@ -39,7 +39,7 @@ entry points, both citing real anchor points already in the code:
   participating in `App.tsx`'s router the same way `/projects` does (`pageFor`, `PATH_FOR`) so
   Back/Forward work and it's a real page, not a modal. State: `?project=<id>`.
 - **A per-digest link, digest-scoped**, sitting where `.areas-glance` already sits today — directly
-  below the L0 headline/stats block, same section rhythm (`styles.css:673`, "below L0's
+  below the L0 headline/stats block, same section rhythm (`styles.css:675`, "below L0's
   headline/stats/Next"). One line, L0 only (the milestone doc asks for one link per digest, not
   one per level): `Grounded in 6 memory items · What DigestIT used →`. Destination:
   `/memory?project=<id>&digest=<id>`, the same page as above, pre-filtered (§5). A digest with an
@@ -232,7 +232,7 @@ Two levels, don't conflate them:
 - Row actions (`Correct`/`Pin`/`Delete`/`Restore`) are always-visible text buttons, not
   hover-only or hidden behind a `...` menu — a screen-reader or keyboard user must reach them by
   Tab alone, same reasoning as the existing `.ignore-pattern-list` delete button's `aria-label`.
-- Toggle: a real checkbox/button pattern with `aria-pressed` or native `<input type="checkbox">`,
+- Toggle: a `<button>` with `aria-pressed` (no `role="switch"`; the label names the setting, not its state),
   labelled, `aria-describedby` pointing at the "what this sends" text so it's read together.
 - Two-step confirms (`Confirm remove?`-style) keep focus on the same button through both steps and
   announce the state change via `aria-live="polite"` on the row, matching `ExplainButton`'s
