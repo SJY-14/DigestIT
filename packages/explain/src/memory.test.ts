@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AreaMemory, MemoryContent, MemoryItem, MemoryProvenance, NoteMemory, TermMemory, ThreadMemory } from '@digestit/core';
-import { checkMemoryDateClaims, formatMemoryDate, identifiersInDiff, selectMemory } from './memory.js';
+import { checkMemoryDateClaims, formatMemoryDate, identifiersInDiff, memoryDateSources, selectMemory } from './memory.js';
 import type { ProviderFile } from './provider.js';
 
 const PROV: MemoryProvenance = { files: [], checkpointId: 1, digestIds: [], jobId: null };
@@ -123,6 +123,24 @@ describe('selectMemory ordering', () => {
   });
 });
 
+describe('selectMemory language', () => {
+  it('sends only items in the request language or with none, preferring the language copy of a key', () => {
+    const items = [
+      area('src/a', { summary: 'English summary.' }, { language: 'en', pinned: true }),
+      area('src/a', { summary: '한국어 요약.' }, { language: 'ko', pinned: true }),
+      area('src/b', {}, { language: null, pinned: true }),
+      term('onlyKo', { meaning: '한국어 뜻.' }, { language: 'ko', pinned: true }),
+    ];
+    const ko = selectMemory(items, { ...KIND, language: 'ko' }, 10_000);
+    expect(ko.text).toContain('한국어 요약.');
+    expect(ko.text).not.toContain('English summary.');
+    expect(ko.text).toContain('src/b');
+    const en = selectMemory(items, KIND, 10_000);
+    expect(en.text).toContain('English summary.');
+    expect(en.text).not.toContain('onlyKo');
+  });
+});
+
 describe('selectMemory budget', () => {
   it('stops adding once the budget is reached and counts the rest as dropped', () => {
     const oneLineTokens = selectMemory([area('src/a')], { ...KIND, touchedAreas: ['src/a'] }, 10_000).tokens;
@@ -186,6 +204,38 @@ describe('checkMemoryDateClaims', () => {
   it('flags a weekday when no memory was sent at all', () => {
     const v = checkMemoryDateClaims(['This continues work from Monday.'], '', 'en');
     expect(v).toHaveLength(1);
+  });
+
+  it('flags a bare date, a month-first date and an ISO date the slice never gave', () => {
+    const slice = '- retry work (continues Tue 29 Sep) (thread): x';
+    expect(checkMemoryDateClaims(['Picks up from 29 Sep.'], slice, 'en')).toEqual([]);
+    expect(checkMemoryDateClaims(['Picks up from 28 Sep.'], slice, 'en')).toHaveLength(1);
+    expect(checkMemoryDateClaims(['Picks up from Sep 28.'], slice, 'en')).toHaveLength(1);
+    expect(checkMemoryDateClaims(['Picks up from 2026-09-28.'], slice, 'en')).toHaveLength(1);
+  });
+
+  it('does not read ordinary words as dates', () => {
+    expect(checkMemoryDateClaims(['It may retry; the sun is out; mark 2 items.'], '', 'en')).toEqual([]);
+  });
+
+  it('matches whole words, so "Sat" is not found inside "saturated"', () => {
+    expect(checkMemoryDateClaims(['Runs on Sat.'], 'the cache is saturated', 'en')).toHaveLength(1);
+  });
+
+  it('accepts a date the diff itself shows (memoryDateSources)', () => {
+    const files: ProviderFile[] = [
+      { path: 'fmt.ts', status: 'M', additions: 1, deletions: 0, patch: "+// renders 'Tue 29 Sep'", filteredReason: null },
+    ];
+    const sources = memoryDateSources('', files);
+    expect(checkMemoryDateClaims(['`formatDate` now renders Tue 29 Sep.'], sources, 'en')).toEqual([]);
+    expect(checkMemoryDateClaims(['`formatDate` now renders Tue 29 Sep.'], '', 'en')).toHaveLength(1);
+  });
+
+  it('accepts a Korean date followed by a particle, and checks English-form dates in a Korean reply', () => {
+    const slice = '- 재시도 작업 (continues 9월 29일 (화)) (thread): x';
+    expect(checkMemoryDateClaims(['9월 29일 (화)에 시작한 작업을 이어갑니다.'], slice, 'ko')).toEqual([]);
+    expect(checkMemoryDateClaims(['9월 28일에 시작한 작업입니다.'], slice, 'ko')).toHaveLength(1);
+    expect(checkMemoryDateClaims(['2026-09-28에 시작한 작업입니다.'], slice, 'ko')).toHaveLength(1);
   });
 
   it('checks Korean weekday mentions against the Korean slice', () => {

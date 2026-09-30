@@ -340,7 +340,7 @@ describe('explainDigestSummary (DIG-74 split)', () => {
     const r = await explainDigestSummary(db, id, p, { job: { jobId, budget: 40 }, memory });
     expect(r).toEqual({ outcome: 'ok', calls: 2 });
     expect(p.inputs[0]!.memory).toBe(memory.text);
-    expect(p.inputs[1]!.retryFeedback).toContain('mentions the date/weekday "Wed 30 Sep" which is not in the memory slice');
+    expect(p.inputs[1]!.retryFeedback).toContain('mentions the date/weekday "Wed 30 Sep" which is not in the memory slice or the diff');
   });
 });
 
@@ -406,7 +406,7 @@ describe('explainDigestAreaText (DIG-74 split)', () => {
     const r = await explainDigestAreaText(db, id, 'storage', p, { job: { jobId, budget: 40 }, memory });
     expect(r).toEqual({ outcome: 'ok', calls: 2 });
     expect(p.inputs[0]!.memory).toBe(memory.text);
-    expect(p.inputs[1]!.retryFeedback).toContain('mentions the date/weekday "Wed 30 Sep" which is not in the memory slice');
+    expect(p.inputs[1]!.retryFeedback).toContain('mentions the date/weekday "Wed 30 Sep" which is not in the memory slice or the diff');
   });
 });
 

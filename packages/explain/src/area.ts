@@ -9,7 +9,7 @@ import {
 } from '@digestit/core/hunks';
 import { areaHunks, promptHunks, renderHunks } from './difflines.js';
 import { DIGEST_PROMPT_VERSION } from './digest.js';
-import { MEMORY_PROMPT_RULES, checkMemoryDateClaims } from './memory.js';
+import { MEMORY_PROMPT_RULES, checkMemoryDateClaims, memoryDateSources } from './memory.js';
 import type { AreaInput, AreaStreamChunk, ExplanationProvider, ProviderFile } from './provider.js';
 import { RepoNotAllowedError } from './config.js';
 import type { JobRef } from './jobs.js';
@@ -228,7 +228,7 @@ interface ParsedStep {
  * §3). Returns `null` when the shape is unusable (not repairable).
  */
 export function checkAreaWalkthrough(
-  raw: unknown, files: readonly ProviderFile[], language: ExplainLanguage = DEFAULT_LANGUAGE, memoryText?: string,
+  raw: unknown, files: readonly ProviderFile[], language: ExplainLanguage = DEFAULT_LANGUAGE, dateSources?: string,
 ): AreaCheckResult | null {
   if (!isObj(raw) || typeof raw.overview !== 'string' || !Array.isArray(raw.steps) || !Array.isArray(raw.check)) return null;
   const v: string[] = [];
@@ -382,8 +382,9 @@ export function checkAreaWalkthrough(
     check.length = LIMITS.walkCheckMax;
   }
 
-  if (memoryText !== undefined) {
-    v.push(...checkMemoryDateClaims([overview, ...steps.map((s) => `${s.title} ${s.body}`), ...check], memoryText, language));
+  if (dateSources !== undefined) {
+    const stepTexts = steps.flatMap((s) => [s.title, s.body, ...s.callouts.map((c) => c.note)]);
+    v.push(...checkMemoryDateClaims([overview, ...stepTexts, ...check], dateSources, language));
   }
 
   return { content: { overview, steps, check }, violations: v, styleWarnings: sw };
@@ -536,6 +537,7 @@ export async function explainArea(
   const language = options.language ?? DEFAULT_LANGUAGE;
   const memoryText = options.memory?.text;
   const prepared = prepareAreaInput(raw, digestArea, options.context, language, options.prepare, memoryText);
+  const dateSources = memoryText === undefined ? undefined : memoryDateSources(memoryText, prepared.input.files, prepared.input.context);
   if (isAreaCached(db, changeUnitId, areaId, promptVersion, prepared.inputHash)) {
     return { changeUnitId, areaId, outcome: 'cached', calls: 0 };
   }
@@ -575,7 +577,7 @@ export async function explainArea(
       } else {
         logCall(db, at, changeUnitId, now().getTime() - at.getTime(), 'ok');
       }
-      const checked = checkAreaWalkthrough(res.content, prepared.input.files, language, memoryText);
+      const checked = checkAreaWalkthrough(res.content, prepared.input.files, language, dateSources);
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
         feedback = [lastError];

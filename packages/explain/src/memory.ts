@@ -1,5 +1,5 @@
 import type {
-  AreaMemory, ExplainLanguage, MemoryItem, MemorySlice, NoteMemory, TermMemory, ThreadMemory,
+  AreaMemory, ExplainLanguage, MemoryItem, MemorySlice, NoteMemory, TermMemory, ThreadDigestRef, ThreadMemory,
 } from '@digestit/core';
 import { MEMORY_LIMITS } from '@digestit/core';
 import { estimateTokens } from './prepare.js';
@@ -10,7 +10,7 @@ import { redact } from './redact.js';
 export type MemoryPromptKind = keyof typeof MEMORY_LIMITS.sliceTokens;
 
 /** Rules shared by every prompt that may carry a `<memory>` block (docs/milestone-4-memory.md §3). */
-export const MEMORY_PROMPT_RULES = 'Use the project\'s own area, term and thread names exactly as given in <memory>; invent none. You may say a change "continues" earlier work only when a thread in <memory> covers it, naming that thread\'s date exactly as shown there — never a date from anywhere else. A `note` in <memory> is a correction from the user: it outranks every other fact in <memory>, but never outranks what the diff itself shows.';
+export const MEMORY_PROMPT_RULES = 'Use the project\'s own area, term and thread names exactly as given in <memory>; invent none. You may say a change "continues" earlier work only when a thread in <memory> covers it, naming that thread\'s date exactly as shown there. Name no other date or weekday unless the diff itself shows it. A `note` in <memory> is a correction from the user: it outranks every other fact in <memory>, but never outranks what the diff itself shows.';
 
 /** What retrieval is grounded on: the change's own touched areas, the diff's known identifiers, and the target prompt. */
 export interface MemoryRequest {
@@ -77,21 +77,31 @@ function renderTerm(c: TermMemory, override: string | null): string {
   return meaning ? `- ${c.term} (term): ${meaning}` : `- ${c.term} (term)`;
 }
 
-function latestDigestDate(c: ThreadMemory): string | null {
+function latestDigest(c: ThreadMemory): ThreadDigestRef | null {
   if (c.digests.length === 0) return null;
-  return c.digests.reduce((latest, d) => (d.at > latest ? d.at : latest), c.digests[0]!.at);
+  return c.digests.reduce((latest, d) => (d.at > latest.at ? d : latest), c.digests[0]!);
 }
 
 function renderThread(c: ThreadMemory, override: string | null, language: ExplainLanguage): string {
-  const at = latestDigestDate(c);
-  const body = override ?? (c.summary ? redact(c.summary) : c.digests.at(-1)?.l0 ?? c.title);
-  const dateNote = at ? ` (continues ${formatMemoryDate(at, language)})` : '';
+  const latest = latestDigest(c);
+  const body = override ?? (c.summary ? redact(c.summary) : latest?.l0 ?? c.title);
+  const dateNote = latest ? ` (continues ${formatMemoryDate(latest.at, language)})` : '';
   return `- ${c.title}${dateNote} (thread): ${body}`;
 }
 
 function renderNote(c: NoteMemory): string {
   const text = redact(c.text);
   return c.target ? `- ${c.target.key} (note): ${text}` : `- (note): ${text}`;
+}
+
+/**
+ * Items whose prose is in `language` or that have none (`language: null`). An item's identity is
+ * (kind, key, language), so the same key can exist once per language: the `language` copy wins over
+ * the language-less one, and a copy in another language is never sent.
+ */
+function inLanguage(items: readonly MemoryItem[], language: ExplainLanguage): MemoryItem[] {
+  const matched = new Set(items.filter((it) => it.language === language).map((it) => key(it.kind, it.key)));
+  return items.filter((it) => it.language === language || (it.language === null && !matched.has(key(it.kind, it.key))));
 }
 
 interface Candidate {
@@ -106,11 +116,12 @@ interface Candidate {
  * touched areas (relationships only), terms the diff mentions, open threads on touched areas, then
  * neighbouring areas (docs/milestone-4-memory.md §3). Never `stale`/`hidden`. A user note whose
  * `target` is a selected item replaces that item's own text. Deterministic and pure: ties within a
- * category break on `key`, ascending. Stops adding once `budget` (estimated tokens) is reached; the
- * rest of the ordering is counted in `droppedForBudget`, not partially rendered.
+ * category break on `key`, ascending. Items are added in that order while they fit in `budget`
+ * (estimated tokens); one that does not fit is skipped whole (never partially rendered) and counted
+ * in `droppedForBudget`, and a shorter, later item may still fit after it.
  */
 export function selectMemory(items: readonly MemoryItem[], request: MemoryRequest, budget: number): MemorySlice {
-  const active = items.filter((it) => it.status === 'active');
+  const active = inLanguage(items.filter((it) => it.status === 'active'), request.language);
   const touched = new Set(request.touchedAreas);
   const identifiers = new Set(request.identifiers);
   const byTargetKey = new Map<string, MemoryItem & { content: NoteMemory }>();
@@ -220,36 +231,65 @@ export function selectMemory(items: readonly MemoryItem[], request: MemoryReques
 }
 
 const WEEKDAY_EN = 'Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sun|Mon|Tue|Wed|Thu|Fri|Sat';
-const MONTH_EN = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec';
-/** The weekday alone, or the full "Wed 30 Sep"-shaped phrase when the day and month follow it. */
-const WEEKDAY_RE_EN = new RegExp(`\\b(?:${WEEKDAY_EN})\\b(?:\\s+\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${MONTH_EN})[a-z]*)?`, 'g');
-/** "9월 29일 (화)"-shaped phrase, or a bare "화요일"/"(화)". */
-const WEEKDAY_RE_KO = /\d{1,2}월\s*\d{1,2}일\s*\([일월화수목금토]\)|[일월화수목금토]요일|\([일월화수목금토]\)/g;
+const MONTH_EN = 'January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec';
+const DAY = '\\d{1,2}(?:st|nd|rd|th)?';
+/**
+ * Date-like phrases, longest form first so "Wed 30 Sep" is matched whole rather than as "Wed" and
+ * "30 Sep": a weekday with an optional day + month after it, a day + month, a month + day, or an
+ * ISO date. Case-sensitive, so the verb "may" and the word "sun" are not dates.
+ */
+const DATE_RE_EN = new RegExp(
+  [
+    `\\b(?:${WEEKDAY_EN})\\b,?(?:\\s+${DAY}\\s+(?:${MONTH_EN})\\b)?`,
+    `\\b${DAY}\\s+(?:${MONTH_EN})\\b`,
+    `\\b(?:${MONTH_EN})\\.?\\s+${DAY}\\b`,
+    '\\b\\d{4}-\\d{2}-\\d{2}\\b',
+  ].join('|'),
+  'g',
+);
+/** "9월 29일 (화)" with or without the weekday, a bare "화요일"/"(화)", or an ISO date. */
+const DATE_RE_KO = /\d{1,2}월\s*\d{1,2}일(?:\s*\([일월화수목금토]\))?|[일월화수목금토]요일|\([일월화수목금토]\)|\b\d{4}-\d{2}-\d{2}\b/g;
 
-const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
+const norm = (s: string): string => s.toLowerCase().replace(/[\s,.]+/g, ' ').trim();
 
 /**
- * Flags any weekday the output text names that the memory slice never mentioned (docs/milestone-4-memory.md
- * §3): the model may only say a thread "continues" a date that is actually in `<memory>`, so a weekday
- * with no match there is a hard violation, not a style warning. Empty when `sliceText` is `''` (no memory
- * was sent) and the output still names no weekday.
+ * The text a reply may quote a date from once a memory slice was sent: the slice itself, the project
+ * context and the diff the prompt showed. A date that only appears in the code being explained (a
+ * date-formatting change, a changelog) is the diff's own fact, not a claimed continuation.
  */
-export function checkMemoryDateClaims(texts: readonly string[], sliceText: string, language: ExplainLanguage): string[] {
-  const re = language === 'ko' ? WEEKDAY_RE_KO : WEEKDAY_RE_EN;
-  const haystack = norm(sliceText);
+export function memoryDateSources(sliceText: string, files: readonly ProviderFile[], context?: string): string {
+  return [sliceText, context ?? '', ...files.map((f) => f.patch ?? '')].join('\n');
+}
+
+/**
+ * Flags any date or weekday the output text names that is not in `sources` (docs/milestone-4-memory.md
+ * §3): the model may only say a thread "continues" on a date that is actually in `<memory>`, so a date
+ * with no match there (or in the diff, see `memoryDateSources`) is a hard violation, not a style
+ * warning. Empty when the output names no date at all.
+ */
+export function checkMemoryDateClaims(texts: readonly string[], sources: string, language: ExplainLanguage): string[] {
+  const patterns = language === 'ko' ? [DATE_RE_KO, DATE_RE_EN] : [DATE_RE_EN];
+  const haystack = norm(sources);
   const v: string[] = [];
   const seen = new Set<string>();
   for (const text of texts) {
-    re.lastIndex = 0;
-    for (const m of text.matchAll(re)) {
-      const found = m[0];
-      const n = norm(found);
-      if (seen.has(n)) continue;
-      if (!haystack.includes(n)) {
+    for (const re of patterns) {
+      for (const m of text.matchAll(re)) {
+        const found = m[0];
+        const n = norm(found);
+        if (seen.has(n)) continue;
         seen.add(n);
-        v.push(`mentions the date/weekday "${found}" which is not in the memory slice`);
+        if (!inSources(haystack, n)) v.push(`mentions the date/weekday "${found}" which is not in the memory slice or the diff`);
       }
     }
   }
   return v;
 }
+
+/** Whole-word match, so "sat" is not found in "saturated"; a Korean phrase may run into a particle ("화요일에"). */
+function inSources(haystack: string, phrase: string): boolean {
+  const tail = /[a-z0-9]$/.test(phrase) ? '(?![\\p{L}\\p{N}])' : '';
+  return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapeRe(phrase)}${tail}`, 'u').test(haystack);
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

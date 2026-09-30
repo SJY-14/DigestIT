@@ -25,6 +25,22 @@ describe('buildAreaSummaryPrompt', () => {
     expect(prompt).toContain('<areas repo="demo">');
   });
 
+  it('refuses more than 4 areas (or none) and asks for at most 10 terms per area', () => {
+    const one = AREAS_INPUT.areas[0]!;
+    const five = Array.from({ length: 5 }, (_, i) => ({ ...one, path: `src/a${i}` }));
+    expect(() => buildAreaSummaryPrompt({ ...AREAS_INPUT, areas: five })).toThrow(/1-4 areas/);
+    expect(() => buildAreaSummaryPrompt({ ...AREAS_INPUT, areas: [] })).toThrow(/1-4 areas/);
+    const terms = Array.from({ length: 12 }, (_, i) => `term${i}`);
+    const prompt = buildAreaSummaryPrompt({ ...AREAS_INPUT, areas: [{ ...one, terms }] });
+    expect(prompt).toContain('term9');
+    expect(prompt).not.toContain('term10');
+    const checked = checkAreaSummaries(
+      { areas: [{ path: one.path, summary: 'Owns the SQLite connection.', terms: [{ term: 'term11', meaning: 'A thing.' }] }] },
+      { ...AREAS_INPUT, areas: [{ ...one, terms }] },
+    );
+    expect(checked!.violations.some((x) => x.includes('"term11" is not one of its requested terms'))).toBe(true);
+  });
+
   it('includes retry feedback when given', () => {
     const prompt = buildAreaSummaryPrompt({ ...AREAS_INPUT, retryFeedback: ['areas: packages/core/src/db summary is empty'] });
     expect(prompt).toContain('rejected for these reasons');

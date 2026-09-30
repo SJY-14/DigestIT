@@ -9,7 +9,7 @@ import type {
 import { RepoNotAllowedError } from './config.js';
 import type { JobRef } from './jobs.js';
 import { logJobCall } from './jobs.js';
-import { MEMORY_PROMPT_RULES, checkMemoryDateClaims } from './memory.js';
+import { MEMORY_PROMPT_RULES, checkMemoryDateClaims, memoryDateSources } from './memory.js';
 import { loadChange, storeLevels } from './pipeline.js';
 import { DEFAULT_PREPARE_OPTIONS, prepareInput, type PrepareOptions, type RawChange } from './prepare.js';
 import { redact } from './redact.js';
@@ -309,11 +309,12 @@ export interface SummaryCheckResult {
 }
 
 /**
- * Split off `checkDigestLevels`'s L0/L1 rules for the standalone `summary` part. `memoryText`, when
- * given, is the `<memory>` slice this attempt's prompt carried: any date or weekday the reply names
- * that is not in it is a hard violation (docs/milestone-4-memory.md §3), not a style warning.
+ * Split off `checkDigestLevels`'s L0/L1 rules for the standalone `summary` part. `dateSources`, when
+ * given (a memory slice was sent), is the text a date may be quoted from (`memoryDateSources`): any
+ * date or weekday the reply names that is not in it is a hard violation (docs/milestone-4-memory.md
+ * §3), not a style warning.
  */
-export function checkSummaryLevels(raw: unknown, language: ExplainLanguage = DEFAULT_LANGUAGE, memoryText?: string): SummaryCheckResult | null {
+export function checkSummaryLevels(raw: unknown, language: ExplainLanguage = DEFAULT_LANGUAGE, dateSources?: string): SummaryCheckResult | null {
   if (!isObj(raw) || !isObj(raw.l0) || !isObj(raw.l1)) return null;
   const { l0: l0raw, l1: l1raw } = raw as { l0: Record<string, unknown>; l1: Record<string, unknown> };
   const bulletsIn = stringArray(l1raw.bullets);
@@ -347,7 +348,7 @@ export function checkSummaryLevels(raw: unknown, language: ExplainLanguage = DEF
       return [cut];
     });
   }
-  if (memoryText !== undefined) v.push(...checkMemoryDateClaims([l0, ...bullets], memoryText, language));
+  if (dateSources !== undefined) v.push(...checkMemoryDateClaims([l0, ...bullets], dateSources, language));
 
   return { levels: { l0: { text: l0 }, l1: { userVisible, bullets } }, violations: v, styleWarnings: sw };
 }
@@ -359,10 +360,10 @@ export interface AreaTextCheckResult {
 }
 
 /**
- * Split off `checkDigestLevels`'s per-item rules for the standalone `area:<id>` part. `memoryText`,
- * when given, is the `<memory>` slice this attempt's prompt carried (docs/milestone-4-memory.md §3).
+ * Split off `checkDigestLevels`'s per-item rules for the standalone `area:<id>` part. `dateSources`
+ * as in `checkSummaryLevels`.
  */
-export function checkAreaTextContent(raw: unknown, language: ExplainLanguage = DEFAULT_LANGUAGE, memoryText?: string): AreaTextCheckResult | null {
+export function checkAreaTextContent(raw: unknown, language: ExplainLanguage = DEFAULT_LANGUAGE, dateSources?: string): AreaTextCheckResult | null {
   if (!isObj(raw) || typeof raw.title !== 'string' || typeof raw.effect !== 'string' || typeof raw.how !== 'string' || typeof raw.why !== 'string') {
     return null;
   }
@@ -373,7 +374,7 @@ export function checkAreaTextContent(raw: unknown, language: ExplainLanguage = D
   const how = checkProse(raw.how, 'how', LIMITS.digestAreaWords, language, v, sw);
   const why = checkProse(raw.why, 'why', LIMITS.digestAreaWords, language, v, sw);
   if (title === '') v.push('title is empty');
-  if (memoryText !== undefined) v.push(...checkMemoryDateClaims([title, effect, how, why], memoryText, language));
+  if (dateSources !== undefined) v.push(...checkMemoryDateClaims([title, effect, how, why], dateSources, language));
   return { content: { title, effect, how, why }, violations: v, styleWarnings: sw };
 }
 
@@ -439,6 +440,7 @@ export async function explainDigestSummary(
   const memoryText = opts.memory?.text;
   const prepared = prepareDigestSummaryInput(raw, areas.map(({ id, label }) => ({ id, label })), opts.context, language, opts.prepare, memoryText);
   if (!opts.force && isSummaryCached(db, changeUnitId, promptVersion, prepared.inputHash)) return { outcome: 'cached', calls: 0 };
+  const dateSources = memoryText === undefined ? undefined : memoryDateSources(memoryText, prepared.input.files, prepared.input.context);
 
   const now = opts.job.now ?? (() => new Date());
   let calls = 0;
@@ -462,7 +464,7 @@ export async function explainDigestSummary(
         jobId: opts.job.jobId, part: 'summary', changeUnitId, model: res.model, effort: res.effort, timing: res.timing,
         durationMs: now().getTime() - at.getTime(), outcome: 'ok',
       });
-      const checked = checkSummaryLevels(res.levels, language, memoryText);
+      const checked = checkSummaryLevels(res.levels, language, dateSources);
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
         feedback = [lastError];
@@ -534,6 +536,7 @@ export async function explainDigestAreaText(
   const memoryText = opts.memory?.text;
   const skeletons = areas.map(({ id, label }) => ({ id, label }));
   const prepared = prepareDigestAreaTextInput(raw, area, skeletons, opts.context, language, opts.prepare, memoryText);
+  const dateSources = memoryText === undefined ? undefined : memoryDateSources(memoryText, prepared.input.files, prepared.input.context);
   const notAnalysed = notAnalysedList(prepareInput(raw).input.files);
 
   const now = opts.job.now ?? (() => new Date());
@@ -560,7 +563,7 @@ export async function explainDigestAreaText(
         jobId: opts.job.jobId, part: `area:${areaId}`, changeUnitId, model: res.model, effort: res.effort, timing: res.timing,
         durationMs: now().getTime() - at.getTime(), outcome: 'ok',
       });
-      const checked = checkAreaTextContent(res.content, language, memoryText);
+      const checked = checkAreaTextContent(res.content, language, dateSources);
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
         feedback = [lastError];
