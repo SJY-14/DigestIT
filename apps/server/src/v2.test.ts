@@ -732,6 +732,15 @@ describe('POST /api/projects/:id/explain and the digest/area GETs', () => {
     ).run(digestId);
     expect((await get(app, `/api/digests/${digestId}/areas/src`)).json()).toMatchObject({ status: 'none', l3: null });
 
+    // A row from the previous whole-hunk-step prompt (a5, DIG-98) is not shown either: only the
+    // current AREA_PROMPT_VERSION (a6, ranges + callouts) is ever read back.
+    db.prepare('DELETE FROM area_explanation').run();
+    db.prepare(
+      `INSERT INTO area_explanation (change_unit_id, area_id, content, status, provider, model, prompt_version, input_hash, created_at)
+       VALUES (?, 'src', '{"overview":"x","steps":[{"title":"t","body":"b","hunks":[{"path":"src/b.ts","hunk":1}],"mechanical":false}],"check":["c"]}', 'ok', 'stub', 'stub-1', 'a5', 'h', '2026-09-01T00:00:00Z')`,
+    ).run(digestId);
+    expect((await get(app, `/api/digests/${digestId}/areas/src`)).json()).toMatchObject({ status: 'none', l3: null });
+
     expect((await get(app, `/api/digests/${digestId}/areas/nope`)).statusCode).toBe(404);
     expect((await get(app, '/api/digests/999')).statusCode).toBe(404);
   });
