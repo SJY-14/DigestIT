@@ -39,6 +39,11 @@ export interface V2Options {
   now?: () => Date;
   /** Cap on the graph LRU (default 50); one entry per (digestId, sorted expand). */
   graphCacheSize?: number;
+  /** `registerLive`'s hub (DIG-84): called after in-process writes settle (a job's part, its project
+   * lock release, a context refresh) so `/api/stream` notices them even though they share `db`'s
+   * connection with the SSE route's own `PRAGMA data_version` poll. Omitted in tests that don't
+   * register `/api/stream`. */
+  notify?: () => void;
 }
 
 type Row = Record<string, unknown>;
@@ -153,7 +158,9 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
   // Fast Explain (DIG-75): the async job runner behind POST /explain, POST /digests/:id/explain
   // (retry) and POST .../areas/:areaId/explain. One instance per server process, holding the
   // in-memory "still running" state that GET /api/digests/:id and the SSE stream below read from.
-  const jobRunner = new ExplainJobRunner(db, home, { budget: budgetLimit, now, contextBusy: (repoId) => contextInFlight.has(repoId) });
+  const jobRunner = new ExplainJobRunner(db, home, {
+    budget: budgetLimit, now, contextBusy: (repoId) => contextInFlight.has(repoId), notify: opts.notify,
+  });
 
   const latestExplanation = db.prepare(
     `SELECT content, status, created_at FROM explanation WHERE change_unit_id = ? AND level = ?
@@ -218,7 +225,8 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
   // Also refused while an Explain's own `context` part is building it (first Explain of a project).
   const buildContextFor = (row: ProjectRow, provider: ExplanationProvider) => {
     if (jobRunner.isContextRunning(row.id)) throw new InFlightError();
-    return withContextGuard(row, () => refreshContext(db, home, row, provider, { budget: budgetLimit, now }));
+    return withContextGuard(row, () => refreshContext(db, home, row, provider, { budget: budgetLimit, now }))
+      .finally(() => opts.notify?.());
   };
 
   function loadDigestL2(digestId: number): DigestL2Content | null {

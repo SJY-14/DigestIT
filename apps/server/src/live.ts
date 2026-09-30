@@ -112,7 +112,15 @@ export function createWorkUnitSummarizer(db: DatabaseSync) {
   return { summary, refreshPending, dirtyFor };
 }
 
-export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveOptions = {}): void {
+export interface LiveHub {
+  /** Forces an immediate re-check and `changed`/`digest`/`area` emission, bypassing the
+   * `PRAGMA data_version` poll: that poll only detects commits from *other* connections, so a
+   * writer sharing this process's `db` handle (the Explain job runner, a context refresh) must
+   * call this itself once it settles, or `/api/stream` never notices its own writes. */
+  notify(): void;
+}
+
+export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveOptions = {}): LiveHub {
   const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
   const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   const maxStreams = opts.maxStreams ?? DEFAULT_MAX_STREAMS;
@@ -343,14 +351,15 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
   };
 
   // Runs on a timer, so it must never throw: a transient SQLite error is retried on the next tick.
-  const tick = () => {
+  // `force`: skip the `data_version` short-circuit (see `notify` below).
+  const tick = (force = false) => {
     let v: number;
     let next: Map<number, string>;
     let nextDigest: Map<number, string>;
     let nextArea: Map<string, AreaFingerprint>;
     try {
       v = dataVersion();
-      if (v === version) return;
+      if (!force && v === version) return;
       next = snapshot();
       nextDigest = digestSnapshot();
       nextArea = areaSnapshot();
@@ -360,7 +369,11 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
     version = v;
     const unitIds = [...next].filter(([id, f]) => fingerprints.get(id) !== f).map(([id]) => id);
     fingerprints = next;
-    if (unitIds.length > 0) send(`id: ${++seq}\nevent: changed\ndata: ${JSON.stringify({ unitIds })}\n\n`);
+    // `force`: a v2 project's own state (`explaining`, its context) lives in `explain.lock`/the
+    // `repo`/`project_context` tables, none of which this fingerprint tracks, so `unitIds` alone
+    // would miss it — send `changed` regardless (its payload was never more than a refetch signal;
+    // see liveClient.ts, whose listener ignores `event.data`).
+    if (unitIds.length > 0 || force) send(`id: ${++seq}\nevent: changed\ndata: ${JSON.stringify({ unitIds })}\n\n`);
 
     const digestIds = [...nextDigest].filter(([id, f]) => digestFingerprints.get(id) !== f).map(([id]) => id);
     digestFingerprints = nextDigest;
@@ -423,6 +436,14 @@ export function registerLive(app: FastifyInstance, db: DatabaseSync, opts: LiveO
     for (const s of streams) s.end();
     streams.clear();
   });
+
+  return {
+    notify: () => {
+      // No streams: nothing to tell, and `start()` re-syncs fingerprints from scratch for the
+      // first client anyway, so a forced tick here would only do wasted DB work.
+      if (streams.size > 0) tick(true);
+    },
+  };
 }
 
 // --- metrics -------------------------------------------------------------------------------

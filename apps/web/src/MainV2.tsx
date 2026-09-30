@@ -451,8 +451,10 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
       onChange: () => digestEvents.current.onChange(),
       onProgress: (e) => digestEvents.current.onProgress(e),
       // The server closes the stream after `done`; one last refetch settles anything whose own
-      // event this stream never carried.
-      onDone: () => digestEvents.current.onChange(),
+      // event this stream never carried. Also re-checks project status directly (belt and braces
+      // alongside the /api/stream `changed` event, DIG-84): the Explain button must not wait on a
+      // reload once the digest itself has visibly settled.
+      onDone: () => { digestEvents.current.onChange(); refreshStatus(); },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [digest?.id, digestUnsettled, anyAreaGenerating]);

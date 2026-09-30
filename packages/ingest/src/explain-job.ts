@@ -75,6 +75,11 @@ export interface ExplainJobRunnerOptions {
   /** True while something outside the runner (the context refresh endpoint) is building this
    * project's context; the job then skips its own `context` part instead of racing it. */
   contextBusy?: (repoId: number) => boolean;
+  /** `registerLive`'s hub (DIG-84): called whenever a part settles and once the project lock is
+   * released, so `/api/stream`'s `changed` event fires for work done in-process (it otherwise only
+   * detects a `data_version` bump from another connection, and this runner shares its `db` handle
+   * with the SSE route). Omitted in tests/CLI runs with no live stream to notify. */
+  notify?: () => void;
 }
 
 export interface StartResult {
@@ -261,6 +266,7 @@ export class ExplainJobRunner {
         this.rememberSettled(changeUnitId, key, status);
         state.parts.delete(key);
         this.emitParts(changeUnitId);
+        this.opts.notify?.();
       });
 
       const runs: Promise<void>[] = [];
@@ -288,6 +294,7 @@ export class ExplainJobRunner {
         finishJob(this.db, jobId, this.now);
       } catch { /* left unfinished: its parts read as stored, or `error` */ }
       releaseProjectLock(opts.dataDir);
+      this.opts.notify?.();
       // Take the listeners before dropping the live state, so the final notification (the one the
       // SSE route turns into `done`) still reaches them.
       const { listeners } = state;
@@ -358,6 +365,7 @@ export class ExplainJobRunner {
         final = this.storedWalkthrough(digestId, areaId);
       } catch { /* see runJob */ }
       this.emitAreaProgress(digestId, { areaId, overview: final?.overview || null, steps: final?.steps ?? [], done: true });
+      this.opts.notify?.();
       return outcome;
     })();
     return { settled };
