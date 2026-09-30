@@ -12,7 +12,9 @@ import { logJobCall } from './jobs.js';
 import { loadChange } from './pipeline.js';
 import { DEFAULT_PREPARE_OPTIONS, prepareInput, type PrepareOptions, type RawChange } from './prepare.js';
 import { redact } from './redact.js';
-import { DEFAULT_LANGUAGE, VOICE, checkProse, languageInstruction, sentenceCount, truncateSentences } from './style.js';
+import {
+  DEFAULT_LANGUAGE, VOICE, callReasons, checkProse, languageInstruction, sentenceCount, softCount, truncateSentences,
+} from './style.js';
 import { LIMITS } from './validate.js';
 
 /** Bump whenever the instructions or the rendering below change. `a1` was the why/design/risks/notes shape; `a2` allowed a 120-word body paragraph; `a4` (DIG-65) added the AI-tell style rules; `a5` (DIG-70) asked for backticks around code identifiers/flags/paths. */
@@ -124,6 +126,8 @@ export interface AreaCheckResult {
   violations: string[];
   /** AI-tell hits (DIG-65): soft style signals, never truncated or rewritten on their account. */
   styleWarnings: string[];
+  /** Fields over their target but inside the tolerance band (DIG-94): logged, never retried. */
+  lengthNotes: string[];
 }
 
 function describeHunks(refs: readonly HunkRef[]): string {
@@ -144,8 +148,9 @@ export function checkAreaWalkthrough(
   if (!isObj(raw) || typeof raw.overview !== 'string' || !Array.isArray(raw.steps) || !Array.isArray(raw.check)) return null;
   const v: string[] = [];
   const sw: string[] = [];
+  const ln: string[] = [];
 
-  const overview = checkProse(raw.overview, 'overview', LIMITS.walkOverviewWords, language, v, sw);
+  const overview = checkProse(raw.overview, 'overview', LIMITS.walkOverviewWords, language, v, sw, { lengthNotes: ln });
   const sentences = sentenceCount(overview);
   if (overview === '') v.push('overview: empty');
   else if (sentences < LIMITS.walkOverviewSentencesMin || sentences > LIMITS.walkOverviewSentencesMax) {
@@ -162,8 +167,8 @@ export function checkAreaWalkthrough(
       v.push(`${label}: is malformed`);
       return;
     }
-    const title = checkProse(s.title, `${label} title`, LIMITS.walkTitleWords, language, v, sw);
-    let body = checkProse(s.body, `${label} body`, LIMITS.walkBodyWords, language, v, sw);
+    const title = checkProse(s.title, `${label} title`, LIMITS.walkTitleWords, language, v, sw, { lengthNotes: ln });
+    let body = checkProse(s.body, `${label} body`, LIMITS.walkBodyWords, language, v, sw, { lengthNotes: ln });
     if (title === '') v.push(`${label}: title is empty`);
     if (body === '') v.push(`${label}: body is empty`);
     else {
@@ -228,7 +233,7 @@ export function checkAreaWalkthrough(
       v.push(`check: item ${i + 1} is not a string`);
       return;
     }
-    const text = checkProse(c, `check: item ${i + 1}`, LIMITS.walkCheckWords, language, v, sw);
+    const text = checkProse(c, `check: item ${i + 1}`, LIMITS.walkCheckWords, language, v, sw, { lengthNotes: ln });
     if (text !== '') check.push(text);
   });
   if (check.length < LIMITS.walkCheckMin) v.push(`check: ${check.length} items, need ${LIMITS.walkCheckMin}-${LIMITS.walkCheckMax}`);
@@ -237,7 +242,7 @@ export function checkAreaWalkthrough(
     check.length = LIMITS.walkCheckMax;
   }
 
-  return { content: { overview, steps, check }, violations: v, styleWarnings: sw };
+  return { content: { overview, steps, check }, violations: v, styleWarnings: sw, lengthNotes: ln };
 }
 
 export type AreaOutcome = 'cached' | 'ok' | 'truncated' | 'error' | 'budget';
@@ -420,7 +425,7 @@ export async function explainArea(
         logJobCall(db, at, 'area', {
           jobId: options.job.jobId, part: `walkthrough:${areaId}`, changeUnitId, model: res.model, effort: res.effort,
           timing: res.timing, durationMs: now().getTime() - at.getTime(), outcome: 'ok',
-          violations: checked === null ? 'provider output has an unusable shape' : [...checked.violations, ...checked.styleWarnings].join('; ') || undefined,
+          violations: callReasons(checked),
         });
       } else {
         logCall(db, at, changeUnitId, now().getTime() - at.getTime(), 'ok');
@@ -432,23 +437,23 @@ export async function explainArea(
       }
       const clean = checked.violations.length === 0 && checked.styleWarnings.length === 0;
       if (clean) {
-        storeArea(db, changeUnitId, areaId, checked.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), 0);
+        storeArea(db, changeUnitId, areaId, checked.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), softCount(checked));
         return { changeUnitId, areaId, outcome: 'ok', calls };
       }
       if (attempt === 0) {
         best = checked;
-        feedback = [...checked.violations, ...checked.styleWarnings];
+        feedback = [...checked.violations, ...checked.styleWarnings, ...checked.lengthNotes];
         lastError = feedback.join('; ');
         continue;
       }
       // Last attempt: accept it per today's hard-violation rules, recording the tells left. If it
       // is hard-invalid while attempt 1 was hard-valid (only tells), keep attempt 1 instead (DIG-65).
       if (checked.violations.length === 0) {
-        storeArea(db, changeUnitId, areaId, checked.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), checked.styleWarnings.length);
+        storeArea(db, changeUnitId, areaId, checked.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), softCount(checked));
         return { changeUnitId, areaId, outcome: 'ok', calls };
       }
       if (best && best.violations.length === 0) {
-        storeArea(db, changeUnitId, areaId, best.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), best.styleWarnings.length);
+        storeArea(db, changeUnitId, areaId, best.content, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), softCount(best));
         return { changeUnitId, areaId, outcome: 'ok', calls };
       }
       best = checked;
@@ -472,11 +477,11 @@ export async function explainArea(
   // A hard-valid attempt 1 kept only for its tells stays 'ok' when the retry fails, is unusable or
   // runs out of budget (DIG-65): 'truncated' is only for output that broke a hard rule.
   if (best && best.violations.length === 0) {
-    storeArea(db, changeUnitId, areaId, best.content, 'ok', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
+    storeArea(db, changeUnitId, areaId, best.content, 'ok', used, promptVersion, prepared.inputHash, at, softCount(best));
     return { changeUnitId, areaId, outcome: 'ok', calls };
   }
   if (best) {
-    storeArea(db, changeUnitId, areaId, best.content, 'truncated', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
+    storeArea(db, changeUnitId, areaId, best.content, 'truncated', used, promptVersion, prepared.inputHash, at, softCount(best));
     return { changeUnitId, areaId, outcome: 'truncated', calls, detail: lastError };
   }
   storeArea(db, changeUnitId, areaId, EMPTY_AREA, 'error', used, promptVersion, prepared.inputHash, at);

@@ -12,9 +12,11 @@ import { logJobCall } from './jobs.js';
 import { loadChange, storeLevels } from './pipeline.js';
 import { DEFAULT_PREPARE_OPTIONS, prepareInput, type PrepareOptions, type RawChange } from './prepare.js';
 import { redact } from './redact.js';
-import { DEFAULT_LANGUAGE, VOICE, checkProse, isStatsLine, languageInstruction, sentenceCount } from './style.js';
 import {
-  FILE_REF, LIMITS, cleanText, hasUnsafeMarkup, notAnalysedList, stringArray, truncateWords, wordCount,
+  DEFAULT_LANGUAGE, VOICE, callReasons, checkProse, fitBullets, isStatsLine, languageInstruction, sentenceCount, softCount, tolerated,
+} from './style.js';
+import {
+  FILE_REF, LIMITS, cleanText, hasUnsafeMarkup, notAnalysedList, stringArray, wordCount,
 } from './validate.js';
 
 /** Bump whenever the instructions or the rendering below change; see PROMPT_VERSION for the commit prompt. `d3` (DIG-65) added the AI-tell style rules. `d4` (DIG-70) asked for backticks around code identifiers/flags/paths in l1/l2. `d5` (DIG-94) stops cutting an over-limit l0 mid-sentence. */
@@ -90,6 +92,8 @@ export interface DigestCheckResult {
   violations: string[];
   /** AI-tell hits (DIG-65): soft style signals, never truncated or rewritten on their account. */
   styleWarnings: string[];
+  /** Fields over their target but inside the tolerance band (DIG-94): logged, never retried. */
+  lengthNotes: string[];
 }
 
 /**
@@ -109,10 +113,11 @@ export function checkDigestLevels(
   }
   const v: string[] = [];
   const sw: string[] = [];
+  const ln: string[] = [];
 
-  // L0: never cut mid-sentence (DIG-94) — an over-limit sentence is flagged so a retry can fix it,
+  // L0: never cut (DIG-94) — a sentence past the tolerance band is flagged so a retry can fix it,
   // but the delivered headline is always the whole sentence, never a fragment ending in "…".
-  const l0 = checkProse(l0raw.text, 'l0', LIMITS.l0Words, language, v, sw, { truncate: false });
+  const l0 = checkProse(l0raw.text, 'l0', LIMITS.l0Words, language, v, sw, { truncate: false, lengthNotes: ln });
   if (l0 === '') v.push('l0: empty');
   if (sentenceCount(l0) > 1) v.push('l0: more than one sentence');
   if (FILE_REF.test(l0)) v.push('l0: mentions a file name or code identifier');
@@ -121,7 +126,7 @@ export function checkDigestLevels(
   // L1
   const userVisible = l1raw.userVisible;
   let bullets = bulletsIn
-    .map((b, i) => checkProse(b, `l1: bullet ${i}`, LIMITS.l1Words, language, v, sw))
+    .map((b, i) => checkProse(b, `l1: bullet ${i}`, LIMITS.l1Words, language, v, sw, { lengthNotes: ln }))
     .filter((b) => b !== '');
   if (bullets.length === 0) v.push('l1: no bullets');
   if (bullets.length > LIMITS.l1Bullets) {
@@ -129,16 +134,10 @@ export function checkDigestLevels(
     bullets = bullets.slice(0, LIMITS.l1Bullets);
   }
   const total = bullets.reduce((n, b) => n + wordCount(b), 0);
-  if (total > LIMITS.l1Words) {
+  if (total > tolerated(LIMITS.l1Words)) {
     v.push(`l1: ${total} words, limit ${LIMITS.l1Words}`);
-    let budget: number = LIMITS.l1Words;
-    bullets = bullets.flatMap((b) => {
-      if (budget <= 0) return [];
-      const cut = truncateWords(b, budget);
-      budget -= Math.min(wordCount(b), budget);
-      return [cut];
-    });
-  }
+    bullets = fitBullets(bullets, tolerated(LIMITS.l1Words));
+  } else if (total > LIMITS.l1Words) ln.push(`l1: ${total} words, target ${LIMITS.l1Words}`);
 
   // L2
   const digestPaths = new Set(files.map((f) => f.path));
@@ -184,10 +183,10 @@ export function checkDigestLevels(
       return;
     }
 
-    const title = checkProse(it.title as string, `l2: area ${i} title`, LIMITS.digestTitleWords, language, v, sw);
-    const effect = checkProse(it.effect as string, `l2: area ${i} effect`, LIMITS.digestEffectWords, language, v, sw);
-    const how = checkProse(it.how as string, `l2: area ${i} how`, LIMITS.digestAreaWords, language, v, sw);
-    const why = checkProse(it.why as string, `l2: area ${i} why`, LIMITS.digestAreaWords, language, v, sw);
+    const title = checkProse(it.title as string, `l2: area ${i} title`, LIMITS.digestTitleWords, language, v, sw, { lengthNotes: ln });
+    const effect = checkProse(it.effect as string, `l2: area ${i} effect`, LIMITS.digestEffectWords, language, v, sw, { lengthNotes: ln });
+    const how = checkProse(it.how as string, `l2: area ${i} how`, LIMITS.digestAreaWords, language, v, sw, { lengthNotes: ln });
+    const why = checkProse(it.why as string, `l2: area ${i} why`, LIMITS.digestAreaWords, language, v, sw, { lengthNotes: ln });
     if (title === '') v.push(`l2: area ${i} title is empty`);
 
     seenIds.add(id);
@@ -208,6 +207,7 @@ export function checkDigestLevels(
     levels: { l0: { text: l0 }, l1: { userVisible, bullets }, l2: { items, notAnalysed: notAnalysedList(files) } },
     violations: v,
     styleWarnings: sw,
+    lengthNotes: ln,
   };
 }
 
@@ -215,7 +215,8 @@ export function checkDigestLevels(
 
 /** `s2` (DIG-94): the l0 instruction gained a worked example and a self-check, and l0 is no longer cut mid-sentence when still over limit. */
 export const DIGEST_SUMMARY_PROMPT_VERSION = 's2';
-export const DIGEST_AREA_TEXT_PROMPT_VERSION = 'at1';
+/** `at2` (DIG-94): word limits get a tolerance band and over-limit text is cut at a sentence boundary. */
+export const DIGEST_AREA_TEXT_PROMPT_VERSION = 'at2';
 
 /** Lower than `DEFAULT_PREPARE_OPTIONS.tokenBudget`: the summary only needs enough to name the change. */
 export const DEFAULT_SUMMARY_PREPARE_OPTIONS: PrepareOptions = { ...DEFAULT_PREPARE_OPTIONS, tokenBudget: 12_000 };
@@ -301,6 +302,7 @@ export interface SummaryCheckResult {
   levels: DigestSummaryLevels;
   violations: string[];
   styleWarnings: string[];
+  lengthNotes: string[];
 }
 
 /** Split off `checkDigestLevels`'s L0/L1 rules for the standalone `summary` part. */
@@ -311,9 +313,10 @@ export function checkSummaryLevels(raw: unknown, language: ExplainLanguage = DEF
   if (typeof l0raw.text !== 'string' || typeof l1raw.userVisible !== 'boolean' || !bulletsIn) return null;
   const v: string[] = [];
   const sw: string[] = [];
+  const ln: string[] = [];
 
   // L0: never cut mid-sentence (DIG-94), same as checkDigestLevels above.
-  const l0 = checkProse(l0raw.text, 'l0', LIMITS.l0Words, language, v, sw, { truncate: false });
+  const l0 = checkProse(l0raw.text, 'l0', LIMITS.l0Words, language, v, sw, { truncate: false, lengthNotes: ln });
   if (l0 === '') v.push('l0: empty');
   if (sentenceCount(l0) > 1) v.push('l0: more than one sentence');
   if (FILE_REF.test(l0)) v.push('l0: mentions a file name or code identifier');
@@ -321,7 +324,7 @@ export function checkSummaryLevels(raw: unknown, language: ExplainLanguage = DEF
 
   const userVisible = l1raw.userVisible;
   let bullets = bulletsIn
-    .map((b, i) => checkProse(b, `l1: bullet ${i}`, LIMITS.l1Words, language, v, sw))
+    .map((b, i) => checkProse(b, `l1: bullet ${i}`, LIMITS.l1Words, language, v, sw, { lengthNotes: ln }))
     .filter((b) => b !== '');
   if (bullets.length === 0) v.push('l1: no bullets');
   if (bullets.length > LIMITS.l1Bullets) {
@@ -329,24 +332,19 @@ export function checkSummaryLevels(raw: unknown, language: ExplainLanguage = DEF
     bullets = bullets.slice(0, LIMITS.l1Bullets);
   }
   const total = bullets.reduce((n, b) => n + wordCount(b), 0);
-  if (total > LIMITS.l1Words) {
+  if (total > tolerated(LIMITS.l1Words)) {
     v.push(`l1: ${total} words, limit ${LIMITS.l1Words}`);
-    let budget: number = LIMITS.l1Words;
-    bullets = bullets.flatMap((b) => {
-      if (budget <= 0) return [];
-      const cut = truncateWords(b, budget);
-      budget -= Math.min(wordCount(b), budget);
-      return [cut];
-    });
-  }
+    bullets = fitBullets(bullets, tolerated(LIMITS.l1Words));
+  } else if (total > LIMITS.l1Words) ln.push(`l1: ${total} words, target ${LIMITS.l1Words}`);
 
-  return { levels: { l0: { text: l0 }, l1: { userVisible, bullets } }, violations: v, styleWarnings: sw };
+  return { levels: { l0: { text: l0 }, l1: { userVisible, bullets } }, violations: v, styleWarnings: sw, lengthNotes: ln };
 }
 
 export interface AreaTextCheckResult {
   content: DigestAreaTextContent;
   violations: string[];
   styleWarnings: string[];
+  lengthNotes: string[];
 }
 
 /** Split off `checkDigestLevels`'s per-item rules for the standalone `area:<id>` part. */
@@ -356,12 +354,13 @@ export function checkAreaTextContent(raw: unknown, language: ExplainLanguage = D
   }
   const v: string[] = [];
   const sw: string[] = [];
-  const title = checkProse(raw.title, 'title', LIMITS.digestTitleWords, language, v, sw);
-  const effect = checkProse(raw.effect, 'effect', LIMITS.digestEffectWords, language, v, sw);
-  const how = checkProse(raw.how, 'how', LIMITS.digestAreaWords, language, v, sw);
-  const why = checkProse(raw.why, 'why', LIMITS.digestAreaWords, language, v, sw);
+  const ln: string[] = [];
+  const title = checkProse(raw.title, 'title', LIMITS.digestTitleWords, language, v, sw, { lengthNotes: ln });
+  const effect = checkProse(raw.effect, 'effect', LIMITS.digestEffectWords, language, v, sw, { lengthNotes: ln });
+  const how = checkProse(raw.how, 'how', LIMITS.digestAreaWords, language, v, sw, { lengthNotes: ln });
+  const why = checkProse(raw.why, 'why', LIMITS.digestAreaWords, language, v, sw, { lengthNotes: ln });
   if (title === '') v.push('title is empty');
-  return { content: { title, effect, how, why }, violations: v, styleWarnings: sw };
+  return { content: { title, effect, how, why }, violations: v, styleWarnings: sw, lengthNotes: ln };
 }
 
 function loadDigestAreas(db: DatabaseSync, changeUnitId: number): DigestAreaSkeleton[] | null {
@@ -446,7 +445,7 @@ export async function explainDigestSummary(
       logJobCall(db, at, 'digest', {
         jobId: opts.job.jobId, part: 'summary', changeUnitId, model: res.model, effort: res.effort, timing: res.timing,
         durationMs: now().getTime() - at.getTime(), outcome: 'ok',
-        violations: checked === null ? 'provider output has an unusable shape' : [...checked.violations, ...checked.styleWarnings].join('; ') || undefined,
+        violations: callReasons(checked),
       });
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
@@ -455,21 +454,21 @@ export async function explainDigestSummary(
       }
       const clean = checked.violations.length === 0 && checked.styleWarnings.length === 0;
       if (clean) {
-        store(checked.levels, 'ok', at.toISOString(), 0);
+        store(checked.levels, 'ok', at.toISOString(), softCount(checked));
         return { outcome: 'ok', calls };
       }
       if (attempt === 0) {
         best = checked;
-        feedback = [...checked.violations, ...checked.styleWarnings];
+        feedback = [...checked.violations, ...checked.styleWarnings, ...checked.lengthNotes];
         lastError = feedback.join('; ');
         continue;
       }
       if (checked.violations.length === 0) {
-        store(checked.levels, 'ok', at.toISOString(), checked.styleWarnings.length);
+        store(checked.levels, 'ok', at.toISOString(), softCount(checked));
         return { outcome: 'ok', calls };
       }
       if (best && best.violations.length === 0) {
-        store(best.levels, 'ok', at.toISOString(), best.styleWarnings.length);
+        store(best.levels, 'ok', at.toISOString(), softCount(best));
         return { outcome: 'ok', calls };
       }
       best = checked;
@@ -487,11 +486,11 @@ export async function explainDigestSummary(
 
   const at = now().toISOString();
   if (best && best.violations.length === 0) {
-    store(best.levels, 'ok', at, best.styleWarnings.length);
+    store(best.levels, 'ok', at, softCount(best));
     return { outcome: 'ok', calls };
   }
   if (best) {
-    store(best.levels, 'truncated', at, best.styleWarnings.length);
+    store(best.levels, 'truncated', at, softCount(best));
     return { outcome: 'truncated', calls, detail: lastError };
   }
   return { outcome: 'error', calls, detail: lastError };
@@ -544,7 +543,7 @@ export async function explainDigestAreaText(
       logJobCall(db, at, 'digest', {
         jobId: opts.job.jobId, part: `area:${areaId}`, changeUnitId, model: res.model, effort: res.effort, timing: res.timing,
         durationMs: now().getTime() - at.getTime(), outcome: 'ok',
-        violations: checked === null ? 'provider output has an unusable shape' : [...checked.violations, ...checked.styleWarnings].join('; ') || undefined,
+        violations: callReasons(checked),
       });
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
@@ -553,21 +552,21 @@ export async function explainDigestAreaText(
       }
       const clean = checked.violations.length === 0 && checked.styleWarnings.length === 0;
       if (clean) {
-        store(checked.content, 'ok', 0);
+        store(checked.content, 'ok', softCount(checked));
         return { outcome: 'ok', calls };
       }
       if (attempt === 0) {
         best = checked;
-        feedback = [...checked.violations, ...checked.styleWarnings];
+        feedback = [...checked.violations, ...checked.styleWarnings, ...checked.lengthNotes];
         lastError = feedback.join('; ');
         continue;
       }
       if (checked.violations.length === 0) {
-        store(checked.content, 'ok', checked.styleWarnings.length);
+        store(checked.content, 'ok', softCount(checked));
         return { outcome: 'ok', calls };
       }
       if (best && best.violations.length === 0) {
-        store(best.content, 'ok', best.styleWarnings.length);
+        store(best.content, 'ok', softCount(best));
         return { outcome: 'ok', calls };
       }
       best = checked;
@@ -584,11 +583,11 @@ export async function explainDigestAreaText(
   }
 
   if (best && best.violations.length === 0) {
-    store(best.content, 'ok', best.styleWarnings.length);
+    store(best.content, 'ok', softCount(best));
     return { outcome: 'ok', calls };
   }
   if (best) {
-    store(best.content, 'truncated', best.styleWarnings.length);
+    store(best.content, 'truncated', softCount(best));
     return { outcome: 'truncated', calls, detail: lastError };
   }
   return { outcome: 'error', calls, detail: lastError };
@@ -709,23 +708,23 @@ export async function explainDigest(
       }
       const clean = checked.violations.length === 0 && checked.styleWarnings.length === 0;
       if (clean) {
-        storeDigest(db, changeUnitId, checked.levels, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), 0);
+        storeDigest(db, changeUnitId, checked.levels, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), softCount(checked));
         return { changeUnitId, outcome: 'ok', calls };
       }
       if (attempt === 0) {
         best = checked;
-        feedback = [...checked.violations, ...checked.styleWarnings];
+        feedback = [...checked.violations, ...checked.styleWarnings, ...checked.lengthNotes];
         lastError = feedback.join('; ');
         continue;
       }
       // Last attempt: accept it per today's hard-violation rules, recording the tells left. If it
       // is hard-invalid while attempt 1 was hard-valid (only tells), keep attempt 1 instead (DIG-65).
       if (checked.violations.length === 0) {
-        storeDigest(db, changeUnitId, checked.levels, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), checked.styleWarnings.length);
+        storeDigest(db, changeUnitId, checked.levels, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), softCount(checked));
         return { changeUnitId, outcome: 'ok', calls };
       }
       if (best && best.violations.length === 0) {
-        storeDigest(db, changeUnitId, best.levels, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), best.styleWarnings.length);
+        storeDigest(db, changeUnitId, best.levels, 'ok', used, promptVersion, prepared.inputHash, at.toISOString(), softCount(best));
         return { changeUnitId, outcome: 'ok', calls };
       }
       best = checked;
@@ -742,11 +741,11 @@ export async function explainDigest(
   // A hard-valid attempt 1 kept only for its tells stays 'ok' when the retry fails, is unusable or
   // runs out of budget (DIG-65): 'truncated' is only for output that broke a hard rule.
   if (best && best.violations.length === 0) {
-    storeDigest(db, changeUnitId, best.levels, 'ok', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
+    storeDigest(db, changeUnitId, best.levels, 'ok', used, promptVersion, prepared.inputHash, at, softCount(best));
     return { changeUnitId, outcome: 'ok', calls };
   }
   if (best) {
-    storeDigest(db, changeUnitId, best.levels, 'truncated', used, promptVersion, prepared.inputHash, at, best.styleWarnings.length);
+    storeDigest(db, changeUnitId, best.levels, 'truncated', used, promptVersion, prepared.inputHash, at, softCount(best));
     return { changeUnitId, outcome: 'truncated', calls, detail: lastError };
   }
   storeDigest(db, changeUnitId, EMPTY_LEVELS, 'error', used, promptVersion, prepared.inputHash, at);
