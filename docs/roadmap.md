@@ -40,8 +40,8 @@ DIG-96 (Board, 2026-09-30, critical): "Explain code" still repeats the whole dif
 at whole hunks and a new file is one hunk. Steps now carry exact line ranges and line-anchored callouts; each step shows
 only its own lines, the full diff is shown once. Spec and contract (types, `rangeSpan` in core) merged to `main`:
 [l3-step-snippets.md](l3-step-snippets.md). Supersedes the hunk anchors of DIG-71 below. DIG-98 and DIG-99 merged
-together (the web UI needs the new required `ranges`); DIG-94 has merged `main` in (the `checkProse` conflict in
-`style.ts` is resolved: `koCharsOverride` is now the `koChars` option). Next: the real-provider acceptance run (row 3).
+together (the web UI needs the new required `ranges`); DIG-94 is merged too (DIG-98's
+`koCharsOverride` is now `checkProse`'s `koChars` option). Next: the real-provider acceptance run (row 3).
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
@@ -98,7 +98,7 @@ the project. Projects can be removed (soft delete). A new "All projects" view so
 | 5 | DIG-92 | Fix: the web client's Remove got 415 (DELETE sent no `content-type`). Found by DIG-90. Merged 2026-09-30 | CTO | — |
 | 6 | DIG-93 | Real-provider acceptance run (`.cache/dig80-acceptance/accept.sh`, all views passed, 2026-09-30) | Board operator | DIG-90 |
 | 7 | DIG-95 | Follow-up from DIG-93: inline code in All-projects row headlines. The L3 "writing" notice was correct (the kit captured mid-stream; kit wait fixed), now pinned by a test. Merged 2026-09-30 | Frontend engineer | — |
-| 8 | DIG-94 | Fix: explain parts fail length check and get generated twice. Word limits get a 25% tolerance band (over the target is a style warning, not a retry); prose is cut only at a sentence boundary and L0 is never cut; the validation reason is logged per attempt (`explain_call.violations`) | Summarization engineer | DIG-93 |
+| 8 | DIG-94 | Fix: explain parts fail length check and get generated twice. Word limits get a 25% tolerance band (over the target is a style warning, not a retry); prose is cut only at a sentence boundary and L0 is never cut; the validation reason is logged per attempt (`explain_call.violations`). Merged 2026-09-30; the next operator acceptance run confirms the doubled calls are gone | Summarization engineer | DIG-93 |
 
 ## Removing the AI-made look (done)
 
