@@ -13,7 +13,7 @@ Board; the build starts on the recommended options.
 |---|---|---|---|---|
 | 0 | DIG-97 | Design, contract, Board decisions D1–D3, review, acceptance | CTO | DIG-100–103 |
 | 1 | DIG-100 | Store, migration, rollback, export/clear, deterministic extraction, threads, `digest memory` CLI | Diff engineer | — |
-| 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task | Summarization engineer | — |
+| 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task (merged; prompts s2/at2/a7) | Summarization engineer | — |
 | 3 | DIG-103 | `MemoryWorker` triggers, budget share, retrieval wired into Explain, memory API | Diff engineer | DIG-100, DIG-101 |
 | 4 | DIG-102 | "What DigestIT knows" design: brief, critique, decision (done: `docs/ux/decision-4-memory.md`) | UX Designer, UX Reviewer | — |
 | 5 | DIG-104 | The page and the per-digest "what DigestIT used" | Frontend engineer | DIG-102, DIG-103 |
