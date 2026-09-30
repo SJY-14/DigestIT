@@ -12,7 +12,7 @@ import {
   type ExplanationProvider, type JobRef, type MemoryAreaSummaryRequest, type MemorySummarizeAreasInput,
   type MemorySummarizeThreadInput,
 } from '@digestit/explain';
-import { createBatch, finishBatch, listMemoryItems, upsertMemoryItem } from './memory.js';
+import { createBatch, finishBatch, getMemoryItemById, listMemoryItems, upsertMemoryItem } from './memory.js';
 import type { ProjectRow } from './project.js';
 
 /** The content as it stood at the last revision an actual summarization call wrote (`provenance.
@@ -113,11 +113,17 @@ export async function runAreaSummaryBatch(
   });
 
   const writeResults = (checked: { areas: { path: string; summary: string; terms: { term: string; meaning: string }[] }[] }): number => {
-    const batchId = createBatch(db, project.id, trigger, null, now);
+    let batchId: number | null = null;
     let itemsUpdated = 0;
     for (const out of checked.areas) {
-      const item = byPath.get(out.path);
-      if (!item) continue;
+      const sent = byPath.get(out.path);
+      if (!sent) continue;
+      // The call ran without the store lock: an area re-extracted, hidden, rolled back or cleared
+      // meanwhile drops its result (docs/milestone-4-memory.md §2) instead of writing the pre-call
+      // content back over it. It stays due and gets summarised again from its new state.
+      const item = getMemoryItemById(db, sent.id);
+      if (!item || item.status !== 'active' || (item.content as AreaMemory).fingerprint !== (sent.content as AreaMemory).fingerprint) continue;
+      batchId ??= createBatch(db, project.id, trigger, null, now);
       const c = item.content as AreaMemory;
       const merged: AreaMemory = { ...c, summary: out.summary };
       upsertMemoryItem(db, batchId, project.id, 'area', out.path, null, merged, 'summary', { ...item.provenance, jobId: job.jobId }, now);
@@ -133,7 +139,7 @@ export async function runAreaSummaryBatch(
         upsertMemoryItem(db, batchId, project.id, 'term', t.term, null, { ...tc, meaning: t.meaning }, 'summary', { ...termItem.provenance, jobId: job.jobId }, now);
       }
     }
-    finishBatch(db, batchId, 0, now);
+    if (batchId !== null) finishBatch(db, batchId, 0, now);
     return itemsUpdated;
   };
 
@@ -187,12 +193,18 @@ export async function runThreadSummaryBatch(
   const language: ExplainLanguage = item.language ?? project.language;
   const c = item.content as ThreadMemory;
 
-  const write = (summary: string): void => {
+  /** False when the thread changed during the call (a digest joined, it closed, was hidden or
+   * cleared): the result is dropped, same rule as for areas above. */
+  const write = (summary: string): boolean => {
+    const current = getMemoryItemById(db, item.id);
+    if (!current || current.status !== 'active' || threadFingerprint(current.content as ThreadMemory) !== threadFingerprint(c)) return false;
     const batchId = createBatch(db, project.id, trigger, null, now);
-    const merged: ThreadMemory = { ...c, summary };
-    upsertMemoryItem(db, batchId, project.id, 'thread', item.key, item.language, merged, 'summary', { ...item.provenance, jobId: job.jobId }, now);
+    const merged: ThreadMemory = { ...(current.content as ThreadMemory), summary };
+    upsertMemoryItem(db, batchId, project.id, 'thread', current.key, current.language, merged, 'summary', { ...current.provenance, jobId: job.jobId }, now);
     finishBatch(db, batchId, 0, now);
+    return true;
   };
+  const dropped: SummaryBatchResult = { outcome: 'error', calls: 0, itemsUpdated: 0, detail: 'thread changed during the call' };
 
   let feedback: string[] | undefined;
   let calls = 0;
@@ -217,15 +229,10 @@ export async function runThreadSummaryBatch(
         feedback = [lastError];
         continue;
       }
-      if (checked.violations.length === 0) {
-        write(checked.summary);
-        return { outcome: 'ok', calls, itemsUpdated: 1 };
+      if (checked.violations.length === 0 || (attempt === 1 && checked.summary !== '')) {
+        return write(checked.summary) ? { outcome: 'ok', calls, itemsUpdated: 1 } : { ...dropped, calls };
       }
       if (attempt === 1) {
-        if (checked.summary !== '') {
-          write(checked.summary);
-          return { outcome: 'ok', calls, itemsUpdated: 1 };
-        }
         return { outcome: 'error', calls, itemsUpdated: 0, detail: checked.violations.join('; ') };
       }
       feedback = [...checked.violations, ...checked.styleWarnings];

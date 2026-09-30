@@ -112,6 +112,32 @@ describe('MemoryWorker.tick', () => {
     expect(areasNeedingSummary(db, a.id).length).toBeGreaterThan(0);
   });
 
+  it('never exceeds the share while a slow summary job is still in flight', async () => {
+    for (const dir of ['a', 'b', 'c', 'd', 'e', 'f']) write(`${dir}/m.ts`, `export const ${dir} = 1;\n`);
+    const init = await initProject(db, home, proj);
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+    await updateProjectMemory(db, home, project, 'manual');
+    setMemorySummariesEnabled(db, project.id, true);
+    const slow = new DelayedProvider();
+    slow.delayMs = 100;
+    const w = worker({ providerFactory: () => slow, dailyJobShare: 1 });
+    w.tick();
+    await w.flush(); // daily sweep
+    w.tick(); // first summary job starts; its call has not been logged yet
+    for (let i = 0; i < 5; i++) {
+      await sleep(10);
+      w.tick();
+    }
+    await w.flush();
+    for (let i = 0; i < 3; i++) {
+      w.tick();
+      await w.flush();
+    }
+    expect(areasNeedingSummary(db, project.id).length).toBeGreaterThan(0); // 6 areas, 4 per job
+    const jobs = db.prepare("SELECT count(*) AS n FROM explain_job WHERE kind = 'memory'").get() as { n: number };
+    expect(jobs.n).toBe(1);
+  });
+
   it('respects the reserve: no memory job starts once too little budget remains for user actions', async () => {
     const a = await initWithAreas();
     setMemorySummariesEnabled(db, a.id, true);

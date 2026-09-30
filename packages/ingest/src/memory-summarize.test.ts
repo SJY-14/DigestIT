@@ -5,8 +5,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
 import type { AreaMemory, ThreadMemory } from '@digestit/core';
-import { StubProvider, startJob, type JobRef } from '@digestit/explain';
-import { getMemoryItem } from './memory.js';
+import { StubProvider, startJob, type JobRef, type MemorySummarizeAreasInput, type MemorySummarizeAreasResult } from '@digestit/explain';
+import { clearMemory, createBatch, getMemoryItem, upsertMemoryItem } from './memory.js';
 import { updateProjectMemory } from './memory-update.js';
 import { areasNeedingSummary, pickSummaryWork, runAreaSummaryBatch, runThreadSummaryBatch, threadsNeedingSummary } from './memory-summarize.js';
 import { findProject, initProject, prepareExplainDigest, type ProjectRow } from './project.js';
@@ -99,6 +99,42 @@ describe('areasNeedingSummary / pickSummaryWork', () => {
     const serverAfter = getMemoryItem(db, project.id, 'area', 'server', null)!;
     expect((serverAfter.content as AreaMemory).summary).toBe((server.content as AreaMemory).summary);
     expect(serverAfter.source).toBe('summary');
+  });
+
+  it('drops the result for an area that changed during the call, keeping its newer content', async () => {
+    const project = await initWithAreas();
+    const job = newJob(db, project.id);
+    class ChangingProvider extends StubProvider {
+      override async summarizeAreas(input: MemorySummarizeAreasInput): Promise<MemorySummarizeAreasResult> {
+        const server = getMemoryItem(db, project.id, 'area', 'server', null)!;
+        const batchId = createBatch(db, project.id, 'after-explain', null);
+        upsertMemoryItem(db, batchId, project.id, 'area', 'server', null,
+          { ...(server.content as AreaMemory), fingerprint: 'moved', fileCount: 9 }, 'code', server.provenance);
+        return super.summarizeAreas(input);
+      }
+    }
+    const r = await runAreaSummaryBatch(db, project, new ChangingProvider(), areasNeedingSummary(db, project.id), job, 'idle');
+    expect(r.itemsUpdated).toBe(1); // web only
+    const server = getMemoryItem(db, project.id, 'area', 'server', null)!;
+    expect((server.content as AreaMemory).summary).toBeNull();
+    expect((server.content as AreaMemory).fingerprint).toBe('moved');
+    expect((server.content as AreaMemory).fileCount).toBe(9);
+    expect((getMemoryItem(db, project.id, 'area', 'web', null)!.content as AreaMemory).summary).not.toBeNull();
+  });
+
+  it('does not recreate an area cleared during the call', async () => {
+    const project = await initWithAreas();
+    const job = newJob(db, project.id);
+    class ClearingProvider extends StubProvider {
+      override async summarizeAreas(input: MemorySummarizeAreasInput): Promise<MemorySummarizeAreasResult> {
+        clearMemory(db, project.id);
+        return super.summarizeAreas(input);
+      }
+    }
+    const r = await runAreaSummaryBatch(db, project, new ClearingProvider(), areasNeedingSummary(db, project.id), job, 'idle');
+    expect(r.itemsUpdated).toBe(0);
+    expect(db.prepare('SELECT count(*) AS n FROM memory_item WHERE repo_id = ?').get(project.id)).toEqual({ n: 0 });
+    expect(db.prepare('SELECT count(*) AS n FROM memory_batch WHERE repo_id = ?').get(project.id)).toEqual({ n: 0 });
   });
 
   it('logs an explain_call with part memory, reason memory, against the given job', async () => {

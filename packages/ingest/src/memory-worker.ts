@@ -159,6 +159,9 @@ export class MemoryWorker {
   /** One tick's worth of trigger selection (docs/milestone-4-memory.md §2): public so a test or the
    * CLI can drive it without a real timer. `start()` calls this on `tickMs`. */
   tick(): void {
+    // One item at a time, including queueing: a summary call can outlast many ticks, and items
+    // queued behind it would each start a job before the first one's calls count toward the share.
+    if (this.running || this.queue.length > 0) return;
     if (!this.idle()) return;
     const today = this.localDateKey(this.now());
     const projects = listProjects(this.db);
@@ -193,6 +196,9 @@ export class MemoryWorker {
    * its own turn comes up must not be written as if it were still current. */
   private async runSummaryWork(project: ProjectRow): Promise<void> {
     if (this.isExplaining()) return;
+    // Re-checked at start, not only when queued: the gates are what `startJob` must never bypass.
+    if (!memorySummariesEnabled(this.db, project.id)) return;
+    if (!canStartMemoryJob(this.db, this.now(), this.budgetLimit, this.dailyJobShare, this.reserve)) return;
     const work = pickSummaryWork(this.db, project.id);
     if (!work) return;
     const provider = this.opts.providerFactory([project.name]);
