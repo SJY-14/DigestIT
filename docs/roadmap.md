@@ -14,6 +14,20 @@ one budget unit. Design and contract: [explain-speed.md](explain-speed.md).
 | 3 | DIG-76 | Instant digest skeleton, per-part fill-in and retry, SSE client, streamed L3 steps | Frontend engineer | — (fixtures until DIG-75) |
 | 4 | DIG-77 | Real-provider timing and quality acceptance (en and ko) | Board operator | DIG-74, DIG-75, DIG-76 |
 
+## L3 step ↔ code mapping
+
+DIG-71 (Board, 2026-09-29): it isn't obvious which lines each walkthrough step covers. Brief rev 2
+([ux/dig71-step-code-mapping.md](ux/dig71-step-code-mapping.md)) was approved by the UX Reviewer. The CTO decision: build
+P1–P3 (a range label and step badge on each hunk block, and an announcement plus focus move on every step change), all
+client-only. Not built: the two-pane diff (it conflicts with the one-long-scroll rule in ux-v3 §1). No schema or
+validator change: anchors are derived from `HunkRef` and the patch.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-71 | Brief, decision, review, acceptance | CTO | DIG-81 |
+| 1 | DIG-81 | `hunkRange()`, range labels, step badges, announce + focus (P1–P3) | Frontend engineer | — |
+| 2 | — | After merge: real-provider screenshots (en/ko, light/dark) and the Reviewer's 2-second check | Board operator, UX reviewer | DIG-81 |
+
 ## Removing the AI-made look (done)
 
 DIG-63 (Board, 2026-09-29): the UI and the generated explanations should read as human-crafted. The audit and its
