@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<title>DigestIT — visual direction A: GitHub-native</title>
+<script>
+/* Read the theme from the URL hash before first paint (avoids a flash of the wrong theme, and
+   makes a headless screenshot after a reload — rather than a live attribute toggle — the
+   reliable way to capture each theme: some headless engines don't repaint on a plain attribute
+   mutation, but always repaint on navigation). */
+document.documentElement.dataset.theme = /^#?dark$/.test(location.hash) ? 'dark' : 'light';
+</script>
+<style>
+/* ============================================================
+   Direction A — GitHub-native
+   System font stack (unchanged from main), hairline dividers
+   instead of boxes, Octicon-scale graph nodes, accent blue
+   reserved for "clickable / primary" only.
+   ============================================================ */
+:root{
+  --bg:#ffffff; --bg-inset:#f6f8fa; --fg:#1f2328; --muted:#59636e;
+  --border:#d1d9e0; --border-muted:#d9dee3; --hover:#f3f4f6; --selected:#f6f8fa;
+  --accent:#0969da; --accent-solid:#0969da; --focus:#0969da;
+  --add:#1a7f37; --del:#cf222e; --add-bg:#dafbe1; --del-bg:#ffebe9;
+  --hunk-bg:#ddf4ff; --hunk-fg:#0550ae;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "Apple SD Gothic Neo", "Noto Sans KR", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+html[data-theme="dark"]{
+  --bg:#0d1117; --bg-inset:#151b23; --fg:#f0f6fc; --muted:#9198a1;
+  --border:#3d444d; --border-muted:#262c36; --hover:#151b23; --selected:#151b23;
+  --accent:#4493f8; --accent-solid:#1f6feb; --focus:#4493f8;
+  --add:#3fb950; --del:#f85149; --add-bg:rgba(46,160,67,.15); --del-bg:rgba(248,81,73,.15);
+  --hunk-bg:rgba(56,139,253,.15); --hunk-fg:#9ecbff;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg-inset);color:var(--fg);font:14px/1.5 var(--font);}
+.proto-bar{position:sticky;top:0;z-index:50;display:flex;gap:8px;align-items:center;padding:8px 16px;background:#24292f;color:#fff;font:12px/1 var(--font);}
+.proto-bar button{font:inherit;background:#32383f;color:#fff;border:1px solid #444c56;border-radius:4px;padding:5px 10px;cursor:pointer;}
+.proto-bar a{color:#9ecbff;margin-left:auto;}
+.frame{max-width:1280px;margin:24px auto 64px;background:var(--bg);}
+.screen{border:1px solid var(--border);margin-bottom:32px;}
+.screen-label{font:600 11px/1 var(--mono);letter-spacing:.02em;color:var(--muted);background:var(--bg-inset);padding:6px 16px;border-bottom:1px solid var(--border);}
+.pad{padding:20px 24px 32px;}
+
+/* app chrome */
+.top{display:flex;align-items:center;gap:16px;padding:10px 20px;border-bottom:1px solid var(--border);}
+.top .brand{font-weight:600;font-size:14px;}
+.top nav{display:flex;gap:2px;}
+.top nav a{color:var(--muted);text-decoration:none;font-size:13px;padding:4px 8px;border-radius:6px;}
+.top nav a.current{color:var(--fg);font-weight:600;}
+.top-spacer{flex:1;}
+
+.bar{display:flex;align-items:center;gap:10px;padding:10px 20px;border-bottom:1px solid var(--border-muted);font-size:13px;}
+.proj{font-weight:600;}
+.digest-trigger{flex:1;color:var(--muted);border:0;background:none;text-align:left;padding:0;font:inherit;cursor:pointer;}
+.digest-trigger strong{color:var(--fg);font-weight:400;}
+.chip{color:var(--muted);white-space:nowrap;}
+.btn{border:1px solid var(--border);background:var(--bg-inset);border-radius:6px;padding:4px 12px;font:inherit;cursor:pointer;color:var(--fg);}
+.btn.primary{background:var(--accent-solid);border-color:var(--accent-solid);color:#fff;font-weight:600;}
+
+.crumb{padding:8px 20px 0;font-size:12px;color:var(--muted);}
+.crumb b{color:var(--fg);font-weight:600;}
+
+.tabs{display:flex;gap:20px;padding:0 20px;border-bottom:1px solid var(--border);margin-top:6px;}
+.tab{padding:8px 2px;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;cursor:pointer;}
+.tab.current{color:var(--fg);font-weight:600;border-bottom-color:var(--accent);}
+.tab .k{font:600 10px/1 var(--mono);color:var(--muted);background:var(--bg-inset);border:1px solid var(--border);border-radius:3px;padding:1px 4px;margin-right:4px;}
+
+.split{display:flex;gap:0;min-height:520px;}
+.reading{flex:0 0 58%;border-right:1px solid var(--border);padding:24px;min-width:0;}
+.graph{flex:1;padding:16px;display:flex;flex-direction:column;}
+
+.l0-eyebrow{font-size:12px;color:var(--muted);margin-bottom:4px;}
+.l0-headline{font-size:22px;font-weight:600;line-height:1.35;margin:0 0 8px;max-width:44em;}
+.l0-stats{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;margin:0 0 20px;}
+.section-head{font-size:13px;font-weight:600;color:var(--fg);margin:0 0 10px;padding-top:16px;border-top:1px solid var(--border-muted);}
+.arow{display:flex;align-items:baseline;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-muted);cursor:pointer;}
+.arow:hover .atitle{color:var(--accent);text-decoration:underline;}
+.atitle{font-weight:600;color:var(--fg);}
+.ameta{color:var(--muted);font-size:12px;margin-left:auto;white-space:nowrap;}
+
+/* L2 rows — hairline list, not boxed cards */
+.l2list{list-style:none;margin:0;padding:0;}
+.l2row{padding:14px 0;border-bottom:1px solid var(--border-muted);}
+.l2row:first-child{padding-top:0;}
+.l2title{font-size:14px;font-weight:600;margin:0 0 3px;}
+.l2title a{color:var(--fg);text-decoration:none;}
+.l2title a:hover{color:var(--accent);text-decoration:underline;}
+.l2effect{margin:0 0 6px;color:var(--fg);}
+.l2foot{display:flex;gap:10px;align-items:center;font-size:12px;color:var(--muted);}
+.tag{font-family:var(--mono);font-size:11px;background:var(--bg-inset);border:1px solid var(--border-muted);border-radius:4px;padding:1px 5px;}
+.l2open{margin-left:auto;color:var(--accent);font-weight:600;}
+
+/* L3 walkthrough */
+.wtitle{font-size:16px;font-weight:600;margin:0 0 4px;}
+.wmeta{font-size:12px;color:var(--muted);margin:0 0 16px;}
+.stepbar{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted);margin-bottom:16px;}
+.stepbar b{color:var(--fg);}
+.step{padding:14px 0;border-top:1px solid var(--border-muted);}
+.step h4{font-size:13px;margin:0 0 6px;}
+.step h4 .n{color:var(--muted);font-weight:400;margin-right:4px;}
+.step p{margin:0 0 12px;}
+table.diff{width:100%;border-collapse:collapse;font:12px/20px var(--mono);border:1px solid var(--border);}
+table.diff .no{width:1%;padding:0 8px;text-align:right;color:var(--muted);border-right:1px solid var(--border-muted);}
+table.diff .code{padding:0 8px;white-space:pre;}
+tr.add{background:var(--add-bg);}
+tr.hunk{background:var(--hunk-bg);color:var(--hunk-fg);font-weight:600;}
+.check{margin-top:16px;padding-top:12px;border-top:1px solid var(--border);}
+.check h5{font-size:12px;font-weight:600;margin:0 0 6px;color:var(--muted);}
+.check ul{margin:0;padding-left:18px;}
+
+/* graph */
+.glegend{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-bottom:8px;}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:4px;}
+.dot.off{background:var(--muted);}
+svg.gsvg{flex:1;width:100%;}
+.gnode-fill{fill:var(--muted);}
+.gnode-fill.changed{fill:var(--accent);}
+.gnode-ring{fill:none;stroke:var(--fg);stroke-width:1.5;}
+.glabel{font:10px var(--font);fill:var(--fg);}
+.gedge{stroke:var(--border);stroke-width:1;}
+</style>
+</head>
+<body>
+<div class="proto-bar">
+  <strong>DigestIT — Direction A: GitHub-native</strong>
+  <button onclick="location.hash = document.documentElement.dataset.theme==='dark'?'light':'dark'; location.reload();">Toggle light/dark</button>
+  <a href="#l0">L0</a><a href="#l2">L2</a><a href="#l3-en">L3 (en)</a><a href="#l3-ko">L3 (한국어)</a>
+</div>
+<div class="frame">
+
+<!-- ===================== L0 ===================== -->
+<section class="screen" id="l0">
+<div class="screen-label">SCREEN 1 — L0 Summary, with areas</div>
+<div class="top"><span class="brand">DigestIT</span><nav><a class="current">Home</a><a>History</a></nav><span class="top-spacer"></span></div>
+<div class="bar">
+  <span class="proj">snapback</span>
+  <button class="digest-trigger">Today, 09:13 · 6 files · <strong>Backups now retry failed uploads and keep going past broken files, so one network hiccup no longer aborts a run.</strong></button>
+  <span class="chip">38 calls left today</span>
+  <button class="btn">i</button>
+  <button class="btn primary">No new changes</button>
+</div>
+<div class="crumb">Digest · Today, 09:13 › <b>L0 Summary</b></div>
+<div class="tabs">
+  <span class="tab current"><span class="k">0</span>Summary</span>
+  <span class="tab"><span class="k">1</span>Impact</span>
+  <span class="tab"><span class="k">2</span>Structure</span>
+  <span class="tab"><span class="k">3</span>Code</span>
+</div>
+<div class="split">
+  <div class="reading">
+    <div class="l0-eyebrow">Today, 09:13 · 6 files · +85 −16</div>
+    <p class="l0-headline">Backups now retry failed uploads and keep going past broken files, so one network hiccup no longer aborts a run.</p>
+    <div class="section-head">Areas in this digest</div>
+    <div class="arow"><span class="atitle">Retry with exponential backoff</span><span class="ameta">src/retry.ts +2</span></div>
+    <div class="arow"><span class="atitle">Upload failures carry file and attempt count</span><span class="ameta">src/upload.ts +2</span></div>
+    <div class="arow"><span class="atitle">Keep uploading after a file fails</span><span class="ameta">src/queue.ts +2</span></div>
+    <div class="arow"><span class="atitle">Retries setting and its documentation</span><span class="ameta">src/config.ts +2</span></div>
+  </div>
+  <div class="graph">
+    <div class="glegend"><span><span class="dot"></span>changed</span><span><span class="dot off"></span>unchanged</span></div>
+    <svg class="gsvg" viewBox="0 0 460 420">
+      <line class="gedge" x1="230" y1="120" x2="230" y2="210"/>
+      <line class="gedge" x1="230" y1="210" x2="120" y2="150"/>
+      <line class="gedge" x1="230" y1="210" x2="230" y2="300"/>
+      <line class="gedge" x1="230" y1="300" x2="120" y2="260"/>
+      <line class="gedge" x1="230" y1="300" x2="120" y2="340"/>
+      <line class="gedge" x1="230" y1="300" x2="340" y2="270"/>
+      <line class="gedge" x1="230" y1="300" x2="340" y2="340"/>
+      <line class="gedge" x1="230" y1="300" x2="230" y2="380"/>
+      <g><circle class="gnode-fill changed" cx="120" cy="150" r="5"/><text class="glabel" x="120" y="168" text-anchor="middle">test</text></g>
+      <g><circle class="gnode-fill" cx="230" cy="120" r="5"/><text class="glabel" x="230" y="106" text-anchor="middle">package.json</text></g>
+      <g><circle class="gnode-fill changed" cx="230" cy="210" r="7"/><circle class="gnode-ring" cx="230" cy="210" r="10"/><text class="glabel" x="230" y="196" text-anchor="middle">snapback</text></g>
+      <g><circle class="gnode-fill changed" cx="230" cy="300" r="7"/><text class="glabel" x="230" y="318" text-anchor="middle">src</text></g>
+      <g><circle class="gnode-fill changed" cx="120" cy="260" r="5"/><text class="glabel" x="120" y="248" text-anchor="middle">retry.ts</text></g>
+      <g><circle class="gnode-fill changed" cx="120" cy="340" r="5"/><text class="glabel" x="120" y="358" text-anchor="middle">upload.ts</text></g>
+      <g><circle class="gnode-fill changed" cx="340" cy="270" r="5"/><text class="glabel" x="340" y="256" text-anchor="middle">queue.ts</text></g>
+      <g><circle class="gnode-fill changed" cx="340" cy="340" r="5"/><text class="glabel" x="340" y="358" text-anchor="middle">config.ts</text></g>
+      <g><circle class="gnode-fill changed" cx="230" cy="380" r="5"/><text class="glabel" x="230" y="398" text-anchor="middle">cli.ts</text></g>
+    </svg>
+  </div>
+</div>
+</section>
+
+<!-- ===================== L2 ===================== -->
+<section class="screen" id="l2">
+<div class="screen-label">SCREEN 2 — L2 Structure</div>
+<div class="top"><span class="brand">DigestIT</span><nav><a class="current">Home</a><a>History</a></nav><span class="top-spacer"></span></div>
+<div class="bar">
+  <span class="proj">snapback</span>
+  <button class="digest-trigger">Today, 09:13 · 6 files · <strong>Backups now retry failed uploads…</strong></button>
+  <span class="chip">38 calls left today</span>
+  <button class="btn">i</button>
+  <button class="btn primary">No new changes</button>
+</div>
+<div class="crumb">Digest · Today, 09:13 › <b>L2 Structure</b></div>
+<div class="tabs">
+  <span class="tab"><span class="k">0</span>Summary</span>
+  <span class="tab"><span class="k">1</span>Impact</span>
+  <span class="tab current"><span class="k">2</span>Structure</span>
+  <span class="tab"><span class="k">3</span>Code</span>
+</div>
+<div class="split">
+  <div class="reading">
+    <ul class="l2list">
+      <li class="l2row">
+        <p class="l2title"><a href="#">Retry with exponential backoff</a></p>
+        <p class="l2effect">Brief network errors and 5xx replies get retried. 4xx replies, such as a denied key, fail at once.</p>
+        <div class="l2foot"><span class="tag">src/retry.ts</span><span class="tag">test/retry.test.ts</span><span class="l2open">Walk through the code →</span></div>
+      </li>
+      <li class="l2row">
+        <p class="l2title"><a href="#">Upload failures carry file and attempt count</a></p>
+        <p class="l2effect">Each failed file is reported with its path and how many attempts were made.</p>
+        <div class="l2foot"><span class="tag">src/upload.ts</span><span class="tag">test/upload.test.ts</span><span class="l2open">Walk through the code →</span></div>
+      </li>
+      <li class="l2row">
+        <p class="l2title"><a href="#">Keep uploading after a file fails</a></p>
+        <p class="l2effect">The run finishes every file, prints "uploaded X of Y files" and each failure, then exits with 2.</p>
+        <div class="l2foot"><span class="tag">src/queue.ts</span><span class="tag">src/cli.ts</span><span class="l2open">Walk through the code →</span></div>
+      </li>
+      <li class="l2row">
+        <p class="l2title"><a href="#">Retries setting and its documentation</a></p>
+        <p class="l2effect">Operators set retries with --retries or SNAPBACK_RETRIES. loadConfig throws an error for values outside 0–10.</p>
+        <div class="l2foot"><span class="tag">src/config.ts</span><span class="tag">README.md</span><span class="l2open">Walk through the code →</span></div>
+      </li>
+    </ul>
+  </div>
+  <div class="graph">
+    <div class="glegend"><span><span class="dot"></span>changed</span><span><span class="dot off"></span>unchanged</span></div>
+    <svg class="gsvg" viewBox="0 0 460 420">
+      <line class="gedge" x1="230" y1="120" x2="230" y2="210"/>
+      <line class="gedge" x1="230" y1="210" x2="120" y2="150"/>
+      <line class="gedge" x1="230" y1="210" x2="230" y2="300"/>
+      <line class="gedge" x1="230" y1="300" x2="120" y2="260"/>
+      <line class="gedge" x1="230" y1="300" x2="120" y2="340"/>
+      <line class="gedge" x1="230" y1="300" x2="340" y2="270"/>
+      <line class="gedge" x1="230" y1="300" x2="340" y2="340"/>
+      <line class="gedge" x1="230" y1="300" x2="230" y2="380"/>
+      <g><circle class="gnode-fill changed" cx="120" cy="150" r="5"/><text class="glabel" x="120" y="168" text-anchor="middle">test</text></g>
+      <g><circle class="gnode-fill" cx="230" cy="120" r="5"/><text class="glabel" x="230" y="106" text-anchor="middle">package.json</text></g>
+      <g><circle class="gnode-fill changed" cx="230" cy="210" r="7"/><text class="glabel" x="230" y="196" text-anchor="middle">snapback</text></g>
+      <g><circle class="gnode-fill changed" cx="230" cy="300" r="7"/><text class="glabel" x="230" y="318" text-anchor="middle">src</text></g>
+      <g><circle class="gnode-fill changed" cx="120" cy="260" r="6"/><circle class="gnode-ring" cx="120" cy="260" r="9"/><text class="glabel" x="120" y="248" text-anchor="middle">retry.ts</text></g>
+      <g><circle class="gnode-fill changed" cx="120" cy="340" r="5"/><text class="glabel" x="120" y="358" text-anchor="middle">upload.ts</text></g>
+      <g><circle class="gnode-fill changed" cx="340" cy="270" r="5"/><text class="glabel" x="340" y="256" text-anchor="middle">queue.ts</text></g>
+      <g><circle class="gnode-fill changed" cx="340" cy="340" r="5"/><text class="glabel" x="340" y="358" text-anchor="middle">config.ts</text></g>
+      <g><circle class="gnode-fill changed" cx="230" cy="380" r="5"/><text class="glabel" x="230" y="398" text-anchor="middle">cli.ts</text></g>
+    </svg>
+  </div>
+</div>
+</section>
+
+<!-- ===================== L3 EN ===================== -->
+<section class="screen" id="l3-en">
+<div class="screen-label">SCREEN 3 — L3 walkthrough (English)</div>
+<div class="top"><span class="brand">DigestIT</span><nav><a class="current">Home</a><a>History</a></nav><span class="top-spacer"></span></div>
+<div class="bar">
+  <span class="proj">snapback</span>
+  <button class="digest-trigger">Today, 09:13 · 6 files · <strong>Backups now retry failed uploads…</strong></button>
+  <span class="chip">37 calls left today</span>
+  <button class="btn">i</button>
+  <button class="btn primary">No new changes</button>
+</div>
+<div class="crumb">Digest · Today, 09:13 › src/retry.ts › <b>L3 Code</b></div>
+<div class="tabs">
+  <span class="tab"><span class="k">0</span>Summary</span>
+  <span class="tab"><span class="k">1</span>Impact</span>
+  <span class="tab"><span class="k">2</span>Structure</span>
+  <span class="tab current"><span class="k">3</span>Code</span>
+</div>
+<div class="split">
+  <div class="reading">
+    <p class="wtitle">Retry with exponential backoff</p>
+    <p class="wmeta">src/retry.ts, test/retry.test.ts · +2 files</p>
+    <p>This area adds src/retry.ts, a small helper that retries an async call when it fails for a transient reason: a network error code or a 5xx reply. 4xx replies such as a denied key fail at once. Waits start at 200&nbsp;ms, double up to 10&nbsp;s and are jittered.</p>
+    <div class="stepbar"><b>Step 1 of 3</b> · Decide which failures deserve another try <span style="margin-left:auto">Press n / p for next / previous</span></div>
+    <div class="step">
+      <h4><span class="n">1</span>Decide which failures deserve another try</h4>
+      <p>isRetryable treats the error as an object with optional code and status fields. It returns true when code is in RETRYABLE_CODES (ECONNRESET, ETIMEDOUT, EAI_AGAIN, EPIPE) or when status is 500 or more. Everything else, including every 4xx reply, is final.</p>
+      <table class="diff">
+        <tr class="hunk"><td class="no"></td><td class="code">@@ -0,0 +1,8 @@ src/retry.ts</td></tr>
+        <tr class="add"><td class="no">10</td><td class="code">+const RETRYABLE_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'EPIPE']);</td></tr>
+        <tr class="add"><td class="no">11</td><td class="code">+</td></tr>
+        <tr class="add"><td class="no">12</td><td class="code">+export function isRetryable(err: unknown): boolean {</td></tr>
+        <tr class="add"><td class="no">13</td><td class="code">+  const e = err as { code?: string; status?: number };</td></tr>
+        <tr class="add"><td class="no">14</td><td class="code">+  if (e.code &amp;&amp; RETRYABLE_CODES.has(e.code)) return true;</td></tr>
+        <tr class="add"><td class="no">15</td><td class="code">+  return typeof e.status === 'number' &amp;&amp; e.status >= 500;</td></tr>
+        <tr class="add"><td class="no">16</td><td class="code">+}</td></tr>
+      </table>
+    </div>
+    <div class="check">
+      <h5>What to check</h5>
+      <ul>
+        <li>Only four error codes are retried. Confirm ECONNREFUSED and similar transient errors should really fail at once.</li>
+        <li>Every status ≥ 500 is retried, including 501 Not Implemented, which a retry will not fix.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="graph">
+    <div class="glegend"><span><span class="dot"></span>changed</span><span><span class="dot off"></span>unchanged</span></div>
+    <svg class="gsvg" viewBox="0 0 460 420">
+      <line class="gedge" x1="230" y1="300" x2="120" y2="260"/>
+      <g><circle class="gnode-fill changed" cx="120" cy="260" r="6"/><circle class="gnode-ring" cx="120" cy="260" r="9"/><text class="glabel" x="120" y="248" text-anchor="middle">retry.ts</text></g>
+      <g><circle class="gnode-fill changed" cx="230" cy="300" r="5"/><text class="glabel" x="230" y="318" text-anchor="middle">src</text></g>
+    </svg>
+  </div>
+</div>
+</section>
+
+<!-- ===================== L3 KO ===================== -->
+<section class="screen" id="l3-ko" lang="ko">
+<div class="screen-label">SCREEN 3 — L3 walkthrough (한국어)</div>
+<div class="top"><span class="brand">DigestIT</span><nav><a class="current">홈</a><a>기록</a></nav><span class="top-spacer"></span></div>
+<div class="bar">
+  <span class="proj">snapback</span>
+  <button class="digest-trigger">오늘, 09:13 · 파일 6개 · <strong>백업이 실패한 업로드를 재시도하고 깨진 파일을 지나쳐 계속 진행하여, 네트워크 문제 하나로 전체 실행이 중단되지 않습니다.</strong></button>
+  <span class="chip">오늘 남은 호출 37회</span>
+  <button class="btn">i</button>
+  <button class="btn primary">새 변경 사항 없음</button>
+</div>
+<div class="crumb">다이제스트 · 오늘, 09:13 › src/retry.ts › <b>L3 코드</b></div>
+<div class="tabs">
+  <span class="tab"><span class="k">0</span>요약</span>
+  <span class="tab"><span class="k">1</span>영향</span>
+  <span class="tab"><span class="k">2</span>구조</span>
+  <span class="tab current"><span class="k">3</span>코드</span>
+</div>
+<div class="split">
+  <div class="reading">
+    <p class="wtitle">지수 백오프 재시도 도우미</p>
+    <p class="wmeta">src/retry.ts, test/retry.test.ts · 파일 2개</p>
+    <p>새 src/retry.ts의 withRetry는 비동기 호출을 감싸 일시적 네트워크 오류와 5xx 응답에 지수 백오프로 다시 시도하고, 4xx는 즉시 실패시킵니다. sleep과 random을 주입받을 수 있어 테스트가 실제로 기다리지 않고 지연값을 검증합니다.</p>
+    <div class="stepbar"><b>1/3단계</b> · 재시도할 오류만 골라내는 isRetryable <span style="margin-left:auto">n / p 키로 다음/이전 단계</span></div>
+    <div class="step">
+      <h4><span class="n">1</span>재시도할 오류만 골라내는 isRetryable</h4>
+      <p>isRetryable은 오류 객체의 code가 RETRYABLE_CODES(ECONNRESET, ETIMEDOUT, EAI_AGAIN, EPIPE)에 있거나 status가 500 이상인 숫자일 때만 true를 돌려줍니다. 4xx를 포함한 나머지는 모두 false입니다.</p>
+      <table class="diff">
+        <tr class="hunk"><td class="no"></td><td class="code">@@ -0,0 +1,8 @@ src/retry.ts</td></tr>
+        <tr class="add"><td class="no">10</td><td class="code">+const RETRYABLE_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'EPIPE']);</td></tr>
+        <tr class="add"><td class="no">12</td><td class="code">+export function isRetryable(err: unknown): boolean {</td></tr>
+        <tr class="add"><td class="no">14</td><td class="code">+  if (e.code &amp;&amp; RETRYABLE_CODES.has(e.code)) return true;</td></tr>
+        <tr class="add"><td class="no">15</td><td class="code">+  return typeof e.status === 'number' &amp;&amp; e.status >= 500;</td></tr>
+      </table>
+    </div>
+    <div class="check">
+      <h5>확인할 사항</h5>
+      <ul>
+        <li>네 가지 오류 코드만 재시도합니다. ECONNREFUSED 등 다른 일시적 오류도 재시도 대상이어야 하는지 확인하세요.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="graph">
+    <div class="glegend"><span><span class="dot"></span>변경됨</span><span><span class="dot off"></span>변경 없음</span></div>
+    <svg class="gsvg" viewBox="0 0 460 420">
+      <line class="gedge" x1="230" y1="300" x2="120" y2="260"/>
+      <g><circle class="gnode-fill changed" cx="120" cy="260" r="6"/><circle class="gnode-ring" cx="120" cy="260" r="9"/><text class="glabel" x="120" y="248" text-anchor="middle">retry.ts</text></g>
+      <g><circle class="gnode-fill changed" cx="230" cy="300" r="5"/><text class="glabel" x="230" y="318" text-anchor="middle">src</text></g>
+    </svg>
+  </div>
+</div>
+</section>
+
+</div>
+</body>
+</html>
