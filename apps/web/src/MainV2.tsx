@@ -700,7 +700,8 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
         if (next !== k.step) {
           e.preventDefault();
           k.onStep(next);
-          setAnnounce(walkthroughCopy(k.lang).stepOf(next, k.stepCount));
+          // WalkthroughView owns the step announcement now (docs/ux/dig71-step-code-mapping.md
+          // §3): it fires the same way for n/p, the TOC and a ?step= reload, with the range.
         }
       }
     };

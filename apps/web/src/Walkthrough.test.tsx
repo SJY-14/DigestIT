@@ -32,6 +32,51 @@ const view = (area: AreaDetailDto = fixtureArea, props: Partial<Parameters<typeo
 );
 const headersIn = (el: Element) => [...el.querySelectorAll('tr.hunk .code')].map((c) => c.textContent);
 
+// A minimal area for the step ↔ code range tests (DIG-81, docs/ux/dig71-step-code-mapping.md §7):
+// two files with small, hand-computable line numbers, one step covering two hunks.
+const uploadPatch = [
+  '@@ -10,4 +10,6 @@',
+  ' ',
+  ' function upload(file) {',
+  '+  for (let i = 0; i <= retries; i++) {',
+  '   const res = put(file);',
+  '+    if (res.ok || i === retries) return res;',
+  ' }',
+].join('\n');
+const cliPatch = [
+  '@@ -40,1 +40,2 @@',
+  " program.option('--folder <path>');",
+  "+program.option('--retries <n>', 'retry count', 3);",
+  '@@ -60,1 +61,1 @@',
+  '-program.parse();',
+  '+program.parseAsync();',
+].join('\n');
+const rangeArea: AreaDetailDto = {
+  ...fixtureArea,
+  files: [
+    { path: 'upload.js', oldPath: null, status: 'M', additions: 2, deletions: 0, filteredReason: null, patch: uploadPatch },
+    { path: 'cli.js', oldPath: null, status: 'M', additions: 2, deletions: 1, filteredReason: null, patch: cliPatch },
+  ],
+  l3: {
+    overview: fixtureWalkthrough.overview,
+    steps: [
+      {
+        title: 'Add retry to the upload loop',
+        body: 'Retries a failed PUT.',
+        hunks: [{ path: 'upload.js', hunk: 1 }, { path: 'cli.js', hunk: 1 }],
+        mechanical: false,
+      },
+      {
+        title: 'Use async parse',
+        body: 'program.parseAsync replaces program.parse.',
+        hunks: [{ path: 'cli.js', hunk: 2 }],
+        mechanical: false,
+      },
+    ],
+    check: [],
+  } as unknown as AreaDetailDto['l3'],
+};
+
 describe('WalkthroughView', () => {
   it('renders the overview, then each step with exactly its own hunks right under the text', async () => {
     await render(view());
@@ -173,6 +218,62 @@ describe('WalkthroughView', () => {
     expect(toggled.getAttribute('aria-pressed')).toBe('true');
     await click(toggled);
     expect(onToggleReviewed).toHaveBeenCalledTimes(2);
+  });
+
+  it('P1 (DIG-81): shows a range label on every hunk block, and "k of M ranges" only for a multi-hunk step', async () => {
+    await render(view(rangeArea, { step: 1 }));
+    const steps = [...host.querySelectorAll('section.step')];
+    const step1Blocks = [...steps[0]!.querySelectorAll('.hunk-block')];
+    expect(step1Blocks).toHaveLength(2);
+    expect(step1Blocks[0]!.querySelector('.hunk-range')?.textContent).toBe('· lines 12–14');
+    expect(step1Blocks[0]!.querySelector('.hunk-pos')?.textContent).toBe('1 of 2 ranges');
+    expect(step1Blocks[1]!.querySelector('.hunk-range')?.textContent).toBe('· line 41');
+    expect(step1Blocks[1]!.querySelector('.hunk-pos')?.textContent).toBe('2 of 2 ranges');
+
+    const step2Block = steps[1]!.querySelector('.hunk-block')!;
+    expect(step2Block.querySelector('.hunk-range')?.textContent).toBe('· line 61');
+    expect(step2Block.querySelector('.hunk-pos')).toBeNull();
+  });
+
+  it('P1/P2 (DIG-81): uncovered hunk blocks get the range label but no step badge', async () => {
+    await render(view());
+    const uncovered = host.querySelector('.uncovered .hunk-block')!;
+    expect(uncovered.querySelector('.step-badge')).toBeNull();
+    expect(uncovered.querySelector('.hunk-range')?.textContent).toBeTruthy();
+  });
+
+  it('P2 (DIG-81): the hunk-block badge is filled (shape, not just colour) for the current step, outlined otherwise', async () => {
+    await render(view(rangeArea, { step: 1 }));
+    const steps = [...host.querySelectorAll('section.step')];
+    const step1Badges = [...steps[0]!.querySelectorAll('.hunk-block .step-badge')];
+    expect(step1Badges.map((b) => b.textContent)).toEqual(['1', '1']);
+    expect(step1Badges.every((b) => b.classList.contains('current'))).toBe(true);
+
+    const step2Badge = steps[1]!.querySelector('.hunk-block .step-badge')!;
+    expect(step2Badge.textContent).toBe('2');
+    expect(step2Badge.classList.contains('current')).toBe(false);
+  });
+
+  it('P3 (DIG-81): announces the step and range, and moves focus to the step heading, only on an actual step change', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+    await render(view(rangeArea, { step: 1 }));
+    const live = () => host.querySelector('[aria-live="polite"]');
+    expect(live()?.textContent).toBe('Step 1 of 2, upload.js lines 12–14 and 1 more');
+    expect(document.activeElement?.id).toBe('step-1-title');
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+
+    // Same step, a new walkthrough object (a poll or DIG-76 streamed-step refresh mid-read): no
+    // re-announce, no refocus — it would otherwise yank focus away from what the reader is doing.
+    const polled = { ...rangeArea, l3: { ...(rangeArea.l3 as object) } as unknown as AreaDetailDto['l3'] };
+    await render(view(polled, { step: 1 }));
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+    expect(live()?.textContent).toBe('Step 1 of 2, upload.js lines 12–14 and 1 more');
+
+    await render(view(rangeArea, { step: 2 }));
+    expect(live()?.textContent).toBe('Step 2 of 2, cli.js line 61');
+    expect(document.activeElement?.id).toBe('step-2-title');
+    expect(focusSpy).toHaveBeenCalledTimes(2);
   });
 });
 

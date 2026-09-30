@@ -2,10 +2,10 @@
 // the exact hunks it explains right under the text, "What to check", and last the hunks no step
 // covers (cut by the token budget). Before a walkthrough exists (or while it is being written)
 // the area's full diff is shown instead, so the code is always one click away.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AreaDetailDto, AreaProgressEvent, AreaWalkthrough, HunkRef } from '@digestit/core';
 import { lineDelta, reviewedCopy, walkthroughCopy, type Lang } from './copy.js';
-import { splitPatch, uncoveredHunks, type PatchHunk } from './hunks.js';
+import { hunkRange, splitPatch, uncoveredHunks, type PatchHunk } from './hunks.js';
 import type { DiffLine } from './diff.js';
 import { proseLabel, renderProse } from './prose.js';
 import type { AreaHeading } from './Reader.js';
@@ -34,14 +34,34 @@ function DiffRow({ line }: { line: DiffLine }) {
 }
 
 /** One hunk, rendered with the diff styling; long ones fold with "Show all". */
-export function HunkBlock({ path, hunk, lang = 'en' }: { path: string; hunk: PatchHunk; lang?: Lang }) {
+export function HunkBlock({
+  path, hunk, lang = 'en', step, current = false, rangeIndex, rangeCount,
+}: {
+  path: string;
+  hunk: PatchHunk;
+  lang?: Lang;
+  /** 1-based step number this hunk belongs to (P2); omitted for uncovered/leftover/full-diff hunks, which get no badge. */
+  step?: number;
+  /** Whether `step` is the currently selected step — badge fill vs. outline (P2). */
+  current?: boolean;
+  /** This hunk's 1-based position among its step's ranges, and how many ranges the step has (P1's "k of M ranges"); omitted for single-range steps. */
+  rangeIndex?: number;
+  rangeCount?: number;
+}) {
   const T = walkthroughCopy(lang);
   const [open, setOpen] = useState(false);
   const long = hunk.lines.length > FOLD_THRESHOLD;
   const lines = long && !open ? hunk.lines.slice(0, FOLD_PREVIEW) : hunk.lines;
+  // The label always reflects the full hunk, regardless of fold state (docs/ux/dig71-step-code-mapping.md §6).
+  const range = hunkRange(hunk);
   return (
     <figure className="hunk-block">
-      <figcaption><code>{path}</code></figcaption>
+      <figcaption className="hunk-caption">
+        {step !== undefined && <span className={current ? 'step-badge current' : 'step-badge'}>{step}</span>}
+        <code>{path}</code>
+        <span className="hunk-range">· {T.rangeLabel(range.start, range.end)}</span>
+        {rangeCount !== undefined && rangeCount > 1 && <span className="hunk-pos">{T.rangeOf(rangeIndex!, rangeCount)}</span>}
+      </figcaption>
       <table className="diff">
         <tbody>
           <tr className="dl hunk">
@@ -63,14 +83,21 @@ export function HunkBlock({ path, hunk, lang = 'en' }: { path: string; hunk: Pat
 
 type HunkIndex = Map<string, PatchHunk[]>;
 
-function StepHunks({ refs, index, lang = 'en' }: { refs: HunkRef[]; index: HunkIndex; lang?: Lang }) {
+function StepHunks({ refs, index, step, current, lang = 'en' }: {
+  refs: HunkRef[]; index: HunkIndex; step: number; current: boolean; lang?: Lang;
+}) {
   const T = walkthroughCopy(lang);
   return (
     <>
-      {refs.map((r) => {
+      {refs.map((r, i) => {
         const h = index.get(r.path)?.[r.hunk - 1];
         return h
-          ? <HunkBlock key={`${r.path}#${r.hunk}`} path={r.path} hunk={h} lang={lang} />
+          ? (
+            <HunkBlock
+              key={`${r.path}#${r.hunk}`} path={r.path} hunk={h} lang={lang}
+              step={step} current={current} rangeIndex={i + 1} rangeCount={refs.length}
+            />
+          )
           : <p key={`${r.path}#${r.hunk}`} className="muted hunk-missing">{T.missingHunk(r.path, r.hunk)}</p>;
       })}
     </>
@@ -129,11 +156,31 @@ export function WalkthroughView({
   const steps = walkthrough?.steps ?? [];
   const stats = shown.reduce((s, f) => ({ a: s.a + f.additions, d: s.d + f.deletions }), { a: 0, d: 0 });
 
-  // Bring the current step to the top of the reading pane when it changes (n/p, the side list, a
-  // reload with &step=). The step bar is sticky, so steps carry a matching scroll-margin.
+  const [announce, setAnnounce] = useState('');
+  // Bring the current step to the top of the reading pane, announce it, and move focus to its
+  // heading when the step actually changes (n/p, the side list, a reload with &step=) — but not on
+  // a walkthrough re-render at the same step (polling, or DIG-76 streamed steps landing mid-read),
+  // which would otherwise re-announce and yank focus (docs/ux/dig71-step-code-mapping.md §3). The
+  // step bar is sticky, so steps carry a matching scroll-margin.
+  const announcedStepRef = useRef<number | null>(null);
   useEffect(() => {
     if (step === null || !walkthrough) return;
+    if (announcedStepRef.current === step) return;
+    announcedStepRef.current = step;
     document.getElementById(`step-${step}`)?.scrollIntoView?.({ block: 'start' });
+    const s = walkthrough.steps[step - 1];
+    const first = s?.hunks[0];
+    const h = first && index.get(first.path)?.[first.hunk - 1];
+    const stepOf = T.stepOf(step, steps.length);
+    if (first && h) {
+      const range = hunkRange(h);
+      const more = s!.hunks.length - 1;
+      const rangeText = T.rangeLabel(range.start, range.end);
+      setAnnounce(more > 0 ? `${stepOf}, ${first.path} ${rangeText} ${T.andMore(more)}` : `${stepOf}, ${first.path} ${rangeText}`);
+    } else {
+      setAnnounce(stepOf);
+    }
+    document.getElementById(`step-${step}-title`)?.focus();
   }, [step, walkthrough]);
 
   const noBudget = callsRemaining === 0;
@@ -165,6 +212,7 @@ export function WalkthroughView({
 
   return (
     <article className="walkthrough" aria-label={T.regionLabel(proseLabel(heading))}>
+      <div aria-live="polite" className="visually-hidden">{announce}</div>
       <header className="walkthrough-head">
         <div className="walkthrough-head-row">
           <h2>{renderProse(heading)}</h2>
@@ -215,12 +263,12 @@ export function WalkthroughView({
                   className={['step', s.mechanical && 'mechanical', step === i + 1 && 'current'].filter(Boolean).join(' ')}
                   aria-labelledby={`step-${i + 1}-title`}
                 >
-                  <h3 id={`step-${i + 1}-title`}>
+                  <h3 id={`step-${i + 1}-title`} tabIndex={-1}>
                     <span className="step-n">{T.stepLabel(i + 1)}</span> {renderProse(s.title)}
                     {s.mechanical && <span className="badge step-mech">{T.mechanical}</span>}
                   </h3>
                   <p className="step-body">{renderProse(s.body)}</p>
-                  <StepHunks refs={s.hunks} index={index} lang={lang} />
+                  <StepHunks refs={s.hunks} index={index} step={i + 1} current={step === i + 1} lang={lang} />
                 </section>
               ))}
               {walkthrough.check.length > 0 && (
@@ -258,7 +306,7 @@ export function WalkthroughView({
                   {s.mechanical && <span className="badge step-mech">{T.mechanical}</span>}
                 </h3>
                 <p className="step-body">{renderProse(s.body)}</p>
-                <StepHunks refs={s.hunks} index={index} lang={lang} />
+                <StepHunks refs={s.hunks} index={index} step={i + 1} current={step === i + 1} lang={lang} />
               </section>
             ))}
           </div>

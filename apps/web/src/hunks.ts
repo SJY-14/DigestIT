@@ -62,6 +62,20 @@ export function splitPatch(patch: string): PatchHunk[] {
 /** Stable key for a hunk reference. */
 export const hunkKey = (ref: HunkRef): string => `${ref.path}#${ref.hunk}`;
 
+export interface HunkRange { side: 'old' | 'new'; start: number; end: number }
+
+/**
+ * The line range a hunk covers, for the step ↔ code mapping (docs/ux/dig71-step-code-mapping.md
+ * §5): the new side's added lines, or the old side's deleted lines when the hunk adds nothing.
+ * Context lines are excluded even though `splitPatch` numbers them on both sides.
+ */
+export function hunkRange(h: PatchHunk): HunkRange {
+  const adds = h.lines.filter((l) => l.kind === 'add').map((l) => l.newNo!);
+  if (adds.length > 0) return { side: 'new', start: adds[0]!, end: adds[adds.length - 1]! };
+  const dels = h.lines.filter((l) => l.kind === 'del').map((l) => l.oldNo!);
+  return { side: 'old', start: dels[0] ?? h.oldStart, end: dels[dels.length - 1] ?? h.oldStart };
+}
+
 export interface FileHunk extends PatchHunk {
   path: string;
 }

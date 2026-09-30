@@ -355,6 +355,25 @@ describe('MainV2: reading flow', () => {
     expect(params().get('step')).toBe('1');
   });
 
+  it('P3 (DIG-81): a step change (keyboard or TOC) announces the range and moves focus to the step heading', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=3&area=graph-pane`);
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('section.step') !== null);
+    const live = () => host.querySelector('.walkthrough [aria-live="polite"]');
+
+    await pressKey('n');
+    expect(params().get('step')).toBe('1');
+    expect(live()?.textContent).toBe('Step 1 of 4, apps/web/src/ProjectGraph.tsx lines 61–64');
+    expect(document.activeElement?.id).toBe('step-1-title');
+
+    // MainV2's own keydown handler no longer announces the step itself (WalkthroughView owns it).
+    await click(host.querySelectorAll('.step-toc button')[3]);
+    expect(params().get('step')).toBe('4');
+    expect(live()?.textContent).toBe('Step 4 of 4, packages/core/src/graphLayout.ts line 143');
+    expect(document.activeElement?.id).toBe('step-4-title');
+  });
+
   it('restores digest, level, area and step from the URL on load, and follows back/forward', async () => {
     Element.prototype.scrollIntoView = vi.fn();
     history.replaceState(null, '', `/?project=1&digest=${fixtureDigest.id}&level=3&area=graph-pane&step=2`);

@@ -633,6 +633,11 @@ const WALKTHROUGH_EN = {
   showLess: 'Show less',
   noTextChange: 'No text changes to show (binary or mode change).',
   notAnalysed: 'Not analysed',
+  // Step ↔ code mapping (DIG-71/81): the range a hunk block covers, its position among a
+  // multi-hunk step's ranges, and the aria-live announcement fired on a step change.
+  rangeLabel: (start: number, end: number) => (start === end ? `line ${start}` : `lines ${start}–${end}`),
+  rangeOf: (k: number, total: number) => `${k} of ${total} ranges`,
+  andMore: (n: number) => `and ${n} more`,
   // Fast Explain (DIG-73/76): the area's L2 text (this line) and its L3 walkthrough land
   // separately and on different schedules, so this area's own placeholder is distinct from
   // `generating` above (which is about the walkthrough itself).
@@ -667,6 +672,10 @@ const WALKTHROUGH_KO = {
   showLess: '간략히 보기',
   noTextChange: '표시할 텍스트 변경이 없습니다 (바이너리 또는 모드 변경).',
   notAnalysed: '분석되지 않음',
+  // Draft, not a native-speaker sign-off (docs/ux/dig71-step-code-mapping.md §5) — native check requested in the handoff comment.
+  rangeLabel: (start: number, end: number) => (start === end ? `${start}번째 줄` : `${start}–${end}번째 줄`),
+  rangeOf: (k: number, total: number) => `${total}개 범위 중 ${k}번째`,
+  andMore: (n: number) => `외 ${n}개 더`,
   areaWriting: '이 영역을 작성하는 중…',
 } as const;
 export function walkthroughCopy(lang: Lang = 'en') {
