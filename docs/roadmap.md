@@ -45,7 +45,7 @@ only its own lines, the full diff is shown once. Spec and contract (types, `rang
 |---|---|---|---|---|
 | 0 | DIG-96 | Contract, review, acceptance kit | CTO | DIG-98, DIG-99 |
 | 1 | DIG-98 | Schema, prompt `a6`, validator, stub, streaming | Diff engineer | — (rebase on DIG-94) |
-| 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed | Frontend engineer | — (after DIG-95) |
+| 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed | Frontend engineer | — |
 | 3 | — | Real-provider run en/ko, light/dark, 60+ line multi-hunk change; UX Reviewer sentence-to-line check | Board operator, UX reviewer | DIG-98, DIG-99 |
 
 ## L3 step ↔ code mapping
@@ -94,7 +94,7 @@ the project. Projects can be removed (soft delete). A new "All projects" view so
 | 4 | DIG-90 | Verify against decision-2, `docs/ux/cycle-2-summary.md`. Passed, merged 2026-09-30 | UX reviewer | DIG-88, DIG-89, DIG-92 |
 | 5 | DIG-92 | Fix: the web client's Remove got 415 (DELETE sent no `content-type`). Found by DIG-90. Merged 2026-09-30 | CTO | — |
 | 6 | DIG-93 | Real-provider acceptance run (`.cache/dig80-acceptance/accept.sh`, all views passed, 2026-09-30) | Board operator | DIG-90 |
-| 7 | DIG-95 | Follow-up from DIG-93: inline code in L0 lines outside the reading pane; L3 "writing" notice stays after the walkthrough (DIG-94 covers the explanation-side findings) | Frontend engineer | — |
+| 7 | DIG-95 | Follow-up from DIG-93: inline code in All-projects row headlines. The L3 "writing" notice was correct (the kit captured mid-stream; kit wait fixed), now pinned by a test. Merged 2026-09-30 | Frontend engineer | — |
 
 ## Removing the AI-made look (done)
 
