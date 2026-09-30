@@ -164,8 +164,13 @@ export function WalkthroughView({
   // step bar is sticky, so steps carry a matching scroll-margin.
   const announcedStepRef = useRef<number | null>(null);
   useEffect(() => {
-    if (step === null || !walkthrough) return;
-    if (announcedStepRef.current === step) return;
+    // Leaving step mode forgets the last step, so coming back to that same step (browser back to
+    // `?step=2`) still scrolls, announces and focuses.
+    if (step === null) {
+      announcedStepRef.current = null;
+      return;
+    }
+    if (!walkthrough || announcedStepRef.current === step) return;
     announcedStepRef.current = step;
     document.getElementById(`step-${step}`)?.scrollIntoView?.({ block: 'start' });
     const s = walkthrough.steps[step - 1];

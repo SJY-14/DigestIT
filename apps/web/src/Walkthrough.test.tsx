@@ -274,6 +274,14 @@ describe('WalkthroughView', () => {
     expect(live()?.textContent).toBe('Step 2 of 2, cli.js line 61');
     expect(document.activeElement?.id).toBe('step-2-title');
     expect(focusSpy).toHaveBeenCalledTimes(2);
+
+    // Leaving step mode and coming back to the same step (browser back to ?step=2) fires again.
+    await render(view(rangeArea, { step: null }));
+    (document.activeElement as HTMLElement | null)?.blur();
+    await render(view(rangeArea, { step: 2 }));
+    expect(document.activeElement?.id).toBe('step-2-title');
+    expect(focusSpy).toHaveBeenCalledTimes(3);
+    focusSpy.mockRestore();
   });
 });
 
