@@ -466,6 +466,12 @@ export class ExplainJobRunner {
     return !this.jobs.has(digestId) && !this.isAnyAreaRunning(digestId);
   }
 
+  /** True while any Explain job (digest, retry or area L3) is running anywhere in this process:
+   * `MemoryWorker`'s idle trigger (docs/milestone-4-memory.md §2) waits for this to clear. */
+  hasRunningJobs(): boolean {
+    return this.jobs.size > 0 || this.areaInFlight.size > 0;
+  }
+
   /** Derives `DigestPartsDto` from stored rows plus the in-memory running set; `null` when
    * `digestId` names no digest, or one created before DIG-75 (no stored `areas`). */
   getParts(changeUnitId: number): DigestPartsDto | null {
