@@ -398,6 +398,27 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX explain_job_started ON explain_job(started_at);
   CREATE INDEX explain_job_unit ON explain_job(change_unit_id, started_at);
   `,
+  // DIG-103 (docs/ux/decision-4-memory.md, change 1): "used in N digests" must count digests, not
+  // inflated per-version prompt counts, so `memory_use` needs the digest each use belonged to.
+  // `change_unit_id` is nullable (a background `memory` summary job summarises areas/threads across
+  // the whole project, not one digest). `memory_slice` is one row per (job, part) -- not per item --
+  // so `droppedForBudget` (packages/core/src/memory.ts's `MemorySlice`) survives even for a part
+  // whose slice included zero items, and `GET /api/digests/:id/memory-used` sums it with one query
+  // instead of re-deriving it from `memory_use` rows that may not exist.
+  `
+  ALTER TABLE memory_use ADD COLUMN change_unit_id INTEGER REFERENCES change_unit(id);
+  CREATE INDEX memory_use_change_unit ON memory_use(change_unit_id);
+  CREATE INDEX memory_use_item ON memory_use(item_id);
+
+  CREATE TABLE memory_slice (
+    job_id             INTEGER NOT NULL REFERENCES explain_job(id),
+    part               TEXT NOT NULL,
+    change_unit_id     INTEGER REFERENCES change_unit(id),
+    dropped_for_budget INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (job_id, part)
+  );
+  CREATE INDEX memory_slice_change_unit ON memory_slice(change_unit_id);
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {
