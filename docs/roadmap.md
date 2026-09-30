@@ -28,6 +28,20 @@ validator change: anchors are derived from `HunkRef` and the patch.
 | 1 | DIG-81 | `hunkRange()`, range labels, step badges, announce + focus (P1–P3) | Frontend engineer | — |
 | 2 | — | After merge: real-provider screenshots (en/ko, light/dark) and the Reviewer's 2-second check | Board operator, UX reviewer | DIG-81 |
 
+## Visual refinement: Direction B (editorial)
+
+DIG-72 (Board, 2026-09-30): of the three directions in [ux/brief-2-visual-refinement.md](ux/brief-2-visual-refinement.md),
+the Board picked **B (editorial / documentation)**. It's built as a design-token pass over the whole app, with no
+IA or copy change. Fonts are self-hosted (Source Serif 4 for reading text, Source Sans 3 for UI chrome, and Noto Serif
+KR subsets as the Korean serif fallback behind the installed `Noto Serif CJK KR`), so rendering doesn't depend on
+which fonts the host has. CSP is unchanged (`default-src 'self'` covers fonts).
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-72 | Directions, Board pick, review, macOS font check with the owner | CTO | DIG-82, DIG-83 |
+| 1 | DIG-82 | Direction B token pass: fonts, type/spacing/color tokens, de-boxing, graph dots, en/ko, light/dark | Frontend engineer | DIG-81 |
+| 2 | DIG-83 | Verify: before/after of every view (en/ko, light/dark), contrast table, font-resolution evidence | UX reviewer | DIG-82 |
+
 ## Removing the AI-made look (done)
 
 DIG-63 (Board, 2026-09-29): the UI and the generated explanations should read as human-crafted. The audit and its
