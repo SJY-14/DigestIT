@@ -45,10 +45,11 @@ in `style.ts`). Next: the real-provider acceptance run (row 3).
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-96 | Contract, review, acceptance kit | CTO | DIG-98, DIG-99 |
+| 0 | DIG-96 | Contract, review, acceptance kit (`.cache/dig96-acceptance/`, stub dry run passed) | CTO | DIG-106 |
 | 1 | DIG-98 | Schema, prompt `a6`, validator, stub, streaming — **merged** | Diff engineer | — |
 | 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed — **merged** | Frontend engineer | — |
-| 3 | — | Real-provider run en/ko, light/dark, 60+ line multi-hunk change; UX Reviewer sentence-to-line check | Board operator, UX reviewer | DIG-98, DIG-99 |
+| 3 | DIG-105 | Real-provider run en/ko, light/dark, ~100-line multi-hunk change (`accept.sh`) | Board operator | DIG-98, DIG-99 |
+| 4 | DIG-106 | Sentence-to-line check on those screenshots, `docs/ux/dig96-acceptance.md` | UX reviewer | DIG-105 |
 
 ## L3 step ↔ code mapping
 
