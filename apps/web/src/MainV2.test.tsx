@@ -988,6 +988,43 @@ describe('MainV2: Fast Explain (DIG-76)', () => {
     await waitFor(() => host.querySelector('.l0-headline')?.textContent === fixtureDigestDone.l0!.text);
   }, 10000);
 
+  it('returns the Explain button to idle once the digest events stream sends done, with no reload (DIG-84)', async () => {
+    // A server-run Explain (started before this page load, or from another tab/the CLI) still
+    // holds the lock: the initial status fetch reads `explaining: true`.
+    let explaining = true;
+    vi.stubGlobal('EventSource', FakeES as unknown as typeof EventSource);
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      calls.push({ url, method });
+      const body = ((): unknown => {
+        if (url === '/api/projects') return [fixtureProject];
+        if (url === `/api/projects/${fixtureProject.id}/status`) {
+          return { ...fixtureStatus, explaining, explainStartedAt: explaining ? '2026-09-27T09:59:00Z' : null };
+        }
+        if (url.startsWith(`/api/projects/${fixtureProject.id}/digests`)) return { items: [fixtureFastDigestSummary], nextCursor: null };
+        if (url === `/api/digests/${fastDigest.id}`) return fastDigest;
+        if (/^\/api\/digests\/\d+\/graph/.test(url)) return fixtureFastGraph;
+        throw new Error(`unhandled fetch in test: ${method} ${url}`);
+      })();
+      return { ok: true, status: 200, json: async () => body } as Response;
+    }));
+
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.explain-btn.running') !== null);
+    expect(host.querySelector('.explain-btn')?.textContent).toContain('Explaining…');
+    const statusCallsBeforeDone = calls.filter((c) => c.url === `/api/projects/${fixtureProject.id}/status`).length;
+
+    // The job settles server-side (and the DIG-75 job runner's own notify() pushes /api/stream's
+    // `changed` for it — apps/server/src/live.ts): the digest lands and its events stream closes.
+    explaining = false;
+    fastDigest = fixtureDigestDone;
+    await act(async () => FakeES.last.emit('done'));
+
+    await waitFor(() => calls.filter((c) => c.url === `/api/projects/${fixtureProject.id}/status`).length > statusCallsBeforeDone);
+    await waitFor(() => !host.querySelector('.explain-btn')?.classList.contains('running'));
+    expect(host.querySelector('.explain-btn')?.textContent).toBe(`Explain ${plural(fixtureStatus.pending.files, 'change')}`);
+  });
+
   it('shows the Korean placeholder and budget strings for a Korean project', async () => {
     vi.stubGlobal('EventSource', FakeES as unknown as typeof EventSource);
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {

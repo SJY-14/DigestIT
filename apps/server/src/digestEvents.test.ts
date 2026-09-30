@@ -242,3 +242,34 @@ describe('GET /api/digests/:id/events (SSE, DIG-75)', () => {
     expect(res.status).toBe(404);
   });
 });
+
+// DIG-84: a server-run Explain writes through the same `db` connection /api/stream polls with
+// `PRAGMA data_version`, which only bumps for a commit from another connection — so without an
+// explicit notify, a stream connected before the job starts never sees it settle.
+describe('GET /api/stream reflects an in-process Explain (DIG-84)', () => {
+  it('emits changed once the lock is released, and status then reads explaining: false', async () => {
+    const p = new GatedProvider();
+    p.openAll(); // no need to control timing here; just let the job run to completion
+    const { base } = await setupApp(p);
+    const projects = await (await fetch(`${base}/api/projects`)).json();
+    const projectId = projects[0].id;
+
+    const ctrl = new AbortController();
+    const stream = await fetch(`${base}/api/stream`, { signal: ctrl.signal });
+    await readUntil(stream, (t) => t.includes('event: ready'));
+
+    const { digestId } = await startExplain(base);
+    expect((await (await fetch(`${base}/api/projects/${projectId}/status`)).json()).explaining).toBe(true);
+
+    for (let i = 0; i < 80; i++) {
+      const parts = (await (await fetch(`${base}/api/digests/${digestId}`)).json()).parts;
+      if (parts?.finishedAt) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    const text = await readUntil(stream, (t) => t.includes('event: changed'));
+    ctrl.abort();
+    expect(text).toContain('event: changed');
+    expect((await (await fetch(`${base}/api/projects/${projectId}/status`)).json()).explaining).toBe(false);
+  });
+});

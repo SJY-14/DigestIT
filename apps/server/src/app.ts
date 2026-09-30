@@ -343,10 +343,10 @@ export function buildApp({
     },
   );
 
-  registerLive(app, db, live);
+  const liveHub = registerLive(app, db, live);
   registerUiEvents(app, db, uiEvents);
   registerInsights(app, db, insights);
-  if (v2) registerV2(app, db, v2);
+  if (v2) registerV2(app, db, { ...v2, notify: liveHub.notify });
 
   app.get('/api/*', async (_req, reply) => reply.code(404).send({ error: 'not_found' }));
 
