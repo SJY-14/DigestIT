@@ -175,6 +175,25 @@ not the full ~175-shot capture (kept locally under `.cache/dig90-verify/shots/`,
 git-ignored working evidence, reproducible from `run-before.sh`/`run-after.sh` in the same
 directory).
 
+## Real-provider acceptance (DIG-93)
+
+The operator ran `.cache/dig80-acceptance/accept.sh` on `main` with `claude-code`: 32 screenshots, all views passed,
+no API or UI errors. It used 5 budget units for 3 Explains and 2 L3 walkthroughs. The CTO checked the shots and page
+text:
+
+- The first-run trust box names the real destination ("It goes to Anthropic, through the Claude Code CLI on this
+  machine"), and Settings shows the provider as `claude-code` next to the read-only line
+  (`screens/dig93-light-en-1440-firstrun.png`, `screens/dig93-light-en-settings.png`).
+- All projects puts the project with a new digest first, with "1 new" and its real L0 line
+  (`screens/dig93-light-all-projects.png`).
+- The Korean chrome and the L3 step ↔ code mapping render with a real walkthrough (`screens/dig93-dark-ko-L3.png`).
+
+Follow-ups, outside this cycle's scope:
+- **DIG-94** (explanations): a small change was marked "Partly explained", its L0 line was cut mid-sentence (visible in
+  the Settings shot), and every part was generated twice.
+- **DIG-95** (UI): L0 lines outside the reading pane show raw backticks, and the L3 "writing" notice stays after the
+  walkthrough arrives (visible in the Korean L3 shot).
+
 ## Review history
 
 CTO review of the first pass (`4cfc0ee0`) requested changes: the "ko" Settings/project-panel/
