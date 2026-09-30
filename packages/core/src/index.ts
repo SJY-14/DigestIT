@@ -5,3 +5,4 @@ export * from './db.js';
 export * from './hunks.js';
 export * from './areas.js';
 export * from './memory.js';
+export * from './memory.js';

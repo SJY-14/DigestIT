@@ -309,6 +309,89 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE repo ADD COLUMN removed_at TEXT;
   `,
+  // DIG-100 (Milestone 4, docs/milestone-4-memory.md): project memory. `memory_item` is one row per
+  // (repo, kind, key, language) -- language is part of the key only so a prose-bearing item (a term
+  // meaning, a thread title) can exist once per language; `content` carries the full MemoryContent
+  // shape (packages/core/src/memory.ts) as the contract, not a column per field, since the shape
+  // differs by kind and is expected to grow. `memory_revision` keeps every version for rollback,
+  // grouped by the `memory_batch` that wrote it. `memory_use` is per (job, part, item) so a job's
+  // memory slice is diagnosable the same way `explain_call` diagnoses its provider calls.
+  // `explain_job.kind` is widened (rebuilt: SQLite cannot alter a CHECK) to add 'memory', for the
+  // background summary job of docs/milestone-4-memory.md §4.
+  `
+  CREATE TABLE memory_batch (
+    id            INTEGER PRIMARY KEY,
+    repo_id       INTEGER NOT NULL REFERENCES repo(id),
+    trigger       TEXT NOT NULL CHECK (trigger IN
+                  ('init','after-explain','idle','daily','manual','user','rollback')),
+    checkpoint_id INTEGER REFERENCES checkpoint(id),
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    changed       INTEGER NOT NULL DEFAULT 0,
+    calls         INTEGER NOT NULL DEFAULT 0,
+    rolled_back   INTEGER NOT NULL DEFAULT 0 CHECK (rolled_back IN (0, 1))
+  );
+  CREATE INDEX memory_batch_repo ON memory_batch(repo_id, started_at);
+
+  CREATE TABLE memory_item (
+    id           INTEGER PRIMARY KEY,
+    repo_id      INTEGER NOT NULL REFERENCES repo(id),
+    kind         TEXT NOT NULL CHECK (kind IN ('area','term','thread','note')),
+    key          TEXT NOT NULL,
+    language     TEXT CHECK (language IS NULL OR language IN ('en','ko')),
+    content      TEXT NOT NULL,
+    source       TEXT NOT NULL CHECK (source IN ('user','code','digest','summary')),
+    status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','stale','hidden')),
+    pinned       INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
+    provenance   TEXT NOT NULL DEFAULT '{}',
+    confirmed_at TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    version      INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE UNIQUE INDEX memory_item_unique ON memory_item(repo_id, kind, key, COALESCE(language, ''));
+  CREATE INDEX memory_item_repo_kind ON memory_item(repo_id, kind, status);
+
+  CREATE TABLE memory_revision (
+    id         INTEGER PRIMARY KEY,
+    item_id    INTEGER NOT NULL REFERENCES memory_item(id),
+    version    INTEGER NOT NULL,
+    batch_id   INTEGER NOT NULL REFERENCES memory_batch(id),
+    content    TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    pinned     INTEGER NOT NULL,
+    provenance TEXT NOT NULL,
+    at         TEXT NOT NULL,
+    UNIQUE (item_id, version)
+  );
+  CREATE INDEX memory_revision_batch ON memory_revision(batch_id);
+
+  CREATE TABLE memory_use (
+    job_id  INTEGER NOT NULL REFERENCES explain_job(id),
+    part    TEXT NOT NULL,
+    item_id INTEGER NOT NULL REFERENCES memory_item(id),
+    version INTEGER NOT NULL,
+    PRIMARY KEY (job_id, part, item_id)
+  );
+
+  ALTER TABLE repo ADD COLUMN memory_summaries INTEGER NOT NULL DEFAULT 0 CHECK (memory_summaries IN (0, 1));
+
+  CREATE TABLE explain_job_new (
+    id             INTEGER PRIMARY KEY,
+    repo_id        INTEGER REFERENCES repo(id),
+    change_unit_id INTEGER REFERENCES change_unit(id),
+    kind           TEXT NOT NULL CHECK (kind IN ('explain','retry','area','context','memory')),
+    area_id        TEXT,
+    started_at     TEXT NOT NULL,
+    finished_at    TEXT,
+    prep_ms        INTEGER
+  );
+  INSERT INTO explain_job_new SELECT id, repo_id, change_unit_id, kind, area_id, started_at, finished_at, prep_ms FROM explain_job;
+  DROP TABLE explain_job;
+  ALTER TABLE explain_job_new RENAME TO explain_job;
+  CREATE INDEX explain_job_started ON explain_job(started_at);
+  CREATE INDEX explain_job_unit ON explain_job(change_unit_id, started_at);
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {

@@ -13,7 +13,11 @@ const tables = (db: ReturnType<typeof openDb>) =>
 describe('migrate', () => {
   it('creates the architecture tables', () => {
     const db = openDb(':memory:');
-    expect(tables(db)).toEqual(['area_explanation', 'change_unit', 'checkpoint', 'commit_', 'digest', 'explain_call', 'explain_job', 'explanation', 'file_change', 'project_context', 'repo', 'rollup', 'unit_commit', 'unit_event', 'work_unit', 'worktree_state']);
+    expect(tables(db)).toEqual([
+      'area_explanation', 'change_unit', 'checkpoint', 'commit_', 'digest', 'explain_call', 'explain_job',
+      'explanation', 'file_change', 'memory_batch', 'memory_item', 'memory_revision', 'memory_use',
+      'project_context', 'repo', 'rollup', 'unit_commit', 'unit_event', 'work_unit', 'worktree_state',
+    ]);
   });
 
   it('is idempotent and records the version', () => {
@@ -123,5 +127,40 @@ describe('migrate', () => {
     db.prepare("INSERT INTO explain_call (at, reason, outcome, job_id, part) VALUES ('2026-09-29T00:00:01Z', 'digest', 'ok', ?, 'summary')")
       .run(job.lastInsertRowid);
     expect(() => db.exec("INSERT INTO explain_job (kind, started_at) VALUES ('other', 'x')")).toThrow();
+  });
+
+  it('DIG-100: memory tables, repo.memory_summaries, widened explain_job.kind, existing explain_call.job_id survives the rebuild', () => {
+    const db = openDb(':memory:');
+    const cols = (t: string) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name);
+    expect(cols('repo')).toContain('memory_summaries');
+    expect((db.prepare('SELECT memory_summaries FROM repo').all()).length).toBe(0);
+
+    const jobId = Number(db.prepare("INSERT INTO explain_job (kind, started_at) VALUES ('explain', '2026-09-29T00:00:00Z')").run().lastInsertRowid);
+    db.prepare("INSERT INTO explain_call (at, reason, outcome, job_id, part) VALUES ('2026-09-29T00:00:01Z', 'digest', 'ok', ?, 'summary')").run(jobId);
+    expect(() => db.exec("INSERT INTO explain_job (kind, started_at) VALUES ('memory', 'x')")).not.toThrow();
+    expect(() => db.exec("INSERT INTO explain_job (kind, started_at) VALUES ('bogus', 'x')")).toThrow();
+    expect(
+      (db.prepare('SELECT job_id AS jobId FROM explain_call WHERE part = ?').get('summary') as { jobId: number }).jobId,
+    ).toBe(jobId);
+
+    db.exec("INSERT INTO repo (name, path, mode) VALUES ('r', '/r', 'project')");
+    const repoId = Number(db.prepare('SELECT id FROM repo').get()!.id);
+    const batchId = Number(db.prepare(
+      "INSERT INTO memory_batch (repo_id, trigger, started_at) VALUES (?, 'manual', '2026-09-29T00:00:00Z')",
+    ).run(repoId).lastInsertRowid);
+    const itemId = Number(db.prepare(
+      `INSERT INTO memory_item (repo_id, kind, key, language, content, source, confirmed_at, updated_at)
+       VALUES (?, 'area', 'src', NULL, '{}', 'code', '2026-09-29T00:00:00Z', '2026-09-29T00:00:00Z')`,
+    ).run(repoId).lastInsertRowid);
+    expect(() => db.prepare(
+      `INSERT INTO memory_item (repo_id, kind, key, language, content, source, confirmed_at, updated_at)
+       VALUES (?, 'area', 'src', NULL, '{}', 'code', '2026-09-29T00:00:00Z', '2026-09-29T00:00:00Z')`,
+    ).run(repoId)).toThrow(); // unique (repo, kind, key, language) with NULL language treated as one slot
+    db.prepare(
+      `INSERT INTO memory_revision (item_id, version, batch_id, content, source, status, pinned, provenance, at)
+       VALUES (?, 1, ?, '{}', 'code', 'active', 0, '{}', '2026-09-29T00:00:00Z')`,
+    ).run(itemId, batchId);
+    db.prepare('INSERT INTO memory_use (job_id, part, item_id, version) VALUES (?, ?, ?, 1)').run(jobId, 'summary', itemId);
+    expect(() => db.exec('PRAGMA foreign_key_check')).not.toThrow();
   });
 });
