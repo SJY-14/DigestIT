@@ -1,6 +1,6 @@
 import type { ExplainLanguage } from '@digestit/core';
 import { aiTells } from './tells.js';
-import { cleanText, hasUnsafeMarkup, truncateWords, wordCount } from './validate.js';
+import { charLength, cleanText, fitProse, hasUnsafeMarkup, tolerated, wordCount } from './validate.js';
 
 // Shared voice, language and boilerplate rules for the digest, area and context prompts (DIG-48).
 
@@ -28,34 +28,6 @@ export function charCap(language: ExplainLanguage, words: number): number {
   return language === 'ko' ? words * KO_CHARS_PER_WORD : words * 12;
 }
 
-/** Truncates to `max` characters on a character boundary, with an ellipsis. */
-export function truncateChars(s: string, max: number): string {
-  const chars = [...s.trim()];
-  return chars.length <= max ? s.trim() : `${chars.slice(0, Math.max(0, max - 1)).join('').trimEnd()}…`;
-}
-
-export const charLength = (s: string): number => [...s].length;
-
-const ABBREVIATIONS = /\b(?:e\.g|i\.e|etc|vs|cf|approx|incl)\./gi;
-
-/** Sentences in `s`: ends at `.`, `!`, `?` (or `。`) followed by whitespace or the end; abbreviations and `a.b` identifiers do not end one. */
-export function sentenceCount(s: string): number {
-  const t = s.replace(ABBREVIATIONS, 'x').trim();
-  if (t === '') return 0;
-  return t.split(/(?<=[.!?。])\s+/).filter((p) => p.trim() !== '').length;
-}
-
-/** The first `max` sentences of `s` (split as in `sentenceCount`); `s` itself when it has no more. */
-export function truncateSentences(s: string, max: number): string {
-  const t = s.trim();
-  const masked = t.replace(ABBREVIATIONS, (m) => 'x'.repeat(m.length));
-  const boundary = /(?<=[.!?。])\s+/g;
-  let seen = 0;
-  for (let m = boundary.exec(masked); m; m = boundary.exec(masked)) {
-    if (++seen === max) return t.slice(0, m.index);
-  }
-  return t;
-}
 
 interface Pattern {
   re: RegExp;
@@ -112,31 +84,73 @@ export function isStatsLine(text: string): boolean {
     /^\s*\d+\s*개\s*파일/.test(text);
 }
 
+
+export interface CheckProseOptions {
+  /**
+   * `false` for a one-line headline (DIG-94): an over-limit field is still
+   * flagged in `v` so a retry gets the chance to fix it, but the delivered
+   * text is kept whole rather than cut with a trailing ellipsis.
+   * Default `true` (cut at a sentence boundary, see `fitProse`).
+   */
+  truncate?: boolean;
+  /**
+   * Where a field over its target but inside the tolerance band is noted
+   * (`<label>: 22 words, target 20`). Such a note never triggers a retry.
+   */
+  lengthNotes?: string[];
+  /** A Korean limit stated in characters directly, replacing the `charCap` formula (DIG-98 callout notes). */
+  koChars?: number;
+}
+
 /**
  * Cleans one prose field and checks it against a word limit, the language's
- * character cap, the boilerplate rules and the AI-tell lint. Over-limit text
- * is cut; boilerplate and tells are reported but never rewritten or
- * truncated on their account (only a retry can replace them). Tells go into
- * `styleWarnings`, never `v`: they are soft signals, not hard violations.
+ * character cap, the boilerplate rules and the AI-tell lint. Up to
+ * `tolerated(limit)` is accepted with a length note; beyond that it is a
+ * violation, and the text is cut at a sentence boundary unless
+ * `opts.truncate` is `false`. Boilerplate and tells are reported but never
+ * rewritten or truncated on their account (only a retry can replace them).
+ * Tells go into `styleWarnings`, never `v`: they are soft signals, not hard
+ * violations. `opts.koChars` states a Korean field's limit in characters
+ * directly instead of the `charCap` formula (a step callout note).
  */
 export function checkProse(
   raw: string, label: string, words: number, language: ExplainLanguage, v: string[], styleWarnings: string[] = [],
+  opts: CheckProseOptions = {},
 ): string {
+  const truncate = opts.truncate ?? true;
+  const notes = opts.lengthNotes ?? [];
   if (hasUnsafeMarkup(raw)) v.push(`${label}: contains HTML or a link`);
   let text = cleanText(raw);
-  if (wordCount(text) > words) {
-    v.push(`${label}: ${wordCount(text)} words, limit ${words}`);
-    text = truncateWords(text, words);
-  }
-  const cap = charCap(language, words);
-  if (charLength(text) > cap) {
-    v.push(`${label}: ${charLength(text)} characters, limit ${cap}`);
-    text = truncateChars(text, cap);
-  }
+  const n = wordCount(text);
+  const chars = charLength(text);
+  const maxWords = tolerated(words);
+  const koChars = language === 'ko' ? opts.koChars : undefined;
+  const cap = koChars ?? charCap(language, words);
+  const maxChars = koChars !== undefined ? tolerated(koChars) : charCap(language, maxWords);
+  if (n > maxWords) v.push(`${label}: ${n} words, limit ${words}`);
+  else if (n > words) notes.push(`${label}: ${n} words, target ${words}`);
+  if (chars > maxChars) v.push(`${label}: ${chars} characters, limit ${cap}`);
+  else if (chars > cap) notes.push(`${label}: ${chars} characters, target ${cap}`);
+  if (truncate && (n > maxWords || chars > maxChars)) text = fitProse(text, maxWords, maxChars);
   if (text !== '') {
     const bad = boilerplate(text, language);
     if (bad) v.push(`${label}: ${bad}`);
     for (const tell of aiTells(text, language)) styleWarnings.push(`${label}: ${tell}`);
   }
   return text;
+}
+
+interface CheckedProse {
+  violations: string[];
+  styleWarnings: string[];
+  lengthNotes: string[];
+}
+
+/** The `style_warnings` count stored with a result: AI tells plus in-band length notes (DIG-94). */
+export const softCount = (c: CheckedProse): number => c.styleWarnings.length + c.lengthNotes.length;
+
+/** Everything the validator found, for `explain_call.violations` (DIG-94); `undefined` when clean. */
+export function callReasons(c: CheckedProse | null): string | undefined {
+  if (c === null) return 'provider output has an unusable shape';
+  return [...c.violations, ...c.styleWarnings, ...c.lengthNotes].join('; ') || undefined;
 }

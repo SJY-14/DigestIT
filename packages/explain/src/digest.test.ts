@@ -4,8 +4,9 @@ import type { DigestAreaSkeleton } from '@digestit/core';
 import { openDb } from '@digestit/core';
 import {
   DIGEST_AREA_TEXT_PROMPT_VERSION, DIGEST_PROMPT_VERSION, DIGEST_SUMMARY_PROMPT_VERSION, RepoNotAllowedError, StubProvider,
-  buildDigestPrompt, checkAreaTextContent, checkDigestLevels, checkSummaryLevels, createProvider, explainDigest,
-  explainDigestAreaText, explainDigestSummary, prepareDigestInput, startJob,
+  buildDigestAreaTextPrompt, buildDigestPrompt, buildDigestSummaryPrompt, checkAreaTextContent, checkDigestLevels,
+  checkSummaryLevels, createProvider, explainDigest, explainDigestAreaText, explainDigestSummary, prepareDigestInput, startJob,
+  tolerated,
 } from './index.js';
 import type {
   DigestAreaTextInput, DigestAreaTextResult, DigestInput, DigestResult, DigestSummaryInput, DigestSummaryResult,
@@ -180,8 +181,9 @@ describe('checkDigestLevels', () => {
     expect(r?.violations.some((v) => v.includes('l0:'))).toBe(true);
     expect(r?.violations.some((v) => v.includes('title: 50 words'))).toBe(true);
     expect(r?.violations.some((v) => v.includes('effect: 50 words'))).toBe(true);
-    expect(r?.levels.l2.items[0]!.title.split(' ').length).toBeLessThanOrEqual(9); // 8 words + ellipsis token
-    expect(r?.levels.l2.items[0]!.effect.split(' ').length).toBeLessThanOrEqual(21); // 20 words + ellipsis token
+    // No sentence boundary to cut at, so the fallback word cut to the DIG-94 band applies (ellipsis on the last word).
+    expect(r?.levels.l2.items[0]!.title.split(' ')).toHaveLength(tolerated(8));
+    expect(r?.levels.l2.items[0]!.effect.split(' ')).toHaveLength(tolerated(20));
   });
 
   it('rejects an area missing effect', () => {
@@ -198,6 +200,13 @@ describe('checkDigestLevels', () => {
   });
 });
 
+// DIG-94 (real-provider finding): the acceptance run's English L0 was a complete 24-word sentence,
+// cut to 20 words + "…". Inside the tolerance band it is now accepted whole with a length note.
+const L0_EN_24 = 'Backups now retry transient network and server failures and keep going past failed files, '
+  + 'so one bad upload no longer stops the whole run.';
+const L0_EN_32 = 'Backups now retry transient network and server failures and keep going past failed files, '
+  + 'so one bad upload no longer stops the whole nightly run for every other folder on the host.';
+
 describe('checkSummaryLevels (DIG-74 split)', () => {
   it('accepts a well-formed L0/L1 reply', () => {
     const r = checkSummaryLevels({ l0: validReply.l0, l1: validReply.l1 });
@@ -212,6 +221,41 @@ describe('checkSummaryLevels (DIG-74 split)', () => {
   it('flags an l0 that mentions a file name', () => {
     const r = checkSummaryLevels({ l0: { text: 'Changes packages/core/src/db.ts.' }, l1: validReply.l1 });
     expect(r?.violations.some((v) => v.includes('file name'))).toBe(true);
+  });
+
+  it('accepts a 24-word English L0 inside the tolerance band whole, with a length note (DIG-94)', () => {
+    const r = checkSummaryLevels({ l0: { text: L0_EN_24 }, l1: validReply.l1 })!;
+    expect(r.violations).toEqual([]);
+    expect(r.lengthNotes).toEqual(['l0: 24 words, target 20']);
+    expect(r.levels.l0.text).toBe(L0_EN_24);
+  });
+
+  it('flags an English L0 past the band but keeps the whole sentence, never a "…" fragment (DIG-94)', () => {
+    const r = checkSummaryLevels({ l0: { text: L0_EN_32 }, l1: validReply.l1 })!;
+    expect(r.violations).toContain('l0: 32 words, limit 20');
+    expect(r.levels.l0.text).toBe(L0_EN_32);
+  });
+
+  it('counts Korean L0 by 어절 with the same band, and never cuts it (DIG-94)', () => {
+    const inBand = '설정 화면을 추가해 사용자가 앱 안에서 알림을 직접 끌 수 있게 하고 백업이 실패해도 나머지 파일은 계속 진행되도록 하여 작업이 중간에 멈추지 않게 합니다.'; // 24 어절
+    const r = checkSummaryLevels({ l0: { text: inBand }, l1: validReply.l1 }, 'ko')!;
+    expect(r.violations).toEqual([]);
+    expect(r.lengthNotes).toEqual(['l0: 24 words, target 20']);
+    const past = `${inBand.slice(0, -1)} 그래서 한 번의 네트워크 오류로 밤새 돌던 백업 전체가 멈추는 일이 없습니다.`; // 36 어절
+    const p = checkSummaryLevels({ l0: { text: past }, l1: validReply.l1 }, 'ko')!;
+    expect(p.violations.some((v) => v.startsWith('l0: 36 words, limit 20'))).toBe(true);
+    expect(p.levels.l0.text).toBe(past);
+    expect(p.levels.l0.text.endsWith('…')).toBe(false);
+  });
+
+  it('cuts an L1 past its band at whole bullets or sentences, never mid-sentence (DIG-94)', () => {
+    const b = (n: number) => `Sentence ${n} of the bullet names the \`--retries\` flag and its default of three attempts.`; // 15 words
+    const bullets = [`${b(1)} ${b(2)} ${b(3)}`, `${b(4)} ${b(5)}`]; // 45 + 30 = 75 words, band 75
+    expect(checkSummaryLevels({ l0: validReply.l0, l1: { userVisible: true, bullets } })!.violations).toEqual([]);
+    const over = [...bullets.slice(0, 1), `${b(4)} ${b(5)} ${b(6)}`]; // 90 words
+    const r = checkSummaryLevels({ l0: validReply.l0, l1: { userVisible: true, bullets: over } })!;
+    expect(r.violations).toContain('l1: 90 words, limit 60');
+    expect(r.levels.l1.bullets).toEqual([bullets[0], `${b(4)} ${b(5)}`]);
   });
 });
 
@@ -277,6 +321,24 @@ class AreaTextProvider implements ExplanationProvider {
   }
 }
 
+describe('memory block in the split prompts', () => {
+  it('buildDigestSummaryPrompt carries a memory slice as quoted data, and leaves the block out when there is none', () => {
+    const input: DigestSummaryInput = { repoName: 'DigestIT', files: [], areas: [], language: 'en' };
+    expect(buildDigestSummaryPrompt(input)).not.toContain('<memory>\n');
+    const withMemory = buildDigestSummaryPrompt({ ...input, memory: '- apps/web (area): uses none; used by none' });
+    expect(withMemory).toContain('<memory>\n- apps/web (area): uses none; used by none\n</memory>');
+    expect(withMemory).toContain('Everything inside <change>, <areas>, <project> and <memory>');
+  });
+
+  it('buildDigestAreaTextPrompt carries a memory slice as quoted data, and leaves the block out when there is none', () => {
+    const input: DigestAreaTextInput = { repoName: 'DigestIT', area: { id: 'a', label: 'a' }, areas: [], files: [], language: 'en' };
+    expect(buildDigestAreaTextPrompt(input)).not.toContain('<memory>\n');
+    const withMemory = buildDigestAreaTextPrompt({ ...input, memory: '- fetchJson (term): Fetches JSON.' });
+    expect(withMemory).toContain('<memory>\n- fetchJson (term): Fetches JSON.\n</memory>');
+    expect(withMemory).toContain('Everything inside <change>, <areas>, <project> and <memory>');
+  });
+});
+
 describe('explainDigestSummary (DIG-74 split)', () => {
   it('explains L0/L1 over the whole diff and stores them at level 0/1, logged against the job', async () => {
     const db = openDb(':memory:');
@@ -310,6 +372,65 @@ describe('explainDigestSummary (DIG-74 split)', () => {
     const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
     const r = await explainDigestSummary(db, id, new SummaryProvider([]), { job: { jobId, budget: 40 } });
     expect(r).toEqual({ outcome: 'error', calls: 0, detail: 'digest has no areas yet' });
+  });
+
+  it('logs no validation reason and makes exactly one call when the first attempt is already valid (DIG-94)', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
+    const p = new SummaryProvider([{ l0: validReply.l0, l1: validReply.l1 }]);
+    const r = await explainDigestSummary(db, id, p, { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'ok', calls: 1 });
+    const calls = db.prepare('SELECT outcome, violations FROM explain_call WHERE job_id = ?').all(jobId);
+    expect(calls).toEqual([{ outcome: 'ok', violations: null }]);
+  });
+
+  it('stores a 24-word L0 from the first call, with no retry, and logs the length note (DIG-94)', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
+    const p = new SummaryProvider([{ l0: { text: L0_EN_24 }, l1: validReply.l1 }]);
+    const r = await explainDigestSummary(db, id, p, { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'ok', calls: 1 });
+    const stored = rows(db).find((row) => row.level === 0)!;
+    expect(stored.status).toBe('ok');
+    expect(db.prepare('SELECT style_warnings FROM explanation WHERE level = 0').get()).toEqual({ style_warnings: 1 });
+    expect((JSON.parse(stored.content) as { text: string }).text).toBe(L0_EN_24);
+    const calls = db.prepare('SELECT violations FROM explain_call WHERE job_id = ?').all(jobId);
+    expect(calls).toEqual([{ violations: 'l0: 24 words, target 20' }]);
+  });
+
+  it('never cuts an L0 past the band, even after the retry stays over, and logs why each attempt failed (DIG-94)', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
+    const overLimit = { l0: { text: L0_EN_32 }, l1: validReply.l1 };
+    const p = new SummaryProvider([overLimit, overLimit]);
+    const r = await explainDigestSummary(db, id, p, { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'truncated', calls: 2, detail: expect.stringContaining('l0: 32 words, limit 20') });
+    const stored = rows(db).find((row) => row.level === 0)!;
+    expect(stored.status).toBe('truncated');
+    expect((JSON.parse(stored.content) as { text: string }).text).toBe(L0_EN_32);
+    const calls = db.prepare('SELECT outcome, violations FROM explain_call WHERE job_id = ? ORDER BY id').all(jobId) as
+      { outcome: string; violations: string | null }[];
+    expect(calls).toHaveLength(2);
+    for (const c of calls) {
+      expect(c.outcome).toBe('ok'); // the provider call itself succeeded; only validation failed
+      expect(c.violations).toContain('l0: 32 words, limit 20');
+    }
+  });
+
+  it('sends the memory slice as grounding and retries a reply that names a date the slice never gave', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const memory = { items: [], text: '- retry work (thread): continues Tue 29 Sep', tokens: 10, droppedForBudget: 0 };
+    const badDate = { l0: validReply.l0, l1: { ...validReply.l1, bullets: ['Continues work from Wed 30 Sep.'] } };
+    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
+    const p = new SummaryProvider([badDate, { l0: validReply.l0, l1: validReply.l1 }]);
+    const r = await explainDigestSummary(db, id, p, { job: { jobId, budget: 40 }, memory });
+    expect(r).toEqual({ outcome: 'ok', calls: 2 });
+    expect(p.inputs[0]!.memory).toBe(memory.text);
+    expect(p.inputs[1]!.retryFeedback).toContain('mentions the date/weekday "Wed 30 Sep" which is not in the memory slice or the diff');
   });
 });
 
@@ -357,12 +478,94 @@ describe('explainDigestAreaText (DIG-74 split)', () => {
     expect(content.items[0]!.title).toBe(good.title);
   });
 
+  // DIG-94: area text from the DIG-93 acceptance run. Every English area part was generated twice and
+  // stored cut at exactly the word limit ("…and exits…", "…because `isTransient` rejects…"). These are
+  // those real sentences, completed: 21-25 words for effect (limit 20) and 31-37 for why (limit 30).
+  const REAL_EN = [
+    {
+      title: 'Retry and failure behavior in the README',
+      effect: 'README documents a new `--retries` flag, retries with backoff for transient errors, and exit status 1 when any file fails to upload.',
+      how: 'README.md gains an optional `[--retries 3]` in the usage line and a paragraph on retried statuses (408, 429, 5xx), exponential backoff, and end-of-run failure listing.',
+      why: 'The README now describes the retry and partial-failure behavior so users know the default of 3 retries and that one failed file does not stop the backup.',
+    },
+    {
+      title: 'Retries and per-file failure reporting for backups',
+      effect: '`snapback` accepts `--retries <n>`, retries transient upload errors, keeps going after failed files, lists failures at the end and exits with status 1.',
+      how: 'New `src/retry.js` provides `withRetry` and `HttpError`. `uploadFile` wraps its PUT in it, `uploadAll` collects failures, and `resolveConfig` validates `retries` as an integer from 0 to 10.',
+      why: 'The README promises retries on network errors, 408, 429 and 5xx with exponential backoff, and a backup that continues past failures. Other 4xx answers fail at once because `isTransient` rejects them before any retry.',
+    },
+    {
+      title: 'Dry-run mode and byte totals for backups',
+      effect: '`snapback --dry-run` lists files it would upload without sending them, and the final summary line now shows the total size of the upload.',
+      how: '`uploadFile` takes a `dryRun` option and returns the byte count; `uploadAll` sums it and returns `{ failures, bytes }`. `log.js` gains `formatBytes`, and `info`/`fail` become `logInfo`/`logError`.',
+      why: 'A dry run lets users preview a backup before sending anything. The byte total comes from the file body already read in `uploadFile`. The reason for the log renames is not given in the diff.',
+    },
+    {
+      title: 'Tests adapt to new uploadAll return shape',
+      effect: 'Nothing changes for users; developers see the upload tests now read `failures` from an object that `uploadAll` returns.',
+      how: 'Three tests in `test/upload.test.js` destructure `{ failures }` from the `uploadAll` result instead of treating the return value as the failures array; assertions stay the same.',
+      why: "`uploadAll` now returns an object rather than a bare array, so the tests must unpack it. The diff doesn't show what else the object holds; the `src` diff would settle that question.",
+    },
+  ];
+  // The Korean run passed first time; its real `src` area, with a sentence from the real L1 added to
+  // the effect, puts it inside the band in both 어절 (25 of 20) and characters (108 of 100).
+  const REAL_KO = {
+    title: '업로드 실패 재시도와 --retries 옵션',
+    effect: '일시적 오류로 실패한 업로드를 `--retries` 횟수만큼 재시도하고, 실패한 파일이 있어도 나머지를 올린 뒤 목록을 출력하고 종료 코드 1로 끝납니다. 잘못된 값은 종료 코드 2로 끝납니다.',
+    how: '`src/retry.js`에 `withRetry`와 `isTransient`를 추가하고 `uploadFile`에 적용했습니다. `uploadAll`은 실패를 모아 반환하며, `resolveConfig`는 `--retries`를 0~10 정수로 검증합니다.',
+    why: 'README가 정한 재시도 정책(네트워크 오류와 408, 429, 5xx만 재시도, 지수 백오프)과 실패 시 계속 진행하는 동작을 구현하기 위해서입니다.',
+  };
+
+  it.each([
+    ...REAL_EN.map((c, i) => [`en ${i + 1}`, 'en', c] as const),
+    ['ko', 'ko', REAL_KO] as const,
+  ])('stores the real acceptance-run area text (%s) from one call, whole, with length notes only (DIG-94)', async (_name, language, content) => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 40)!;
+    const p = new AreaTextProvider([content]);
+    const r = await explainDigestAreaText(db, id, 'storage', p, { job: { jobId, budget: 40 }, language });
+    expect(r).toEqual({ outcome: 'ok', calls: 1 });
+    const level2 = rows(db).find((row) => row.level === 2)!;
+    expect(level2.status).toBe('ok');
+    const item = (JSON.parse(level2.content) as { items: Record<string, string>[] }).items[0]!;
+    expect({ title: item.title, effect: item.effect, how: item.how, why: item.why }).toEqual(content);
+    const [call] = db.prepare('SELECT violations FROM explain_call WHERE job_id = ?').all(jobId) as { violations: string | null }[];
+    for (const reason of (call!.violations ?? '').split('; ').filter(Boolean)) expect(reason).toMatch(/, target \d+$/);
+  });
+
+  it('retries a field far past the band once, then cuts it at a sentence boundary (DIG-94)', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 40)!;
+    const why = `${REAL_EN[1]!.why} The 200 ms base delay and the cap of 10 retries are not explained anywhere in the diff or the README.`;
+    const p = new AreaTextProvider([{ ...REAL_EN[1]!, why }, { ...REAL_EN[1]!, why }]);
+    const r = await explainDigestAreaText(db, id, 'storage', p, { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'truncated', calls: 2, detail: expect.stringContaining('why: 55 words, limit 30') });
+    const item = (JSON.parse(rows(db).find((row) => row.level === 2)!.content) as { items: Record<string, string>[] }).items[0]!;
+    expect(item.why).toBe(REAL_EN[1]!.why); // the first two sentences (34 words) fit the band; the third goes
+    expect(item.why.endsWith('…')).toBe(false);
+  });
+
   it('errors on an unknown area id', async () => {
     const db = openDb(':memory:');
     const id = seedDigestWithAreas(db);
     const jobId = startJob(db, 'area', { changeUnitId: id }, 40)!;
     const r = await explainDigestAreaText(db, id, 'no-such-area', new AreaTextProvider([good]), { job: { jobId, budget: 40 } });
     expect(r).toEqual({ outcome: 'error', calls: 0, detail: 'unknown area' });
+  });
+
+  it('sends the memory slice as grounding and retries a reply that names a date the slice never gave', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const memory = { items: [], text: '- retry work (thread): continues Tue 29 Sep', tokens: 10, droppedForBudget: 0 };
+    const badDate = { ...good, why: 'Continues work from Wed 30 Sep.' };
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 40)!;
+    const p = new AreaTextProvider([badDate, good]);
+    const r = await explainDigestAreaText(db, id, 'storage', p, { job: { jobId, budget: 40 }, memory });
+    expect(r).toEqual({ outcome: 'ok', calls: 2 });
+    expect(p.inputs[0]!.memory).toBe(memory.text);
+    expect(p.inputs[1]!.retryFeedback).toContain('mentions the date/weekday "Wed 30 Sep" which is not in the memory slice or the diff');
   });
 });
 
@@ -627,10 +830,14 @@ describe('natural language (DIG-48)', () => {
       },
     };
     expect(checkDigestLevels(ko, FILES, 'ko')?.violations).toEqual([]);
-    const long = { ...ko, l2: { ...ko.l2, items: [ko.l2.items[0]!, { ...ko.l2.items[1]!, title: '가나다라마바사아자차카타파하'.repeat(3) }] } };
+    const inBand = { ...ko, l2: { ...ko.l2, items: [ko.l2.items[0]!, { ...ko.l2.items[1]!, title: '가나다라마바사아자차카타파하'.repeat(3) }] } };
+    const b = checkDigestLevels(inBand, FILES, 'ko');
+    expect(b?.violations).toEqual([]);
+    expect(b?.lengthNotes).toEqual(['l2: area 1 title: 42 characters, target 40']);
+    const long = { ...ko, l2: { ...ko.l2, items: [ko.l2.items[0]!, { ...ko.l2.items[1]!, title: '가나다라마바사아자차카타파하'.repeat(4) }] } };
     const r = checkDigestLevels(long, FILES, 'ko');
-    expect(r?.violations.some((v) => v.includes('title: 42 characters, limit 40'))).toBe(true);
-    expect([...r!.levels.l2.items[1]!.title].length).toBeLessThanOrEqual(40);
+    expect(r?.violations.some((v) => v.includes('title: 56 characters, limit 40'))).toBe(true);
+    expect([...r!.levels.l2.items[1]!.title]).toHaveLength(50); // the band's 10 어절 x 5 characters
     const filler = { ...ko, l2: { ...ko.l2, items: [ko.l2.items[0]!, { ...ko.l2.items[1]!, effect: '이 영역의 동작이 변경되었을 수 있습니다.' }] } };
     expect(checkDigestLevels(filler, FILES, 'ko')?.violations.some((v) => v.includes('변경되었을 수 있습니다'))).toBe(true);
   });

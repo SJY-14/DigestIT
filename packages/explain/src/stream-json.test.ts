@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeProvider, explainCwd, type SpawnFn } from './claude-code.js';
-import type { AreaInput, AreaStreamChunk } from './provider.js';
+import type { AreaInput, AreaStreamChunk, MemorySummarizeAreasInput, MemorySummarizeThreadInput } from './provider.js';
 
 const areaInput: AreaInput = {
   repoName: 'DigestIT',
@@ -102,6 +102,26 @@ describe('ClaudeCodeProvider over stream-json', () => {
     expect(s.calls[0].args).toEqual(expect.arrayContaining(['--model', 'haiku', '--effort', 'low']));
   });
 
+  it('runs the memory task at its own default model/effort and parses each reply shape', async () => {
+    const areasInput: MemorySummarizeAreasInput = {
+      repoName: 'DigestIT', language: 'en',
+      areas: [{ path: 'src/a', fileCount: 1, exports: [], uses: [], usedBy: [], doc: null, terms: [] }],
+    };
+    const areasReply = { areas: [{ path: 'src/a', summary: 'Owns thing A.', terms: [] }] };
+    const s1 = fakeStreamSpawn({ lines: [initLine(), resultLine(JSON.stringify(areasReply))] });
+    const areasResult = await new ClaudeCodeProvider({ spawnFn: s1.fn }).summarizeAreas(areasInput);
+    expect(areasResult.areas).toEqual(areasReply.areas);
+    expect(s1.calls[0].args).toEqual(expect.arrayContaining(['--model', 'sonnet', '--effort', 'low']));
+
+    const threadInput: MemorySummarizeThreadInput = {
+      repoName: 'DigestIT', title: 'Thread', areas: [], terms: [], digests: [], language: 'en',
+    };
+    const s2 = fakeStreamSpawn({ lines: [initLine(), resultLine(JSON.stringify({ summary: 'Ongoing work.' }))] });
+    const threadResult = await new ClaudeCodeProvider({ spawnFn: s2.fn }).summarizeThread(threadInput);
+    expect(threadResult.summary).toBe('Ongoing work.');
+    expect(s2.calls[0].args).toEqual(expect.arrayContaining(['--model', 'sonnet', '--effort', 'low']));
+  });
+
   it('omits every cheap-run flag by default', async () => {
     const s = fakeStreamSpawn({ lines: [initLine(), resultLine(JSON.stringify(walkthrough))] });
     await new ClaudeCodeProvider({ spawnFn: s.fn }).explainArea(areaInput);
@@ -136,8 +156,16 @@ describe('ClaudeCodeProvider over stream-json', () => {
     const full = {
       overview: 'It refactors the parser.',
       steps: [
-        { title: 'Step one', body: 'Body one.', hunks: [{ path: 'a.ts', hunk: 1 }], mechanical: false },
-        { title: 'Step two', body: 'Body two.', hunks: [{ path: 'a.ts', hunk: 2 }], mechanical: false },
+        {
+          title: 'Step one', body: 'Body one.', mechanical: false,
+          ranges: [{ path: 'a.ts', side: 'new', start: 1, end: 1 }],
+          callouts: [{ path: 'a.ts', side: 'new', start: 1, end: 1, note: 'first line' }],
+        },
+        {
+          title: 'Step two', body: 'Body two.', mechanical: false,
+          ranges: [{ path: 'a.ts', side: 'new', start: 2, end: 2 }],
+          callouts: [{ path: 'a.ts', side: 'new', start: 2, end: 2, note: 'second line' }],
+        },
       ],
       check: ['Check it.'],
     };

@@ -309,6 +309,12 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE repo ADD COLUMN removed_at TEXT;
   `,
+  // DIG-94: what the validator found for the attempt this row logged (semicolon-joined hard
+  // violations, style warnings and length notes, or the unusable-shape message), null when clean or
+  // the row logs a provider error instead -- so a doubled call is diagnosable from the log alone.
+  `
+  ALTER TABLE explain_call ADD COLUMN violations TEXT;
+  `,
   // DIG-100 (Milestone 4, docs/milestone-4-memory.md): project memory. `memory_item` is one row per
   // (repo, kind, key, language) -- language is part of the key only so a prose-bearing item (a term
   // meaning, a thread title) can exist once per language; `content` carries the full MemoryContent

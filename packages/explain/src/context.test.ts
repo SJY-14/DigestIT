@@ -9,7 +9,7 @@ import { openDb } from '@digestit/core';
 import type { ProjectContextContent } from '@digestit/core';
 import {
   CONTEXT_LIMITS, CONTEXT_PROMPT_VERSION, ClaudeCodeProvider, StubProvider, buildContextPrompt, buildProjectContext,
-  buildProjectMap, checkContext, compactContext, contextSourceHash, explainContext, hashUserMd, needsRefresh,
+  buildProjectMap, checkContext, compactContext, contextSourceHash, explainContext, hashUserMd, needsRefresh, tolerated,
 } from './index.js';
 import type { ContextInput, ContextResult, ExplanationProvider, ProjectMap, ProviderResult, SpawnFn } from './index.js';
 
@@ -270,7 +270,7 @@ describe('checkContext', () => {
   it('truncates an over-limit purpose and records a violation', () => {
     const long = Array(80).fill('word').join(' ');
     const r = checkContext({ purpose: long, modules: [], glossary: [], conventions: [] }, map)!;
-    expect(r.content.purpose.split(/\s+/)).toHaveLength(CONTEXT_LIMITS.purposeWords); // ellipsis is attached to the last word
+    expect(r.content.purpose.split(/\s+/)).toHaveLength(tolerated(CONTEXT_LIMITS.purposeWords)); // no sentence to cut at: word cut to the DIG-94 band
     expect(r.violations.some((v) => v.includes('purpose'))).toBe(true);
   });
 
@@ -459,6 +459,20 @@ describe('compactContext', () => {
     expect(out).toContain('- src: core logic');
     expect(out).toContain('- digest: the changes since last check');
     expect(out).toContain('- Run "build" via the package manager.');
+  });
+
+  it('leaves out the Modules section when omitModules is set, keeping the rest', () => {
+    const c: ProjectContextContent = {
+      purpose: 'Helps people digest changes.',
+      modules: [{ path: 'src', role: 'core logic' }],
+      glossary: [{ term: 'digest', meaning: 'the changes since last check' }],
+      conventions: [],
+    };
+    const out = compactContext(c, undefined, { omitModules: true });
+    expect(out).toContain('Purpose: Helps people digest changes.');
+    expect(out).not.toContain('Modules:');
+    expect(out).not.toContain('core logic');
+    expect(out).toContain('- digest: the changes since last check');
   });
 
   it('is hard-capped at the compact token budget regardless of input size', () => {

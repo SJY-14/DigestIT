@@ -13,7 +13,7 @@ Board; the build starts on the recommended options.
 |---|---|---|---|---|
 | 0 | DIG-97 | Design, contract, Board decisions D1–D3, review, acceptance | CTO | DIG-100–103 |
 | 1 | DIG-100 | Store, migration, rollback, export/clear, deterministic extraction, threads, `digest memory` CLI | Diff engineer | — |
-| 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task | Summarization engineer | — |
+| 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task (merged; prompts s2/at2/a7) | Summarization engineer | — |
 | 3 | DIG-103 | `MemoryWorker` triggers, budget share, retrieval wired into Explain, memory API | Diff engineer | DIG-100, DIG-101 |
 | 4 | DIG-102 | "What DigestIT knows" design: brief, critique, decision (done: `docs/ux/decision-4-memory.md`) | UX Designer, UX Reviewer | — |
 | 5 | DIG-104 | The page and the per-digest "what DigestIT used" | Frontend engineer | DIG-102, DIG-103 |
@@ -39,14 +39,17 @@ one budget unit. Design and contract: [explain-speed.md](explain-speed.md).
 DIG-96 (Board, 2026-09-30, critical): "Explain code" still repeats the whole diff under every step, because steps point
 at whole hunks and a new file is one hunk. Steps now carry exact line ranges and line-anchored callouts; each step shows
 only its own lines, the full diff is shown once. Spec and contract (types, `rangeSpan` in core) merged to `main`:
-[l3-step-snippets.md](l3-step-snippets.md). Supersedes the hunk anchors of DIG-71 below.
+[l3-step-snippets.md](l3-step-snippets.md). Supersedes the hunk anchors of DIG-71 below. DIG-98 and DIG-99 merged
+together (the web UI needs the new required `ranges`); DIG-94 is merged too (DIG-98's
+`koCharsOverride` is now `checkProse`'s `koChars` option). Next: the real-provider acceptance run (row 3).
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-96 | Contract, review, acceptance kit | CTO | DIG-98, DIG-99 |
-| 1 | DIG-98 | Schema, prompt `a6`, validator, stub, streaming | Diff engineer | — (rebase on DIG-94) |
-| 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed | Frontend engineer | — |
-| 3 | — | Real-provider run en/ko, light/dark, 60+ line multi-hunk change; UX Reviewer sentence-to-line check | Board operator, UX reviewer | DIG-98, DIG-99 |
+| 0 | DIG-96 | Contract, review, acceptance kit (`.cache/dig96-acceptance/`, stub dry run passed) | CTO | DIG-106 |
+| 1 | DIG-98 | Schema, prompt `a6`, validator, stub, streaming — **merged** | Diff engineer | — |
+| 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed — **merged** | Frontend engineer | — |
+| 3 | DIG-105 | Real-provider run en/ko, light/dark, ~100-line multi-hunk change (`accept.sh`) | Board operator | DIG-98, DIG-99 |
+| 4 | DIG-106 | Sentence-to-line check on those screenshots, `docs/ux/dig96-acceptance.md` | UX reviewer | DIG-105 |
 
 ## L3 step ↔ code mapping
 
@@ -95,6 +98,7 @@ the project. Projects can be removed (soft delete). A new "All projects" view so
 | 5 | DIG-92 | Fix: the web client's Remove got 415 (DELETE sent no `content-type`). Found by DIG-90. Merged 2026-09-30 | CTO | — |
 | 6 | DIG-93 | Real-provider acceptance run (`.cache/dig80-acceptance/accept.sh`, all views passed, 2026-09-30) | Board operator | DIG-90 |
 | 7 | DIG-95 | Follow-up from DIG-93: inline code in All-projects row headlines. The L3 "writing" notice was correct (the kit captured mid-stream; kit wait fixed), now pinned by a test. Merged 2026-09-30 | Frontend engineer | — |
+| 8 | DIG-94 | Fix: explain parts fail length check and get generated twice. Word limits get a 25% tolerance band (over the target is a style warning, not a retry); prose is cut only at a sentence boundary and L0 is never cut; the validation reason is logged per attempt (`explain_call.violations`). Merged 2026-09-30; the next operator acceptance run confirms the doubled calls are gone | Summarization engineer | DIG-93 |
 
 ## Removing the AI-made look (done)
 
