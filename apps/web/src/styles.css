@@ -745,7 +745,7 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .step-toc-n { color: var(--muted); font-variant-numeric: tabular-nums; }
 .overview p { margin: 4px 0 0; font-size: var(--text-prose); max-width: var(--prose-width); }
 .walkthrough h3 { font: 600 17px/1.4 var(--serif); }
-.step, .check, .uncovered, .overview, .full-diff, .not-analysed { margin-bottom: var(--space-4); scroll-margin-top: 64px; }
+.step, .check, .overview, .full-diff, .not-analysed { margin-bottom: var(--space-4); scroll-margin-top: 64px; }
 .step { padding: var(--space-3) 0 0 14px; margin-left: -14px; border-left: 2px solid transparent; border-top: 1px solid var(--border-muted); }
 .step.current { border-left-color: var(--accent); }
 .step-n { color: var(--muted); font: 400 var(--text-ui)/1.4 var(--sans); margin-right: 6px; }
@@ -753,17 +753,17 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .step.mechanical { opacity: 0.85; }
 .step.mechanical h3, .step.mechanical .step-body { color: var(--muted); font-weight: 400; }
 .step-mech { margin-left: 8px; font-size: 11px; font-weight: 400; vertical-align: middle; color: var(--muted); }
+.mechanical-toggle { color: var(--accent); background: none; border: 0; padding: 0; font-size: var(--text-ui); }
 .check ul { margin: var(--space-1) 0 0; padding-left: 1.25rem; max-width: var(--prose-width); }
 .check li + li { margin-top: 4px; }
 .check { padding-top: var(--space-2); border-top: 1px solid var(--border); }
-.check h3, .uncovered h3, .full-diff h3, .not-analysed h3, .overview h3 { font: 600 var(--text-ui)/1.5 var(--sans); color: var(--muted); }
-.uncovered > p { margin: 4px 0 8px; }
+.check h3, .full-diff h3, .not-analysed h3, .overview h3 { font: 600 var(--text-ui)/1.5 var(--sans); color: var(--muted); }
+.range-missing { font: var(--text-meta)/1.5 var(--sans); }
 /* Code is quoted material: a tint with top and bottom rules, no side rules, no radius. */
 .hunk-block { margin: 0 0 var(--space-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-inset); }
 .hunk-block figcaption { padding: 4px 10px; border-bottom: 1px solid var(--border-muted); font-size: var(--text-meta); }
 .hunk-caption { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .hunk-range { color: var(--muted); }
-.hunk-pos { margin-left: auto; color: var(--muted); font-size: 11px; }
 /* P2 (docs/ux/dig71-step-code-mapping.md): filled vs. outline is a shape difference, not only a
    colour one, so the current step still reads under grayscale/forced-colors. */
 .step-badge {
@@ -772,10 +772,24 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
   border: 1.5px solid var(--accent); color: var(--accent); background: transparent; flex: none;
 }
 .step-badge.current { background: var(--accent-solid); color: #fff; border-color: var(--accent-solid); }
+button.step-badge { cursor: pointer; padding: 0; font-family: inherit; }
 .hunk-block .diff { border: 0; }
 .hunk-toggle { display: block; width: 100%; border: 0; border-top: 1px solid var(--border-muted); border-radius: 0; background: transparent; color: var(--accent); }
-.hunk-missing { font: var(--text-meta)/1.5 var(--sans); }
 .not-analysed ul { margin: 6px 0 0; padding-left: 1.25rem; }
+
+/* L3 step snippets (DIG-96, docs/l3-step-snippets.md §4): a step shows only its own lines, plus up
+   to 3 dimmed context lines each side, with line-anchored callouts read like review comments. */
+.dl.dim .no, .dl.dim .code { color: var(--muted); }
+.dl.callout .code { box-shadow: inset 3px 0 0 var(--accent); background: var(--selected); }
+.callout-note-row .code, .callout-note-row td { padding: 0; }
+.callout-note {
+  margin: 0; padding: 2px 8px 6px 11px; font: var(--text-meta)/1.5 var(--sans); color: var(--fg);
+  border-left: 3px solid var(--accent); margin-left: 0;
+}
+.full-diff-toggle { color: var(--accent); background: none; border: 0; padding: 0; font-size: var(--text-ui); }
+/* The gutter column only exists in the full-diff view (a step's own snippet has no need for it,
+   since its badge is already in the figure's caption). */
+.step-gutter { width: 22px; min-width: 22px; padding: 0 2px; text-align: center; vertical-align: top; }
 
 /* graph pane */
 .project-graph { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }

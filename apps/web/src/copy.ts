@@ -700,19 +700,23 @@ const WALKTHROUGH_EN = {
   next: 'Next',
   stepKeysHint: 'Press n / p for the next or previous step',
   check: 'What to check',
-  uncovered: 'Not covered by the walkthrough',
-  uncoveredNote: 'These hunks did not fit in the explanation, so no step describes them.',
   fullDiff: 'The diff',
-  missingHunk: (path: string, hunk: number) => `Hunk ${hunk} of ${path} is not in the stored diff.`,
+  showFullDiff: 'View full diff',
+  hideFullDiff: 'Hide full diff',
+  missingRange: (path: string, start: number, end: number) => {
+    const r = start === end ? `line ${start}` : `lines ${start}–${end}`;
+    return `${r} of ${path} are not in the stored diff.`;
+  },
   showAll: (n: number) => `Show all ${plural(n, 'line')}`,
   showLess: 'Show less',
+  showCode: 'Show code',
+  hideCode: 'Hide code',
   noTextChange: 'No text changes to show (binary or mode change).',
   notAnalysed: 'Not analysed',
-  // Step ↔ code mapping (DIG-71/81): the range a hunk block covers, its position among a
-  // multi-hunk step's ranges, and the aria-live announcement fired on a step change.
+  // Step ↔ code mapping (DIG-71/81/96): the range a snippet or hunk-block line covers, and the
+  // aria-live announcement fired on a step change.
   rangeLabel: (start: number, end: number) => (start === end ? `line ${start}` : `lines ${start}–${end}`),
-  rangeOf: (k: number, total: number) => `${k} of ${total} ranges`,
-  andMore: (n: number) => `and ${n} more`,
+  goToStep: (n: number) => `Go to step ${n}`,
   // Fast Explain (DIG-73/76): the area's L2 text (this line) and its L3 walkthrough land
   // separately and on different schedules, so this area's own placeholder is distinct from
   // `generating` above (which is about the walkthrough itself).
@@ -739,18 +743,22 @@ const WALKTHROUGH_KO = {
   next: '다음',
   stepKeysHint: 'n / p 키로 다음 또는 이전 단계로 이동하세요',
   check: '확인할 사항',
-  uncovered: '설명에 포함되지 않음',
-  uncoveredNote: '이 부분들은 설명에 포함되지 않아 어떤 단계에서도 다루지 않습니다.',
   fullDiff: 'Diff',
-  missingHunk: (path: string, hunk: number) => `${path}의 ${hunk}번째 hunk가 저장된 diff에 없습니다.`,
+  showFullDiff: '전체 diff 보기',
+  hideFullDiff: '전체 diff 숨기기',
+  missingRange: (path: string, start: number, end: number) => {
+    const r = start === end ? `${start}번째 줄` : `${start}–${end}번째 줄`;
+    return `${path}의 ${r}이 저장된 diff에 없습니다.`;
+  },
   showAll: (n: number) => `${n}줄 모두 보기`,
   showLess: '간략히 보기',
+  showCode: '코드 보기',
+  hideCode: '코드 숨기기',
   noTextChange: '표시할 텍스트 변경이 없습니다 (바이너리 또는 모드 변경).',
   notAnalysed: '분석되지 않음',
   // Draft, not a native-speaker sign-off (docs/ux/dig71-step-code-mapping.md §5) — native check requested in the handoff comment.
   rangeLabel: (start: number, end: number) => (start === end ? `${start}번째 줄` : `${start}–${end}번째 줄`),
-  rangeOf: (k: number, total: number) => `${total}개 범위 중 ${k}번째`,
-  andMore: (n: number) => `외 ${n}개 더`,
+  goToStep: (n: number) => `${n}단계로 이동`,
   areaWriting: '이 영역을 작성하는 중…',
 } as const;
 export function walkthroughCopy(lang: Lang = 'en') {

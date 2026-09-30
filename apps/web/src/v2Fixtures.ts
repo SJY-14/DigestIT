@@ -189,8 +189,8 @@ const layoutPatch = [
   '   export { fitPadding };',
 ].join('\n');
 
-/** An area L3 in the walkthrough shape (docs/ux-v3.md §2): 4 steps (one mechanical), a long hunk
- * that folds, and one hunk no step covers. */
+/** An area L3 in the walkthrough shape (docs/ux-v3.md §2, ranges/callouts DIG-96): 4 steps (one
+ * mechanical), a long range that folds, and one hunk no step's range touches. */
 export const fixtureWalkthrough: AreaWalkthrough = {
   overview:
     'The graph pane now measures itself and fits the changed files into the space it really has, instead of drawing into a fixed 640-pixel square. The fit runs again when you open another digest, but not when you unfold a folder.',
@@ -199,24 +199,32 @@ export const fixtureWalkthrough: AreaWalkthrough = {
       title: 'Measure the pane before drawing',
       body: 'ProjectGraph now keeps the canvas size in state and updates it from a ResizeObserver. Before, the SVG used a fixed 640×640 viewBox, so a wide pane had large empty margins on both sides.',
       hunks: [{ path: 'apps/web/src/ProjectGraph.tsx', hunk: 1 }],
+      ranges: [{ path: 'apps/web/src/ProjectGraph.tsx', side: 'new', start: 61, end: 64 }],
+      callouts: [{ path: 'apps/web/src/ProjectGraph.tsx', side: 'new', start: 63, end: 63, note: 'watches the pane for a resize' }],
       mechanical: false,
     },
     {
       title: 'Fit to changes on every new digest',
       body: 'The view is refitted when graph.digestId changes or when the pane is resized and the user has not panned. Unfolding a folder returns a new graph for the same digest, so it keeps the current view and the user does not lose their place.',
       hunks: [{ path: 'apps/web/src/ProjectGraph.tsx', hunk: 2 }],
+      ranges: [{ path: 'apps/web/src/ProjectGraph.tsx', side: 'new', start: 94, end: 121 }],
+      callouts: [{ path: 'apps/web/src/ProjectGraph.tsx', side: 'new', start: 94, end: 94, note: 'skips the refit while unfolding' }],
       mechanical: false,
     },
     {
       title: 'Fit into a rectangle, not a square',
       body: 'fitView takes a width and a height and keeps a fixed screen margin (fitPadding) so labels at the edge are not clipped. It used to scale by 85% of the square side.',
       hunks: [{ path: 'packages/core/src/graphLayout.ts', hunk: 1 }],
+      ranges: [{ path: 'packages/core/src/graphLayout.ts', side: 'new', start: 120, end: 122 }],
+      callouts: [{ path: 'packages/core/src/graphLayout.ts', side: 'new', start: 121, end: 121, note: 'keeps a fixed margin so labels stay clear' }],
       mechanical: false,
     },
     {
       title: 'Rename the padding helper',
       body: 'fitPad becomes fitPadding. No behaviour change.',
       hunks: [{ path: 'packages/core/src/graphLayout.ts', hunk: 2 }],
+      ranges: [{ path: 'packages/core/src/graphLayout.ts', side: 'new', start: 143, end: 143 }],
+      callouts: [],
       mechanical: true,
     },
   ],
@@ -346,6 +354,8 @@ const streamStep1 = {
   title: 'Add the search box component',
   body: 'SearchBox renders a labelled search input and calls onSearch on every change.',
   hunks: [{ path: 'apps/web/src/SearchBox.tsx', hunk: 1 }],
+  ranges: [{ path: 'apps/web/src/SearchBox.tsx', side: 'new' as const, start: 1, end: 5 }],
+  callouts: [{ path: 'apps/web/src/SearchBox.tsx', side: 'new' as const, start: 3, end: 3, note: 'calls onSearch on every change' }],
   mechanical: false,
 };
 
