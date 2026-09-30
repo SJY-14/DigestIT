@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AreaProgressEvent } from '@digestit/core';
-import { openDigestEvents } from './v2Api.js';
+import { ApiError, deleteProject, openDigestEvents } from './v2Api.js';
 
 class FakeES {
   static last: FakeES;
@@ -80,5 +80,26 @@ describe('openDigestEvents', () => {
     expect(FakeES.last.closed).toBe(true);
     vi.advanceTimersByTime(6000);
     expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleteProject', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sends the JSON content type and body the server’s v2 write gate requires', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await deleteProject(7);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/projects/7');
+    expect(init.method).toBe('DELETE');
+    expect(init.headers).toMatchObject({ 'content-type': 'application/json', 'x-digestit': '1' });
+    expect(init.body).toBe('{}');
+  });
+
+  it('surfaces the server’s error code', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'explain_running' }, { status: 409 })));
+    await expect(deleteProject(7)).rejects.toEqual(new ApiError('explain_running', 409));
   });
 });

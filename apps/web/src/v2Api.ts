@@ -47,8 +47,15 @@ async function patchJson<T>(url: string, body: unknown, signal?: AbortSignal): P
   return (await res.json()) as T;
 }
 
+// The server's v2 write gate wants `content-type: application/json` on DELETE too (415 otherwise),
+// and Fastify rejects that content type with an empty body, so send `{}` like the other writes.
 async function del(url: string, signal?: AbortSignal): Promise<void> {
-  const res = await fetch(url, { method: 'DELETE', signal, headers: { accept: 'application/json', 'x-digestit': '1' } });
+  const res = await fetch(url, {
+    method: 'DELETE',
+    signal,
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'x-digestit': '1' },
+    body: '{}',
+  });
   if (!res.ok) throw await readError(res);
 }
 
