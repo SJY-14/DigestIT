@@ -15,7 +15,7 @@ describe('migrate', () => {
     const db = openDb(':memory:');
     expect(tables(db)).toEqual([
       'area_explanation', 'change_unit', 'checkpoint', 'commit_', 'digest', 'explain_call', 'explain_job',
-      'explanation', 'file_change', 'memory_batch', 'memory_item', 'memory_revision', 'memory_use',
+      'explanation', 'file_change', 'memory_batch', 'memory_item', 'memory_revision', 'memory_slice', 'memory_use',
       'project_context', 'repo', 'rollup', 'unit_commit', 'unit_event', 'work_unit', 'worktree_state',
     ]);
   });

@@ -9,6 +9,8 @@ import {
   type DigestAreaTextInput, type DigestAreaTextResult, type DigestSummaryInput, type DigestSummaryResult,
 } from '@digestit/explain';
 import { AreaExplainRunningError, ExplainJobRunner, explainProject, retryDigest } from './explain-job.js';
+import { getMemoryItem, usedInDigestsCounts } from './memory.js';
+import { updateProjectMemory } from './memory-update.js';
 import { findProject, initProject, ProjectLockedError, type ProjectRow } from './project.js';
 
 let root: string;
@@ -136,6 +138,62 @@ describe('ExplainJobRunner.start', () => {
     expect(done.summary).toBe('ok');
     expect(Object.values(done.areas)).toEqual(['ok', 'ok', 'ok']);
     expect(done.finishedAt).not.toBeNull();
+  });
+
+  it('DIG-103: records memory_use for the summary and area parts, scoped to their own touched area', async () => {
+    const project = await initAndEdit();
+    await updateProjectMemory(db, home, project, 'manual');
+    const p = provider();
+    const runner = new ExplainJobRunner(db, home);
+    const r = await runner.start(project, p);
+    await settle(runner, r.digestId!);
+    await r.settled;
+
+    const rows = db.prepare('SELECT job_id AS jobId, part, item_id AS itemId FROM memory_use ORDER BY part, item_id')
+      .all() as { jobId: number; part: string; itemId: number }[];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(new Set(rows.map((row) => row.jobId)).size).toBe(1);
+
+    const itemKey = (id: number) => (db.prepare('SELECT kind, key FROM memory_item WHERE id = ?').get(id) as { kind: string; key: string });
+    const summaryKeys = rows.filter((row) => row.part === 'summary').map((row) => itemKey(row.itemId).key).sort();
+    // The summary part sees every touched area (server, web, project-root).
+    expect(summaryKeys).toContain('server');
+    expect(summaryKeys).toContain('web');
+    // The `area:server` part's own slice only carries the `server` area itself (no `web`): a
+    // per-area prompt is scoped to that one area's neighbourhood, not the whole digest.
+    const areaServerKeys = rows.filter((row) => row.part === 'area:server').map((row) => itemKey(row.itemId).key);
+    expect(areaServerKeys).toContain('server');
+    expect(areaServerKeys).not.toContain('web');
+
+    const sliceRows = db.prepare("SELECT part, change_unit_id AS changeUnitId FROM memory_slice WHERE part = 'summary'").all() as
+      { part: string; changeUnitId: number }[];
+    expect(sliceRows).toHaveLength(1);
+    expect(sliceRows[0]!.changeUnitId).toBe(r.digestId);
+
+    const usedInDigests = usedInDigestsCounts(db, project.id);
+    const serverAreaItem = getMemoryItem(db, project.id, 'area', 'server', null)!;
+    expect(usedInDigests.get(serverAreaItem.id)).toBe(1);
+  });
+
+  it('DIG-103: matches memory by area path, not by the digest area id, for nested areas', async () => {
+    for (const pkg of ['core', 'web']) for (const f of ['a', 'b', 'c']) write(`packages/${pkg}/${f}.ts`, `export const ${pkg}_${f} = 1;\n`);
+    const init = await initProject(db, home, proj);
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+    await updateProjectMemory(db, home, project, 'manual');
+    expect(getMemoryItem(db, project.id, 'area', 'packages/core', null)).not.toBeNull();
+    write('packages/core/a.ts', 'export const core_a = 2;\n');
+    const runner = new ExplainJobRunner(db, home);
+    const r = await runner.start(project, provider());
+    await settle(runner, r.digestId!);
+    await r.settled;
+    const areas = JSON.parse((db.prepare('SELECT areas FROM digest WHERE change_unit_id = ?').get(r.digestId!) as { areas: string }).areas) as { id: string; label: string }[];
+    expect(areas.map((a) => [a.id, a.label])).toEqual([['packages-core', 'packages/core']]);
+
+    const area = await runner.startArea(project, r.digestId!, 'packages-core', provider());
+    await area.settled;
+    const coreId = getMemoryItem(db, project.id, 'area', 'packages/core', null)!.id;
+    const parts = (db.prepare('SELECT part FROM memory_use WHERE item_id = ? ORDER BY part').all(coreId) as { part: string }[]).map((x) => x.part);
+    expect(parts).toEqual(['area:packages-core', 'summary', 'walkthrough:packages-core']);
   });
 
   it('409s a second Explain while the first runs, and releases the lock once it settles', async () => {

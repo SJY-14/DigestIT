@@ -398,6 +398,61 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX explain_job_started ON explain_job(started_at);
   CREATE INDEX explain_job_unit ON explain_job(change_unit_id, started_at);
   `,
+  // DIG-103 (docs/ux/decision-4-memory.md, change 1): "used in N digests" must count digests, not
+  // inflated per-version prompt counts, so `memory_use` needs the digest each use belonged to.
+  // `change_unit_id` is nullable (a background `memory` summary job summarises areas/threads across
+  // the whole project, not one digest). `memory_slice` is one row per (job, part) -- not per item --
+  // so `droppedForBudget` (packages/core/src/memory.ts's `MemorySlice`) survives even for a part
+  // whose slice included zero items, and `GET /api/digests/:id/memory-used` sums it with one query
+  // instead of re-deriving it from `memory_use` rows that may not exist.
+  `
+  ALTER TABLE memory_use ADD COLUMN change_unit_id INTEGER REFERENCES change_unit(id);
+  CREATE INDEX memory_use_change_unit ON memory_use(change_unit_id);
+  CREATE INDEX memory_use_item ON memory_use(item_id);
+
+  CREATE TABLE memory_slice (
+    job_id             INTEGER NOT NULL REFERENCES explain_job(id),
+    part               TEXT NOT NULL,
+    change_unit_id     INTEGER REFERENCES change_unit(id),
+    dropped_for_budget INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (job_id, part)
+  );
+  CREATE INDEX memory_slice_change_unit ON memory_slice(change_unit_id);
+  `,
+  // DIG-103: background `memory`-kind jobs (docs/milestone-4-memory.md §4, area/thread summaries)
+  // log their calls with `explain_call.reason = 'memory'`, same as every other task logs its own
+  // reason. SQLite cannot alter a CHECK constraint, so the table is rebuilt (same procedure as
+  // migration 10's `explain_job` widening).
+  `
+  CREATE TABLE explain_call_new (
+    id             INTEGER PRIMARY KEY,
+    at             TEXT NOT NULL,
+    change_unit_id INTEGER REFERENCES change_unit(id),
+    reason         TEXT NOT NULL CHECK (reason IN
+                   ('merged','handoff','rollup','backfill','manual','digest','area','context','memory')),
+    duration_ms    INTEGER NOT NULL DEFAULT 0,
+    outcome        TEXT NOT NULL CHECK (outcome IN ('ok','error','budget')),
+    job_id         INTEGER REFERENCES explain_job(id),
+    part           TEXT,
+    model          TEXT,
+    effort         TEXT,
+    startup_ms     INTEGER,
+    ttft_ms        INTEGER,
+    gen_ms         INTEGER,
+    input_tokens   INTEGER,
+    output_tokens  INTEGER,
+    violations     TEXT
+  );
+  INSERT INTO explain_call_new SELECT
+    id, at, change_unit_id, reason, duration_ms, outcome, job_id, part, model, effort,
+    startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens, violations
+  FROM explain_call;
+  DROP TABLE explain_call;
+  ALTER TABLE explain_call_new RENAME TO explain_call;
+  CREATE INDEX explain_call_at ON explain_call(at);
+  CREATE INDEX explain_call_unit ON explain_call(change_unit_id, at);
+  CREATE INDEX explain_call_job ON explain_call(job_id);
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {

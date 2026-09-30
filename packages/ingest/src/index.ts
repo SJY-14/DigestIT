@@ -13,3 +13,7 @@ export * from './project-context.js';
 export * from './route.js';
 export * from './workspace.js';
 export * from './explain-job.js';
+export * from './memory.js';
+export * from './memory-update.js';
+export * from './memory-summarize.js';
+export * from './memory-worker.js';

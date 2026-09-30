@@ -7,21 +7,26 @@ import { join, resolve as resolvePath, sep } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance } from 'fastify';
 import {
-  EXPLAIN_LANGUAGES,
+  EXPLAIN_LANGUAGES, MEMORY_LIMITS,
   buildProjectGraph,
   type AboutDto, type AreaProgressEvent, type ChangeStatus, type CreateProjectResponseDto, type DigestAreaSkeleton,
   type DigestL2Content, type DigestFileDto, type DigestPartsDto, type ExplainLanguage,
-  type ExplanationStatus, type LatestDigestDto, type NotTrackedGroupDto, type ProjectDto, type ProjectGraphDto,
+  type ExplanationStatus, type LatestDigestDto, type MemoryKind, type MemoryOverviewDto, type MemoryStatus,
+  type MemoryUsedDto, type NoteMemory, type NotTrackedGroupDto, type ProjectDto, type ProjectGraphDto,
   type ProjectIgnoreDto, type SkipReason,
 } from '@digestit/core';
 import {
-  AreaExplainRunningError, DEFAULT_DAILY_BUDGET, ExplainJobRunner, ProjectLockedError, addIgnorePatterns,
-  budgetStatus, initProject, isExplaining, isValidIgnorePattern, latestCheckpoint,
-  listProjects, listTree, openShadow, projectDataDir, projectStatus, removeProject,
-  readIgnorePatterns, refreshContext, removeIgnorePatterns, updateProjectLanguage, type ProjectRow,
+  AreaExplainRunningError, DEFAULT_DAILY_BUDGET, DEFAULT_MEMORY_DAILY_JOBS, DEFAULT_MEMORY_RESERVE,
+  ExplainJobRunner, MemoryWorker, ProjectLockedError, addIgnorePatterns,
+  budgetStatus, clearMemory, createBatch, exportMemory, finishBatch, getMemoryItemById, initProject,
+  isExplaining, isValidIgnorePattern, latestBatch, latestCheckpoint, listMemoryItems, listProjects, listTree,
+  markHidden, memorySummariesEnabled, memoryUsedForDigest, openShadow, overriddenByMap,
+  projectDataDir, projectStatus, removeProject, readIgnorePatterns, refreshContext, removeIgnorePatterns,
+  restoreItem, rollbackBatch, setMemorySummariesEnabled, setPinned, toMemoryItemDto, updateProjectLanguage,
+  upsertMemoryItem, usedInDigestsCounts, type ProjectRow,
 } from '@digestit/ingest';
 import {
-  AREA_PROMPT_VERSION, createProvider,
+  AREA_PROMPT_VERSION, createProvider, memoryJobsToday, redact,
   type ExplanationProvider,
 } from '@digestit/explain';
 import { CSP } from './csp.js';
@@ -73,6 +78,13 @@ const DEFAULT_DIGEST_LIMIT = 20;
 const MAX_DIGEST_LIMIT = 100;
 
 const parseId = (raw: string): number | null => (/^\d+$/.test(raw) ? Number(raw) : null);
+/** Positive-integer env value (`DIGESTIT_MEMORY_DAILY_JOBS`/`DIGESTIT_MEMORY_RESERVE`), or `fallback`
+ * when absent/malformed; `0` is valid (turns background memory summaries off, §4). */
+const intEnvOr = (raw: string | undefined, fallback: number): number => {
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+};
 const parseJson = <T>(v: unknown, fallback: T): T => {
   try {
     return JSON.parse(v as string) as T;
@@ -158,8 +170,29 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
   // Fast Explain (DIG-75): the async job runner behind POST /explain, POST /digests/:id/explain
   // (retry) and POST .../areas/:areaId/explain. One instance per server process, holding the
   // in-memory "still running" state that GET /api/digests/:id and the SSE stream below read from.
+  // `memoryWorker` is defined just below; `jobRunner` only needs to call it once a job settles, so
+  // the two closures reference each other through this binding instead of a construction-order dance.
+  let memoryWorker: MemoryWorker;
   const jobRunner = new ExplainJobRunner(db, home, {
     budget: budgetLimit, now, contextBusy: (repoId) => contextInFlight.has(repoId), notify: opts.notify,
+    onJobSettled: (repoId) => memoryWorker.afterExplain(repoId),
+  });
+  // MemoryWorker (docs/milestone-4-memory.md §2, DIG-103): one per server process, alongside
+  // `jobRunner` -- "without `digest serve`, only the CLI trigger runs" (§2), so this only exists
+  // here, not in the `explainProject`/`digest explain` CLI path.
+  memoryWorker = new MemoryWorker(db, {
+    home, providerFactory, now, budgetLimit,
+    dailyJobShare: intEnvOr(process.env.DIGESTIT_MEMORY_DAILY_JOBS, DEFAULT_MEMORY_DAILY_JOBS),
+    reserve: intEnvOr(process.env.DIGESTIT_MEMORY_RESERVE, DEFAULT_MEMORY_RESERVE),
+    isExplaining: () => jobRunner.hasRunningJobs(),
+  });
+  memoryWorker.start();
+  app.addHook('onClose', async () => memoryWorker.stop());
+  // Any v2 write that reached this point already passed app.ts's token/CSRF gate; that is enough
+  // "API write" activity to hold off the idle trigger (docs/milestone-4-memory.md §2), whether or
+  // not the write itself ends up succeeding.
+  app.addHook('onRequest', async (req) => {
+    if (isV2WritePath(req.method, req.url.split('?', 1)[0]!)) memoryWorker.noteActivity();
   });
 
   const latestExplanation = db.prepare(
@@ -738,6 +771,177 @@ export function registerV2(app: FastifyInstance, db: DatabaseSync, opts: V2Optio
     }
     return contextStatusOf(row.id, row.contextPath !== null);
   });
+
+  // ---- Project memory (docs/milestone-4-memory.md, DIG-103) ----
+
+  const MEMORY_KINDS: readonly MemoryKind[] = ['area', 'term', 'thread', 'note'];
+  const MEMORY_STATUSES: readonly MemoryStatus[] = ['active', 'stale', 'hidden'];
+  const memoryDailyJobShare = intEnvOr(process.env.DIGESTIT_MEMORY_DAILY_JOBS, DEFAULT_MEMORY_DAILY_JOBS);
+  const memoryReserve = intEnvOr(process.env.DIGESTIT_MEMORY_RESERVE, DEFAULT_MEMORY_RESERVE);
+
+  function memoryOverview(repoId: number): MemoryOverviewDto {
+    const counts = { area: 0, term: 0, thread: 0, note: 0 } as Record<MemoryKind, number>;
+    for (const it of listMemoryItems(db, repoId, { status: 'active' })) counts[it.kind]++;
+    return {
+      projectId: repoId,
+      summariesEnabled: memorySummariesEnabled(db, repoId),
+      counts,
+      lastBatch: latestBatch(db, repoId),
+      usage: { jobsToday: memoryJobsToday(db, now()), share: memoryDailyJobShare, reserve: memoryReserve },
+    };
+  }
+
+  app.get<{ Params: { id: string }; Querystring: { kind?: string; status?: string } }>('/api/projects/:id/memory', async (req, reply) => {
+    const id = parseId(req.params.id);
+    const row = id === null ? undefined : findProjectRow(id);
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+    const { kind, status } = req.query;
+    if (kind !== undefined && !MEMORY_KINDS.includes(kind as MemoryKind)) return reply.code(400).send({ error: 'bad_kind' });
+    if (status !== undefined && !MEMORY_STATUSES.includes(status as MemoryStatus)) return reply.code(400).send({ error: 'bad_status' });
+    const items = listMemoryItems(db, id!, { kind: kind as MemoryKind | undefined, status: status as MemoryStatus | undefined });
+    const usedCounts = usedInDigestsCounts(db, id!);
+    const overrides = overriddenByMap(db, id!);
+    return { ...memoryOverview(id!), items: items.map((it) => toMemoryItemDto(it, usedCounts, overrides)) };
+  });
+
+  app.patch<{ Params: { itemId: string }; Body: { pinned?: unknown; status?: unknown; text?: unknown } }>(
+    '/api/memory/:itemId',
+    { bodyLimit: V2_BODY_LIMIT },
+    async (req, reply) => {
+      const itemId = parseId(req.params.itemId);
+      const item = itemId === null ? null : getMemoryItemById(db, itemId);
+      if (!item) return reply.code(404).send({ error: 'not_found' });
+      const body = req.body;
+      if (typeof body !== 'object' || body === null) return reply.code(400).send({ error: 'bad_body' });
+      const { pinned, status, text } = body as { pinned?: unknown; status?: unknown; text?: unknown };
+      if (pinned !== undefined && typeof pinned !== 'boolean') return reply.code(400).send({ error: 'bad_pinned' });
+      if (status !== undefined && status !== 'active' && status !== 'hidden') return reply.code(400).send({ error: 'bad_status' });
+      if (text !== undefined) {
+        // DIG-102 decision, change 7: text edits are only for a user's own correction notes.
+        if (item.kind !== 'note' || item.source !== 'user') return reply.code(400).send({ error: 'text_not_allowed' });
+        if (typeof text !== 'string' || text.length === 0 || text.length > MEMORY_LIMITS.noteChars) return reply.code(400).send({ error: 'bad_text' });
+      }
+      if (pinned === undefined && status === undefined && text === undefined) return reply.code(400).send({ error: 'bad_body' });
+
+      const batchId = createBatch(db, item.repoId, 'user', null, now);
+      let current = item;
+      if (pinned !== undefined) current = setPinned(db, batchId, item.id, pinned, now) ?? current;
+      if (status === 'hidden') current = markHidden(db, batchId, item.id, now) ?? current;
+      else if (status === 'active') current = restoreItem(db, batchId, item.id, now) ?? current;
+      if (text !== undefined) {
+        const content = current.content as NoteMemory;
+        const merged: NoteMemory = { ...content, text: redact(text as string) };
+        current = upsertMemoryItem(db, batchId, item.repoId, 'note', item.key, item.language, merged, 'user', item.provenance, now);
+      }
+      finishBatch(db, batchId, 0, now);
+      const usedCounts = usedInDigestsCounts(db, item.repoId);
+      const overrides = overriddenByMap(db, item.repoId);
+      return toMemoryItemDto(current, usedCounts, overrides);
+    },
+  );
+
+  app.post<{ Params: { itemId: string }; Body: { text?: unknown } }>(
+    '/api/memory/:itemId/correct',
+    { bodyLimit: V2_BODY_LIMIT },
+    async (req, reply) => {
+      const itemId = parseId(req.params.itemId);
+      const target = itemId === null ? null : getMemoryItemById(db, itemId);
+      if (!target) return reply.code(404).send({ error: 'not_found' });
+      // Not offered on notes (docs/ux/decision-4-memory.md change 6): a note is already the user's
+      // own fact, so correcting it would just be editing it (PATCH's `text`, above).
+      if (target.kind === 'note') return reply.code(400).send({ error: 'not_correctable' });
+      const body = req.body;
+      const text = typeof body === 'object' && body !== null ? (body as { text?: unknown }).text : undefined;
+      if (typeof text !== 'string' || text.length === 0 || text.length > MEMORY_LIMITS.noteChars) return reply.code(400).send({ error: 'bad_text' });
+
+      const batchId = createBatch(db, target.repoId, 'user', null, now);
+      // Stable key per target: correcting the same item again replaces the earlier correction
+      // rather than accumulating duplicate notes for it.
+      const key = `correct:${target.kind}:${target.key}`;
+      const content: NoteMemory = { kind: 'note', text: redact(text), target: { kind: target.kind, key: target.key }, origin: 'correction' };
+      const note = upsertMemoryItem(
+        db, batchId, target.repoId, 'note', key, target.language, content, 'user',
+        { files: [], checkpointId: null, digestIds: [], jobId: null }, now,
+      );
+      finishBatch(db, batchId, 0, now);
+      const usedCounts = usedInDigestsCounts(db, target.repoId);
+      const overrides = overriddenByMap(db, target.repoId);
+      return reply.code(201).send(toMemoryItemDto(note, usedCounts, overrides));
+    },
+  );
+
+  app.post<{ Params: { id: string } }>('/api/projects/:id/memory/rollback', { bodyLimit: V2_BODY_LIMIT }, async (req, reply) => {
+    const id = parseId(req.params.id);
+    const row = id === null ? undefined : findProjectRow(id);
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+    const last = latestBatch(db, id!);
+    if (!last || last.rolledBack) return reply.code(400).send({ error: 'nothing_to_rollback' });
+    const result = rollbackBatch(db, last.id, now);
+    return { ...result, overview: memoryOverview(id!) };
+  });
+
+  app.get<{ Params: { id: string } }>('/api/projects/:id/memory/export', async (req, reply) => {
+    const id = parseId(req.params.id);
+    const row = id === null ? undefined : findProjectRow(id);
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+    return exportMemory(db, id!, now);
+  });
+
+  app.post<{ Params: { id: string } }>('/api/projects/:id/memory/clear', { bodyLimit: V2_BODY_LIMIT }, async (req, reply) => {
+    const id = parseId(req.params.id);
+    const row = id === null ? undefined : findProjectRow(id);
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+    return clearMemory(db, id!);
+  });
+
+  app.put<{ Params: { id: string }; Body: { summariesEnabled?: unknown } }>(
+    '/api/projects/:id/memory/settings',
+    { bodyLimit: V2_BODY_LIMIT },
+    async (req, reply) => {
+      const id = parseId(req.params.id);
+      const row = id === null ? undefined : findProjectRow(id);
+      if (!row) return reply.code(404).send({ error: 'not_found' });
+      const body = req.body;
+      if (typeof body !== 'object' || body === null) return reply.code(400).send({ error: 'bad_body' });
+      const { summariesEnabled } = body as { summariesEnabled?: unknown };
+      if (typeof summariesEnabled !== 'boolean') return reply.code(400).send({ error: 'bad_summariesEnabled' });
+      setMemorySummariesEnabled(db, id!, summariesEnabled);
+      return memoryOverview(id!);
+    },
+  );
+
+  // Manual trigger (docs/milestone-4-memory.md §2, trigger 4): the same deterministic update
+  // `digest memory update` runs, queued through the worker so it never races a live Explain's own
+  // store writes. Awaited here (unlike Explain's own routes) since it is cheap and has no LLM part.
+  app.post<{ Params: { id: string } }>('/api/projects/:id/memory/update', { bodyLimit: V2_BODY_LIMIT }, async (req, reply) => {
+    const id = parseId(req.params.id);
+    const row = id === null ? undefined : findProjectRow(id);
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+    try {
+      await memoryWorker.manualUpdate(id!);
+    } catch (e) {
+      return reply.code(500).send({ error: e instanceof Error ? e.message : 'memory_update_failed' });
+    }
+    return memoryOverview(id!);
+  });
+
+  app.get<{ Params: { id: string } }>('/api/digests/:id/memory-used', async (req, reply) => {
+    const id = parseId(req.params.id);
+    const digestRow = id === null ? undefined
+      : (db.prepare('SELECT repo_id AS repoId FROM digest WHERE change_unit_id = ?').get(id) as { repoId: number } | undefined);
+    if (!digestRow) return reply.code(404).send({ error: 'not_found' });
+    const use = memoryUsedForDigest(db, id!);
+    const usedCounts = usedInDigestsCounts(db, digestRow.repoId);
+    const overrides = overriddenByMap(db, digestRow.repoId);
+    const items = use.items
+      .map((u) => {
+        const item = getMemoryItemById(db, u.itemId);
+        return item ? { ...toMemoryItemDto(item, usedCounts, overrides), usedVersion: u.usedVersion, usedFor: u.usedFor } : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    const dto: MemoryUsedDto = { digestId: id!, items, droppedForBudget: use.droppedForBudget };
+    return dto;
+  });
 }
 
 /** Write routes needing the always-on token/CSRF gate in app.ts, kept in sync with the routes above. */
@@ -748,17 +952,25 @@ export const V2_WRITE_PATTERNS: readonly RegExp[] = [
   /^\/api\/projects\/\d+\/ignore$/,
   /^\/api\/digests\/\d+\/explain$/,
   /^\/api\/digests\/\d+\/areas\/[^/]+\/explain$/,
+  /^\/api\/memory\/\d+\/correct$/,
+  /^\/api\/projects\/\d+\/memory\/rollback$/,
+  /^\/api\/projects\/\d+\/memory\/clear$/,
+  /^\/api\/projects\/\d+\/memory\/update$/,
 ];
 
 /** PATCH write routes: kept separate from `V2_WRITE_PATTERNS` (all POST) since the method also gates them. */
-export const V2_PATCH_WRITE_PATTERNS: readonly RegExp[] = [/^\/api\/projects\/\d+$/];
+export const V2_PATCH_WRITE_PATTERNS: readonly RegExp[] = [/^\/api\/projects\/\d+$/, /^\/api\/memory\/\d+$/];
 
 /** DELETE write routes (DIG-87): same shape, kept separate for the same reason. */
 export const V2_DELETE_WRITE_PATTERNS: readonly RegExp[] = [/^\/api\/projects\/\d+$/];
+
+/** PUT write routes (DIG-103): same shape, kept separate for the same reason. */
+export const V2_PUT_WRITE_PATTERNS: readonly RegExp[] = [/^\/api\/projects\/\d+\/memory\/settings$/];
 
 export function isV2WritePath(method: string, urlPath: string): boolean {
   if (method === 'POST') return V2_WRITE_PATTERNS.some((p) => p.test(urlPath));
   if (method === 'PATCH') return V2_PATCH_WRITE_PATTERNS.some((p) => p.test(urlPath));
   if (method === 'DELETE') return V2_DELETE_WRITE_PATTERNS.some((p) => p.test(urlPath));
+  if (method === 'PUT') return V2_PUT_WRITE_PATTERNS.some((p) => p.test(urlPath));
   return false;
 }

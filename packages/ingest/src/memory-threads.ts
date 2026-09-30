@@ -19,6 +19,12 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** A digest area's memory `area` key: its label (a path), `''` for the project root. Not its `id`,
+ * which is a slug (`packages-core`) and matches no memory key. */
+export function memoryAreaKey(area: { label: string }): string {
+  return area.label === 'project root' ? '' : area.label;
+}
+
 /** The digest's own area grouping (`digest.areas`, DIG-75), normalised to the same `''`-for-root
  * convention as a memory area's `path` -- the two groupings are computed independently (one over a
  * digest's changed files, one over the whole tree) but share the same bucketing rule, so their keys
@@ -27,7 +33,7 @@ function digestAreaKeys(areasJson: string | null): string[] {
   if (!areasJson) return [];
   try {
     const skeleton = JSON.parse(areasJson) as { label: string }[];
-    return skeleton.map((a) => (a.label === 'project root' ? '' : a.label));
+    return skeleton.map(memoryAreaKey);
   } catch {
     return [];
   }

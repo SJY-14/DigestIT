@@ -6,8 +6,8 @@
 // callers of this store.
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  ExplainLanguage, MemoryBatch, MemoryContent, MemoryItem, MemoryKind, MemoryProvenance, MemorySource,
-  MemoryStatus, MemoryTrigger,
+  ExplainLanguage, MemoryBatch, MemoryContent, MemoryItem, MemoryItemDto, MemoryKind, MemoryProvenance,
+  MemorySource, MemoryStatus, MemoryTrigger,
 } from '@digestit/core';
 
 interface MemoryItemDbRow {
@@ -299,6 +299,152 @@ export function rollbackBatch(db: DatabaseSync, targetBatchId: number, now: () =
   return result;
 }
 
+/** `MemoryItemDto` for the API/page: the store row plus the two aggregates only a query can answer
+ * (`usedInDigestsCounts`, `overriddenByMap`), both repo-scoped so a listing costs two extra queries
+ * total, not one per item. */
+export function toMemoryItemDto(item: MemoryItem, usedInDigests: Map<number, number>, overriddenBy: Map<string, number>): MemoryItemDto {
+  return {
+    id: item.id, kind: item.kind, key: item.key, language: item.language, content: item.content,
+    source: item.source, status: item.status, pinned: item.pinned, provenance: item.provenance,
+    confirmedAt: item.confirmedAt, updatedAt: item.updatedAt, version: item.version,
+    usedInDigests: usedInDigests.get(item.id) ?? 0,
+    overriddenBy: overriddenBy.get(`${item.kind}:${item.key}`) ?? null,
+  };
+}
+
+// ---- memory_use (DIG-103): which item versions went into which prompt -----------------------
+
+export interface MemoryUseInput {
+  jobId: number;
+  /** Same convention as `explain_call.part`: `summary`, `area:<id>` or `walkthrough:<id>`. */
+  part: string;
+  /** Null for a background `memory` job, which is not tied to one digest. */
+  changeUnitId: number | null;
+  items: readonly { id: number; version: number }[];
+  droppedForBudget: number;
+}
+
+/** Logs one part's `MemorySlice` (docs/milestone-4-memory.md §3): one `memory_slice` row per (job,
+ * part) so `droppedForBudget` survives even when the slice picked no items, plus one `memory_use`
+ * row per item so "used in N digests" (docs/ux/decision-4-memory.md change 1) can be counted
+ * without re-deriving it from prompt logs. Idempotent on (job, part) / (job, part, item), so a
+ * retried part safely overwrites its own earlier log instead of double-counting. */
+export function recordMemoryUse(db: DatabaseSync, input: MemoryUseInput): void {
+  db.prepare(
+    `INSERT INTO memory_slice (job_id, part, change_unit_id, dropped_for_budget) VALUES (?, ?, ?, ?)
+     ON CONFLICT (job_id, part) DO UPDATE SET change_unit_id = excluded.change_unit_id, dropped_for_budget = excluded.dropped_for_budget`,
+  ).run(input.jobId, input.part, input.changeUnitId, input.droppedForBudget);
+  const ins = db.prepare(
+    `INSERT INTO memory_use (job_id, part, item_id, version, change_unit_id) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (job_id, part, item_id) DO UPDATE SET version = excluded.version, change_unit_id = excluded.change_unit_id`,
+  );
+  for (const it of input.items) ins.run(input.jobId, input.part, it.id, it.version, input.changeUnitId);
+}
+
+/** Distinct digests whose prompts used any version of each item (repo-scoped, one query): the
+ * `MemoryItemDto.usedInDigests` the page shows, immune to the per-version prompt-count inflation
+ * that made the old `usedCount` wrong (docs/ux/decision-4-memory.md change 1). */
+export function usedInDigestsCounts(db: DatabaseSync, repoId: number): Map<number, number> {
+  const rows = db.prepare(
+    `SELECT mu.item_id AS itemId, COUNT(DISTINCT mu.change_unit_id) AS n
+     FROM memory_use mu JOIN memory_item mi ON mi.id = mu.item_id
+     WHERE mi.repo_id = ? AND mu.change_unit_id IS NOT NULL
+     GROUP BY mu.item_id`,
+  ).all(repoId) as unknown as { itemId: number; n: number }[];
+  return new Map(rows.map((r) => [r.itemId, r.n]));
+}
+
+/** Active user notes with a target, keyed `${kind}:${key}`: `MemoryItemDto.overriddenBy` for the
+ * item each one names (docs/milestone-4-memory.md §1, "a note with a target overrides that item's
+ * text in prompts"). */
+export function overriddenByMap(db: DatabaseSync, repoId: number): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const n of listMemoryItems(db, repoId, { kind: 'note', status: 'active' })) {
+    const target = (n.content as { target: { kind: string; key: string } | null }).target;
+    if (target) map.set(`${target.kind}:${target.key}`, n.id);
+  }
+  return map;
+}
+
+export type MemoryUsedForPart = 'summary' | 'area' | 'walkthrough';
+
+/** Splits `explain_call`/`memory_use`'s `part` convention (`summary`, `area:<id>`, `walkthrough:<id>`)
+ * into the `{ part, area }` shape `GET /api/digests/:id/memory-used` returns. */
+export function splitPart(raw: string): { part: MemoryUsedForPart; area: string | null } {
+  const i = raw.indexOf(':');
+  if (i === -1) return { part: raw as MemoryUsedForPart, area: null };
+  return { part: raw.slice(0, i) as MemoryUsedForPart, area: raw.slice(i + 1) };
+}
+
+export interface DigestMemoryUseItem {
+  itemId: number;
+  /** The item's version as it stood when this digest's prompts used it; may be behind its current version. */
+  usedVersion: number;
+  /** Deduplicated: every walkthrough step of one area collapses to one `area` tag. */
+  usedFor: { part: MemoryUsedForPart; area: string | null }[];
+}
+
+export interface DigestMemoryUse {
+  items: DigestMemoryUseItem[];
+  /** Summed over every prompt this digest's Explain made (docs/ux/decision-4-memory.md change 2). */
+  droppedForBudget: number;
+}
+
+// ---- per-project settings (D1: background summaries default off) ----------------------------
+
+/** Per-project opt-in for background LLM summaries (docs/milestone-4-memory.md §5, D1).
+ * Deterministic memory (areas/terms/threads from code) is always on and does not check this. */
+export function memorySummariesEnabled(db: DatabaseSync, repoId: number): boolean {
+  const row = db.prepare('SELECT memory_summaries AS v FROM repo WHERE id = ?').get(repoId) as { v: number } | undefined;
+  return row?.v === 1;
+}
+
+export function setMemorySummariesEnabled(db: DatabaseSync, repoId: number, enabled: boolean): void {
+  db.prepare('UPDATE repo SET memory_summaries = ? WHERE id = ?').run(enabled ? 1 : 0, repoId);
+}
+
+/** The daily sweep's "drop stale items older than 30 days" (docs/milestone-4-memory.md §1-2): a
+ * hard delete, unlike a rollback's "undo a creation" (that leaves the item `stale` so a future
+ * rollback can still find it) -- a `stale` item this old is not coming back, and `user`/`hidden`
+ * items are never eligible regardless of age. Same item+revision+use triplet as `clearMemory`. */
+export function dropStaleItems(db: DatabaseSync, repoId: number, olderThanDays: number, now: () => Date = () => new Date()): number {
+  const cutoff = new Date(now().getTime() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+  const ids = (db.prepare("SELECT id FROM memory_item WHERE repo_id = ? AND status = 'stale' AND updated_at < ?")
+    .all(repoId, cutoff) as unknown as { id: number }[]).map((r) => r.id);
+  if (ids.length === 0) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  db.exec('BEGIN');
+  try {
+    db.prepare(`DELETE FROM memory_use WHERE item_id IN (${placeholders})`).run(...ids);
+    db.prepare(`DELETE FROM memory_revision WHERE item_id IN (${placeholders})`).run(...ids);
+    db.prepare(`DELETE FROM memory_item WHERE id IN (${placeholders})`).run(...ids);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  return ids.length;
+}
+
+/** `GET /api/digests/:id/memory-used`'s raw query: item ids only, so the API layer can join in
+ * each item's current `MemoryItemDto` fields (`getMemoryItemById`, `usedInDigestsCounts`). */
+export function memoryUsedForDigest(db: DatabaseSync, changeUnitId: number): DigestMemoryUse {
+  const rows = db.prepare('SELECT item_id AS itemId, version, part FROM memory_use WHERE change_unit_id = ?')
+    .all(changeUnitId) as unknown as { itemId: number; version: number; part: string }[];
+  const byItem = new Map<number, { usedVersion: number; usedFor: Map<string, { part: MemoryUsedForPart; area: string | null }> }>();
+  for (const r of rows) {
+    let entry = byItem.get(r.itemId);
+    if (!entry) { entry = { usedVersion: r.version, usedFor: new Map() }; byItem.set(r.itemId, entry); }
+    entry.usedVersion = Math.max(entry.usedVersion, r.version);
+    const pa = splitPart(r.part);
+    entry.usedFor.set(`${pa.part}:${pa.area ?? ''}`, pa);
+  }
+  const items = [...byItem.entries()].map(([itemId, e]) => ({ itemId, usedVersion: e.usedVersion, usedFor: [...e.usedFor.values()] }));
+  const droppedForBudget = (db.prepare('SELECT COALESCE(SUM(dropped_for_budget), 0) AS n FROM memory_slice WHERE change_unit_id = ?')
+    .get(changeUnitId) as { n: number }).n;
+  return { items, droppedForBudget };
+}
+
 // ---- export / clear --------------------------------------------------------------------------
 
 export interface MemoryExport {
@@ -329,6 +475,17 @@ export function clearMemory(db: DatabaseSync, repoId: number): ClearMemoryResult
       db.prepare(`DELETE FROM memory_revision WHERE item_id IN (${placeholders})`).run(...itemIds);
       db.prepare(`DELETE FROM memory_item WHERE id IN (${placeholders})`).run(...itemIds);
     }
+    // Leftover `memory_use`/`memory_slice` rows for this project's digests that named no item at
+    // all (a part whose whole slice was empty) -- not covered by the item-keyed delete above.
+    db.prepare(
+      `DELETE FROM memory_use WHERE change_unit_id IN (SELECT id FROM change_unit WHERE repo_id = ?)`,
+    ).run(repoId);
+    db.prepare(
+      `DELETE FROM memory_slice WHERE change_unit_id IN (SELECT id FROM change_unit WHERE repo_id = ?)`,
+    ).run(repoId);
+    db.prepare(
+      `DELETE FROM memory_slice WHERE job_id IN (SELECT id FROM explain_job WHERE repo_id = ? AND kind = 'memory')`,
+    ).run(repoId);
     if (batchIds.length > 0) {
       const placeholders = batchIds.map(() => '?').join(',');
       db.prepare(`DELETE FROM memory_batch WHERE id IN (${placeholders})`).run(...batchIds);

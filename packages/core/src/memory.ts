@@ -167,10 +167,27 @@ export interface MemoryItemDto {
   confirmedAt: string;
   updatedAt: string;
   version: number;
-  /** Explain prompts that included this item's current version. */
-  usedCount: number;
+  /** Distinct digests whose prompts used any version of this item (docs/ux/decision-4-memory.md
+   * change 1); unlike a prompt count, this is never inflated or reset by re-extraction. */
+  usedInDigests: number;
   /** Set when a user note overrides this item. */
   overriddenBy: number | null;
+}
+
+/** `GET /api/digests/:id/memory-used` (docs/ux/decision-4-memory.md change 2): what one digest's
+ * prompts actually drew from the memory store, for its "what DigestIT used" view. */
+export interface MemoryUsedItemDto extends MemoryItemDto {
+  /** The item's version as it stood when this digest's prompts used it; may be behind `version`. */
+  usedVersion: number;
+  /** Deduplicated: every walkthrough step of one area collapses to one `area` tag. */
+  usedFor: { part: 'summary' | 'area' | 'walkthrough'; area: string | null }[];
+}
+
+export interface MemoryUsedDto {
+  digestId: number;
+  items: MemoryUsedItemDto[];
+  /** Summed over every prompt this digest's Explain made, not just what is shown in `items`. */
+  droppedForBudget: number;
 }
 
 export interface MemoryUsageDto {
