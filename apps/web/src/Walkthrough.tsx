@@ -200,10 +200,7 @@ export function WalkthroughView({
           </div>
         );
       case 'pending':
-        // A validated walkthrough can land in `area.l3` before `area.status` catches up (the
-        // streamed generation settles the two independently) — once there is something real to
-        // read, the "writing…" notice must not linger over it.
-        return walkthrough ? null : <p className="notice muted" role="status"><span className="spinner" aria-hidden="true" /> {T.generating}</p>;
+        return <p className="notice muted" role="status"><span className="spinner" aria-hidden="true" /> {T.generating}</p>;
       case 'error':
         return (
           <p className="notice error" role="alert">
