@@ -25,7 +25,7 @@ validator change: anchors are derived from `HunkRef` and the patch.
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
 | 0 | DIG-71 | Brief, decision, review, acceptance | CTO | DIG-81 |
-| 1 | DIG-81 | `hunkRange()`, range labels, step badges, announce + focus (P1–P3) | Frontend engineer | — |
+| 1 | DIG-81 | `hunkRange()`, range labels, step badges, announce + focus (P1–P3). Merged 2026-09-30 | Frontend engineer | — |
 | 2 | — | After merge: real-provider screenshots (en/ko, light/dark) and the Reviewer's 2-second check | Board operator, UX reviewer | DIG-81 |
 
 ## Visual refinement: Direction B (editorial)
