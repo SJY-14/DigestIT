@@ -1030,6 +1030,8 @@ describe('MainV2: Fast Explain (DIG-76)', () => {
     await waitFor(() => host.querySelector('.overview p') !== null);
     expect(host.querySelectorAll('section.step')).toHaveLength(1);
     expect(host.querySelector('section.step .step-body')?.textContent).toContain(fixtureAreaProgressSteps[2]!.steps[0]!.body);
+    // Streamed steps are not the whole walkthrough: the "writing" notice stays until `done`.
+    expect(host.querySelector('.walkthrough [role="status"]')?.textContent).toContain('Writing the walkthrough');
 
     // `done` on the stream: the client refetches the authoritative, validated result.
     fastArea = fixtureStreamingAreaFinal;
@@ -1037,6 +1039,7 @@ describe('MainV2: Fast Explain (DIG-76)', () => {
     await waitFor(() => host.querySelector('.check') !== null);
     expect(host.querySelectorAll('section.step')).toHaveLength(1);
     expect(host.querySelector('.walkthrough')).toBeTruthy(); // still the same reading pane, not re-mounted elsewhere
+    expect(host.querySelector('.walkthrough [role="status"]')).toBeNull(); // DIG-95: the notice goes once the walkthrough is final
   });
 
   it('generating an area L3 after the digest itself has already settled still opens an SSE stream for it', async () => {
