@@ -30,23 +30,17 @@ export interface ProjectRowProps {
   /** Project-panel only: omitted in the All-projects view (row-removal belongs to the switcher's
    * management context, not the triage view). */
   remove?: ProjectRowRemoveProps;
-  /** True inside the project panel, whose list carries `role="listbox"` (it is a single-choice
-   * switcher, like the `<select>` it replaced): marks this row `role="option"`. The All-projects
-   * view leaves this unset — it is a plain navigation list, not a choice control. */
-  asOption?: boolean;
   lang?: Lang;
 }
 
-export function ProjectRow({ project, current, unread, onSelect, headline, quiet, remove, asOption, lang = 'en' }: ProjectRowProps) {
+export function ProjectRow({ project, current, unread, onSelect, headline, quiet, remove, lang = 'en' }: ProjectRowProps) {
   const T = projectsCopy(lang);
   const activity = project.lastCheckpointAt ? T.lastActivity(relativeTime(project.lastCheckpointAt, Date.now(), lang)) : T.noActivity;
   return (
-    <li className={quiet ? 'proj-row caught-up' : 'proj-row'} role={asOption ? 'presentation' : undefined}>
+    <li className={quiet ? 'proj-row caught-up' : 'proj-row'}>
       <button
         type="button"
         className="proj-row-main"
-        role={asOption ? 'option' : undefined}
-        aria-selected={asOption ? current : undefined}
         aria-current={current ? 'true' : undefined}
         data-project-id={project.id}
         onClick={onSelect}

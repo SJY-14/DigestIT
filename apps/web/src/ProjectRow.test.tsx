@@ -117,13 +117,11 @@ describe('ProjectRow', () => {
     expect(host.querySelector('.proj-row')?.className).toContain('caught-up');
   });
 
-  it('marks the row role="option" and aria-selected only when asOption is set (project panel, not All-projects)', async () => {
+  it('is a plain button in a list item (no option role), so a sibling Remove button stays valid ARIA', async () => {
     await render(<ProjectRow {...baseProps({ current: true })} />);
-    expect(host.querySelector('.proj-row-main')?.getAttribute('role')).toBeNull();
-
-    await render(<ProjectRow {...baseProps({ current: true, asOption: true })} />);
     const main = host.querySelector('.proj-row-main')!;
-    expect(main.getAttribute('role')).toBe('option');
-    expect(main.getAttribute('aria-selected')).toBe('true');
+    expect(main.getAttribute('role')).toBeNull();
+    expect(main.getAttribute('aria-selected')).toBeNull();
+    expect(host.querySelector('.proj-row')?.getAttribute('role')).toBeNull();
   });
 });

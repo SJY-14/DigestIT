@@ -705,14 +705,11 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   // it from the list. Removing the last project needs no redirect of its own — `projects.length
   // === 0` already renders SetupForm below, regardless of what `url.project` still says.
   const onRemoveProject = useCallback((id: number): Promise<void> => deleteProject(id).then(() => {
-    setProjects((prev) => {
-      const next = (prev ?? []).filter((p) => p.id !== id);
-      if (id === currentProjectId && next.length > 0) {
-        replace({ project: defaultProject(next, loadLastProject())!.id, digest: null, level: null, node: null, area: null, step: null });
-      }
-      return next;
-    });
-  }), [currentProjectId, replace]);
+    const next = (projects ?? []).filter((p) => p.id !== id);
+    setProjects((prev) => (prev ?? []).filter((p) => p.id !== id));
+    const landing = id === currentProjectId ? defaultProject(next, loadLastProject()) : null;
+    if (landing) replace({ project: landing.id, digest: null, level: null, node: null, area: null, step: null });
+  }), [projects, currentProjectId, replace]);
   const onSelectDigest = useCallback((id: number) => push({ digest: id, node: null, area: null, step: null }), [push]);
   const onLevel = useCallback((l: ReadingLevel) => push({ level: l === 0 ? null : l, step: null }), [push]);
   const onOpenArea = useCallback((id: string) => push({ level: 3, area: id, step: null }), [push]);

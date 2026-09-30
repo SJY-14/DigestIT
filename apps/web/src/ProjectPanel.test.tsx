@@ -66,15 +66,18 @@ describe('ProjectPanel: open/close (reuses DigestPicker\'s overlay pattern)', ()
     outside.remove();
   });
 
-  it('exposes a listbox of options, with the current project selected', async () => {
+  it('opens a dialog holding a plain list (rows carry Remove buttons, so not a listbox), current project marked', async () => {
     await render(<ProjectPanel projects={[fixtureProject, fixtureProject2]} currentProject={fixtureProject} onSwitch={vi.fn()} onRemove={vi.fn()} />);
     const trigger = host.querySelector('.proj-trigger')!;
-    expect(trigger.getAttribute('aria-haspopup')).toBe('listbox');
+    expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
     await click(trigger);
-    expect(host.querySelector('.proj-list')?.getAttribute('role')).toBe('listbox');
-    expect(rowFor(fixtureProject.id)?.getAttribute('role')).toBe('option');
-    expect(rowFor(fixtureProject.id)?.getAttribute('aria-selected')).toBe('true');
-    expect(rowFor(fixtureProject2.id)?.getAttribute('aria-selected')).toBe('false');
+    const panel = host.querySelector('.proj-panel')!;
+    expect(panel.getAttribute('role')).toBe('dialog');
+    expect(trigger.getAttribute('aria-controls')).toBe(panel.id);
+    expect(host.querySelector('.proj-list')?.getAttribute('role')).toBeNull();
+    expect(host.querySelector('[role="listbox"], [role="option"]')).toBeNull();
+    expect(rowFor(fixtureProject.id)?.getAttribute('aria-current')).toBe('true');
+    expect(rowFor(fixtureProject2.id)?.getAttribute('aria-current')).toBeNull();
   });
 });
 

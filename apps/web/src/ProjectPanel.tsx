@@ -110,7 +110,7 @@ export function ProjectPanel({ projects, currentProject, onSwitch, onRemove, lan
         type="button"
         ref={trigger}
         className="proj-trigger"
-        aria-haspopup="listbox"
+        aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((o) => !o)}
@@ -119,9 +119,11 @@ export function ProjectPanel({ projects, currentProject, onSwitch, onRemove, lan
         <span className="caret" aria-hidden="true">▾</span>
       </button>
       {open && (
-        <div className="proj-panel" role="dialog" aria-label={T.switchProjectLabel}>
+        <div className="proj-panel" id={panelId} role="dialog" aria-label={T.switchProjectLabel}>
           <h2>{T.projectsHeading}</h2>
-          <ul className="proj-list" id={panelId} role="listbox" aria-label={T.projectsHeading} ref={list} onKeyDown={onListKey}>
+          {/* A plain list, not a listbox: each row also carries its own Remove button, and a
+             listbox may only own options. The current project is marked with aria-current. */}
+          <ul className="proj-list" aria-label={T.projectsHeading} ref={list} onKeyDown={onListKey}>
             {projects.map((p) => (
               <ProjectRow
                 key={p.id}
@@ -129,7 +131,6 @@ export function ProjectPanel({ projects, currentProject, onSwitch, onRemove, lan
                 current={p.id === currentProject.id}
                 unread={computeUnread(p, getLastSeen(p.id))}
                 onSelect={() => { onSwitch(p.id); close(true); }}
-                asOption
                 remove={{ state: removeStateFor(p.id), error: errors[p.id] ?? null, onClick: () => onRowRemoveClick(p.id) }}
                 lang={lang}
               />
