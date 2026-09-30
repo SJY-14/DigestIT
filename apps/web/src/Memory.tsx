@@ -539,7 +539,9 @@ export function MemoryPage({ onOpenDigest, lang: chromeLang = 'en' }: MemoryPage
     setUndoState('busy');
     setUndoError(null);
     rollbackMemory(projectId).then(
-      () => { setUndoState('idle'); refreshList(projectId); },
+      // The Undo button is disabled once rolled back, so focus would fall to <body>; land on the
+      // page title as Clear does.
+      () => { setUndoState('idle'); setPendingFocus('mem-title'); refreshList(projectId); },
       (e: unknown) => { setUndoState('idle'); setUndoError(actionErrorText(e, lang, T.undoError)); },
     );
   }, [projectId, undoState, refreshList, lang, T]);

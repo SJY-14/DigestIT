@@ -212,6 +212,30 @@ describe('MemoryPage', () => {
     expect(clearProjectMemory).toHaveBeenCalledWith(PROJECT.id);
   });
 
+  it('undoes the last update through the two-step confirm, then moves focus to the page title', async () => {
+    const a = item({ id: 1, content: areaContent('src/retry.ts') });
+    const batch = {
+      id: 7, repoId: PROJECT.id, trigger: 'manual', checkpointId: null,
+      startedAt: '2026-09-30T00:00:00Z', finishedAt: '2026-09-30T00:00:01Z', changed: 1, calls: 0, rolledBack: false,
+    };
+    fetchMemory.mockResolvedValue({ ...defaultList([a]), lastBatch: batch });
+    rollbackMemory.mockResolvedValue({});
+    await render(<MemoryPage onOpenDigest={vi.fn()} />);
+    await waitFor(() => host.querySelector('.mem-item') !== null);
+
+    const undoBtn = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Undo last update') as HTMLButtonElement;
+    undoBtn.focus();
+    await click(undoBtn);
+    expect(rollbackMemory).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(undoBtn);
+
+    // Once rolled back the button is disabled, so focus must not be left on it.
+    fetchMemory.mockResolvedValue({ ...defaultList([]), lastBatch: { ...batch, rolledBack: true } });
+    await click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Confirm undo?'));
+    expect(rollbackMemory).toHaveBeenCalledWith(PROJECT.id);
+    await waitFor(() => document.activeElement?.id === 'mem-title');
+  });
+
   it('opens the Correct form, saves it, and closes on Cancel/Escape returning focus to the trigger', async () => {
     const a = item({ id: 1, content: areaContent('src/retry.ts', 'Retry with exponential backoff') });
     fetchMemory.mockResolvedValue(defaultList([a]));
