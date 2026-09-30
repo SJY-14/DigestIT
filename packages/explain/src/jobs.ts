@@ -107,7 +107,7 @@ export interface JobCallLog {
 
 /** Logs one provider call with the DIG-73 timing columns, `job_id`/`part`, and the DIG-94 validation reason. */
 export function logJobCall(
-  db: DatabaseSync, at: Date, reason: 'digest' | 'area' | 'context', log: JobCallLog,
+  db: DatabaseSync, at: Date, reason: 'digest' | 'area' | 'context' | 'memory', log: JobCallLog,
 ): void {
   db.prepare(
     `INSERT INTO explain_call
