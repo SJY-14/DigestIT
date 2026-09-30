@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<title>DigestIT — cycle 2 proposals, direction B tokens</title>
+<script>
+/* Same pre-paint theme read as docs/ux/proto/visual-b-editorial/index.html (DIG-72) — a headless
+   screenshot after a reload is the reliable way to capture each theme, some engines don't repaint
+   on a plain attribute mutation. */
+document.documentElement.dataset.theme = /^#?dark$/.test(location.hash) ? 'dark' : 'light';
+</script>
+<style>
+/* Tokens copied verbatim from docs/ux/proto/visual-b-editorial/index.html (DIG-72, unmerged) so
+   this prototype stays pixel-consistent with direction B rather than inventing a second palette.
+   Do not hand-edit these values independently of that file — if DIG-72 changes its tokens, copy
+   the new values here too. */
+:root{
+  --bg:#fbfaf7; --bg-inset:#f3f1ea; --fg:#20211d; --muted:#6b6a60;
+  --border:#e4e1d6; --border-muted:#ece9de; --hover:#f3f1ea; --selected:#eee9dc;
+  --accent:#9a5b32; --accent-solid:#9a5b32; --focus:#9a5b32;
+  --add:#3f6b3f; --del:#a23b3b; --add-bg:#e9f0e4; --del-bg:#f6e6e2;
+  --hunk-bg:#efe6d8; --hunk-fg:#7a5230;
+  --serif: "Source Serif 4", Charter, Georgia, "Liberation Serif", "Noto Serif KR", serif;
+  --sans: "IBM Plex Sans", Inter, -apple-system, "Segoe UI", "Liberation Sans", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* P6 fix: --border measures 1.25:1 against --bg in the DIG-72 prototype, far under WCAG
+     1.4.11's 3:1 non-text-UI threshold — real component boundaries (buttons, inputs, panel
+     edges) need a token that clears it. --border-strong below is computed (relative-luminance
+     formula, not eyeballed) to land at ~3.24:1 against --bg in both themes, keeping the same
+     warm-neutral hue as the rest of the palette. Swap this value into DIG-72's own --border,
+     don't fork a second token long-term. --hover and --selected are deliberately NOT forced to
+     3:1 here (see brief-2.md P6): hover-only backgrounds are a supplementary, mouse-only cue,
+     redundant with the cursor and with the already-compliant focus-visible ring; "selected/
+     current" state uses the app's existing accent-bar pattern (styles.css's
+     `.commit[aria-current='true']`, --accent already clears 5:1+) as the real indicator, with
+     the background tint staying purely decorative. */
+  --border-strong:#938b79;
+}
+html[data-theme="dark"]{
+  --bg:#1b1a17; --bg-inset:#221f1a; --fg:#eae6da; --muted:#a39d8c;
+  --border:#3a362c; --border-muted:#2c2921; --hover:#221f1a; --selected:#2a2620;
+  --accent:#d99a6c; --accent-solid:#d99a6c; --focus:#d99a6c;
+  --add:#8fbf8f; --del:#e08a8a; --add-bg:rgba(143,191,143,.12); --del-bg:rgba(224,138,138,.12);
+  --hunk-bg:rgba(217,154,108,.14); --hunk-fg:#e6b98c;
+  --border-strong:#73695d;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg-inset);color:var(--fg);font:15px/1.6 var(--sans);}
+.proto-bar{position:sticky;top:0;z-index:50;display:flex;gap:8px;align-items:center;padding:8px 16px;background:#20211d;color:#fff;font:12px/1 var(--sans);}
+.proto-bar button{font:inherit;background:#3a362c;color:#fff;border:1px solid #4a4638;border-radius:3px;padding:5px 10px;cursor:pointer;}
+.proto-bar a{color:#e6b98c;margin-left:10px;}
+.frame{max-width:1280px;margin:24px auto 64px;background:var(--bg);}
+.screen{margin-bottom:40px;}
+.screen-label{font:600 11px/1 var(--mono);letter-spacing:.02em;color:var(--muted);padding:8px 0;}
+.screen-note{font:13px/1.6 var(--sans);color:var(--muted);padding:0 0 10px;max-width:74ch;}
+.pad{padding:20px 24px 32px;}
+
+.top{display:flex;align-items:center;gap:20px;padding:14px 0;border-bottom:1px solid var(--border);}
+.top .brand{font-weight:600;font-size:14px;letter-spacing:.01em;}
+.top nav{display:flex;gap:4px;}
+.top nav a{color:var(--muted);text-decoration:none;font-size:13px;padding:4px 6px;}
+.top nav a.current{color:var(--fg);font-weight:600;}
+.top-spacer{flex:1;}
+
+.bar{display:flex;align-items:baseline;gap:16px;padding:16px 0;font-size:13px;color:var(--muted);}
+.proj{font-weight:600;color:var(--fg);}
+.digest-trigger{flex:1;color:var(--muted);border:0;background:none;text-align:left;padding:0;font:inherit;cursor:pointer;}
+.digest-trigger strong{color:var(--fg);font-weight:400;}
+.chip{white-space:nowrap;}
+.btn{border:1px solid var(--border-strong);background:none;border-radius:3px;padding:5px 12px;font:13px var(--sans);cursor:pointer;color:var(--fg);}
+.btn.primary{background:var(--accent-solid);border-color:var(--accent-solid);color:var(--bg);font-weight:600;}
+.btn.subtle{border-color:transparent;color:var(--muted);}
+.btn.danger{color:var(--del);border-color:var(--del);}
+
+/* ---- P2/P3: first-run, two columns instead of one floated card ---- */
+.firstrun{display:flex;gap:56px;padding:56px 0 40px;align-items:flex-start;}
+.fr-explain{flex:1 1 46%;max-width:44ch;}
+.fr-explain h1{font-family:var(--serif);font-size:26px;font-weight:600;margin:0 0 18px;line-height:1.3;}
+.fr-steps{list-style:none;margin:0 0 28px;padding:0;counter-reset:fr;}
+.fr-steps li{counter-increment:fr;position:relative;padding:0 0 22px 34px;font-size:14px;color:var(--fg);}
+.fr-steps li::before{content:counter(fr);position:absolute;left:0;top:-1px;width:22px;height:22px;border-radius:50%;background:var(--bg-inset);border:1px solid var(--border-strong);color:var(--muted);font:600 12px/20px var(--sans);text-align:center;}
+.fr-steps li:not(:last-child)::after{content:'';position:absolute;left:10px;top:22px;width:1px;height:calc(100% - 14px);background:var(--border);}
+.fr-trust{background:var(--bg-inset);border:1px solid var(--border);border-radius:4px;padding:16px 18px;font-size:13px;color:var(--fg);}
+.fr-trust .fr-trust-label{display:block;font-size:11px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;font-weight:600;}
+.fr-trust p{margin:0 0 8px;}
+.fr-trust p:last-child{margin-bottom:0;}
+.fr-trust .provider{font-family:var(--mono);font-size:12px;background:var(--hover);padding:1px 5px;border-radius:3px;}
+.fr-form{flex:1 1 40%;max-width:420px;border:1px solid var(--border-strong);border-radius:4px;background:var(--bg);align-self:stretch;display:flex;flex-direction:column;}
+.fr-form h2{font-size:13px;font-weight:600;margin:0;padding:14px 18px;background:var(--bg-inset);border-bottom:1px solid var(--border);}
+.fr-form-body{padding:18px;display:flex;flex-direction:column;gap:14px;flex:1;}
+.field{display:flex;flex-direction:column;gap:5px;font-size:13px;}
+.field input{font:13px var(--sans);padding:7px 9px;border:1px solid var(--border-strong);border-radius:3px;background:var(--bg);color:var(--fg);}
+.field .hint{font-size:12px;color:var(--muted);}
+
+/* ---- P5: settings drawer (replaces the bare info-popover, adds provider/model + sign-in + read-only line) ---- */
+.settings-drawer{position:absolute;right:24px;top:64px;width:360px;border:1px solid var(--border-strong);border-radius:4px;background:var(--bg);box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:20;}
+.settings-drawer h2{font-size:13px;font-weight:600;margin:0;padding:12px 16px;border-bottom:1px solid var(--border);}
+.sd-section{padding:12px 16px;border-bottom:1px solid var(--border-muted);}
+.sd-section:last-child{border-bottom:0;}
+.sd-label{font-size:11px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin:0 0 6px;font-weight:600;}
+.sd-row{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;gap:8px;margin-bottom:4px;}
+.sd-row .v{font-family:var(--mono);font-size:12px;color:var(--fg);}
+.sd-readonly{font-size:12px;color:var(--fg);background:var(--add-bg);border:1px solid var(--add);border-radius:3px;padding:8px 10px;}
+.sd-signed{font-size:12px;color:var(--add);}
+.sd-unsigned{font-size:12px;color:var(--del);}
+
+/* ---- P4: project panel (replaces the bare <select>) ---- */
+.proj-trigger{display:flex;align-items:center;gap:6px;border:1px solid var(--border-strong);border-radius:3px;background:var(--bg);padding:5px 10px;font:13px var(--sans);font-weight:600;cursor:pointer;color:var(--fg);}
+.proj-trigger .car{color:var(--muted);font-weight:400;}
+.proj-panel{position:absolute;left:24px;top:64px;width:400px;border:1px solid var(--border-strong);border-radius:4px;background:var(--bg);box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:20;}
+.proj-panel h2{font-size:13px;font-weight:600;margin:0;padding:12px 16px;border-bottom:1px solid var(--border);}
+.proj-row{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border-muted);}
+.proj-row:last-child{border-bottom:0;}
+/* Real state indicator is the accent bar (matches styles.css's .commit[aria-current] pattern,
+   --accent already clears 5:1+); the background tint is a decorative, non-load-bearing extra. */
+.proj-row.current{background:var(--selected);box-shadow:inset 2px 0 0 var(--accent);}
+.proj-main{flex:1;min-width:0;}
+.proj-name{font-weight:600;font-size:13px;}
+.proj-meta{font-size:12px;color:var(--muted);}
+.proj-unread{font:600 11px/1 var(--sans);color:var(--bg);background:var(--accent-solid);border-radius:10px;padding:3px 7px;white-space:nowrap;}
+.proj-remove{font-size:12px;color:var(--muted);background:none;border:1px solid transparent;border-radius:3px;padding:3px 6px;cursor:pointer;}
+.proj-remove:hover{color:var(--del);border-color:var(--del);}
+.proj-add{padding:10px 16px;font-size:13px;}
+.proj-add a{color:var(--accent);text-decoration:none;}
+
+/* ---- P7 (bold): cross-project inbox ---- */
+.inbox-head{padding:28px 0 6px;}
+.inbox-head h1{font-family:var(--serif);font-size:24px;font-weight:600;margin:0 0 4px;}
+.inbox-head p{margin:0;color:var(--muted);font-size:13px;}
+.inbox-list{list-style:none;margin:20px 0 0;padding:0;}
+.inbox-row{display:flex;align-items:center;gap:18px;padding:16px 4px;border-top:1px solid var(--border);text-decoration:none;color:inherit;}
+.inbox-row:first-child{border-top:1px solid var(--border-strong);}
+.inbox-row:hover{background:var(--hover);}
+.inbox-name{flex:0 0 160px;font-weight:600;font-size:14px;}
+.inbox-summary{flex:1;min-width:0;font-size:13px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.inbox-meta{flex:0 0 auto;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted);white-space:nowrap;}
+.inbox-row.caught-up{color:var(--muted);}
+.inbox-row.caught-up .inbox-summary{color:var(--muted);font-style:italic;}
+</style>
+</head>
+<body>
+<div class="proto-bar">
+  <strong>DigestIT cycle 2 — proposals in direction B tokens</strong>
+  <button onclick="location.hash = document.documentElement.dataset.theme==='dark'?'light':'dark'; location.reload();">Toggle light/dark</button>
+  <a href="#firstrun">1 First-run</a><a href="#settings">2 Settings</a><a href="#projects">3 Projects</a><a href="#inbox">4 Inbox</a>
+</div>
+<div class="frame">
+
+<!-- ===================== 1. First-run: P2 trust line + P3 two-column layout ===================== -->
+<section class="screen" id="firstrun">
+<div class="screen-label">SCREEN 1 — First run (P2 + P3). Was: a single 480px card floating alone in a 1600px-wide,
+  ~900px-tall viewport (measured: the card IS horizontally centered at x=720, but only fills y=100-435,
+  leaving ~465px of dead vertical space below it — see brief-2.md P3 for the pixel check). Now: two
+  columns fill the width and the left column's height, using the space for the thing the audit found
+  missing entirely — what leaves the machine, and when.</div>
+<div class="pad">
+<div class="top"><span class="brand">DigestIT</span><nav><a class="current">Home</a></nav><span class="top-spacer"></span></div>
+<div class="firstrun">
+  <div class="fr-explain">
+    <h1>Start your first project</h1>
+    <ol class="fr-steps">
+      <li>Register a project folder — the path stays on this machine, DigestIT only reads it.</li>
+      <li>Work in it with any tool: an editor, an AI agent, a script.</li>
+      <li>Come back and press <b>Explain</b>. Only then does anything leave this machine.</li>
+    </ol>
+    <div class="fr-trust">
+      <b class="fr-trust-label">What Explain sends</b>
+      <p>Pressing Explain sends the <strong>changed diff</strong> — not the whole repository — to
+        <span class="provider">Claude Code · claude-sonnet-5-5</span>, the provider configured on
+        this server.</p>
+      <p>DigestIT itself never writes to your project. Explanations and settings are stored outside
+        it, in DigestIT's own data directory.</p>
+    </div>
+  </div>
+  <div class="fr-form">
+    <h2>Register a project</h2>
+    <div class="fr-form-body">
+      <label class="field"><span>Project folder</span><input placeholder="/path/to/project" /></label>
+      <label class="field"><span>Context file (optional)</span><input placeholder="/path/to/context.md" /><span class="hint">A README or design doc DigestIT reads once to write better explanations.</span></label>
+      <button class="btn primary" style="margin-top:auto;">Start</button>
+    </div>
+  </div>
+</div>
+</div>
+</section>
+
+<!-- ===================== 2. Settings & trust drawer: P5, absorbs part of P1's IA cut ===================== -->
+<section class="screen" id="settings">
+<div class="screen-label">SCREEN 2 — Settings &amp; trust (P5). Replaces the unlabeled ⓘ info-popover. One
+  predictable "Settings" entry point holds what audit Finding 8 found scattered or missing: budget
+  (already good, kept), provider/model (new), sign-in state (new), the read-only guarantee (new),
+  plus the existing context/language/ignore-pattern controls unchanged. The IA cut (P1) removes the
+  History dropdown and its dead Units/Timeline/Briefing links — this header shows the result: just
+  "Home", no menu. The "Legacy insights" link below is shown here for illustration only — per the
+  critique revision, it renders in the real app only when `hasLegacyData` is true (a project has at
+  least one `unit_event` row); a clean v2-only install never sees it.</div>
+<div class="pad" style="position:relative;">
+<div class="top"><span class="brand">DigestIT</span><nav><a class="current">Home</a></nav><span class="top-spacer"></span></div>
+<div class="bar">
+  <button class="proj-trigger">snapback <span class="car">▾</span></button>
+  <button class="digest-trigger">Today, 09:13 · 6 files · <strong>Backups now retry failed uploads…</strong></button>
+  <span class="chip">38 calls left today</span>
+  <button class="btn">Settings</button>
+  <button class="btn primary">No new changes</button>
+</div>
+<div class="settings-drawer" role="dialog" aria-label="Settings">
+  <h2>Settings</h2>
+  <div class="sd-section">
+    <p class="sd-label">This session</p>
+    <p class="sd-signed">✓ Signed in with an access link from this server's operator</p>
+    <p class="sd-readonly">DigestIT only reads this project. It never writes to your files or commits
+      to your repository — Explain sends a diff out, nothing comes back in.</p>
+  </div>
+  <div class="sd-section">
+    <p class="sd-label">Explanation provider</p>
+    <div class="sd-row"><span>Provider</span><span class="v">claude-code</span></div>
+    <div class="sd-row"><span>Model</span><span class="v">claude-sonnet-5-5</span></div>
+    <div class="sd-row"><span>Daily budget</span><span class="v">38 / 40 left · resets 00:00</span></div>
+  </div>
+  <div class="sd-section">
+    <p class="sd-label">Project context</p>
+    <div class="sd-row"><span>Built just now, from 8 files</span></div>
+    <button class="btn" style="width:100%;">Refresh context</button>
+  </div>
+  <div class="sd-section">
+    <p class="sd-label">Explanation language</p>
+    <select style="width:100%;padding:6px;border:1px solid var(--border-strong);border-radius:3px;background:var(--bg);color:var(--fg);font:13px var(--sans);"><option>English</option></select>
+  </div>
+  <!-- Renders only when hasLegacyData is true; see the screen-label note above. -->
+  <div class="sd-section">
+    <a href="#" class="btn subtle" style="display:inline-block;">Legacy insights (pre-v2 data) →</a>
+  </div>
+</div>
+</div>
+</section>
+
+<!-- ===================== 3. Project panel: P4, unread + remove ===================== -->
+<section class="screen" id="projects">
+<div class="screen-label">SCREEN 3 — Project panel (P4). Was a bare native &lt;select&gt; of names only
+  (ProjectHeader.tsx:256). Now a small panel, built the same way as the existing digest-picker and
+  info-popover overlays (same correct Escape/outside-click/refocus pattern, not reinvented) — each
+  row shows last activity and an unread count so switching answers "which project needs me" instead
+  of just "which project is this", and each row has a Remove action (Finding 3: no project could be
+  un-registered before this).</div>
+<div class="pad" style="position:relative;">
+<div class="top"><span class="brand">DigestIT</span><nav><a class="current">Home</a></nav><span class="top-spacer"></span></div>
+<div class="bar">
+  <button class="proj-trigger">snapback <span class="car">▾</span></button>
+  <button class="digest-trigger">Today, 09:13 · 6 files · <strong>Backups now retry failed uploads…</strong></button>
+  <span class="chip">38 calls left today</span>
+  <button class="btn">Settings</button>
+  <button class="btn primary">No new changes</button>
+</div>
+<div class="proj-panel" role="dialog" aria-label="Switch project">
+  <h2>Projects</h2>
+  <div class="proj-row current">
+    <div class="proj-main"><div class="proj-name">snapback</div><div class="proj-meta">Last digest today, 09:13</div></div>
+  </div>
+  <div class="proj-row">
+    <div class="proj-main"><div class="proj-name">logline</div><div class="proj-meta">Last digest 2 days ago</div></div>
+    <span class="proj-unread">3 new</span>
+    <button class="proj-remove" title="Remove logline from this dashboard">Remove</button>
+  </div>
+  <div class="proj-row">
+    <div class="proj-main"><div class="proj-name">retire-me</div><div class="proj-meta">Last digest 41 days ago</div></div>
+    <button class="proj-remove" title="Remove retire-me from this dashboard">Remove</button>
+  </div>
+  <div class="proj-add"><a href="#">+ Register another project</a></div>
+</div>
+</div>
+</section>
+
+<!-- ===================== 4. Cross-project inbox: P7, the bold idea ===================== -->
+<section class="screen" id="inbox">
+<div class="screen-label">SCREEN 4 — Cross-project inbox (P7, bold). Cycle 1's welcome-back strip
+  (already built) answers "what happened since I looked" for one open project. Nobody today answers
+  it for a whole roster of projects at once — a returning owner still has to switch into each one to
+  find out which have anything new. This view sorts by unread-first, then most-recent, so the busy-
+  owner persona lands on "what needs me across everything" instead of "what happened in whatever I
+  had open last".</div>
+<div class="pad">
+<div class="top"><span class="brand">DigestIT</span><nav><a>Home</a><a class="current">Inbox</a></nav><span class="top-spacer"></span></div>
+<div class="inbox-head">
+  <h1>3 projects, 2 need attention</h1>
+  <p>Sorted by what's new since you last looked at each.</p>
+</div>
+<ul class="inbox-list">
+  <li><a class="inbox-row" href="#">
+    <span class="inbox-name">logline</span>
+    <span class="inbox-summary">3 digests since Tuesday · the parser now recovers from a truncated log line instead of dropping the rest of the file</span>
+    <span class="inbox-meta"><span class="proj-unread">3 new</span>2 days ago</span>
+  </a></li>
+  <li><a class="inbox-row" href="#">
+    <span class="inbox-name">snapback</span>
+    <span class="inbox-summary">1 digest since this morning · backups now retry failed uploads and keep going past broken files</span>
+    <span class="inbox-meta"><span class="proj-unread">1 new</span>09:13</span>
+  </a></li>
+  <li><a class="inbox-row caught-up" href="#">
+    <span class="inbox-name">retire-me</span>
+    <span class="inbox-summary">You're caught up</span>
+    <span class="inbox-meta">41 days ago</span>
+  </a></li>
+</ul>
+</div>
+</section>
+
+</div>
+</body>
+</html>
