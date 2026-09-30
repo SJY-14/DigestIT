@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { splitPatch, uncoveredHunks } from './hunks.js';
+import { hunkRange, splitPatch, uncoveredHunks } from './hunks.js';
 import { fixtureArea, fixtureWalkthrough } from './v2Fixtures.js';
 
 interface VectorCase {
@@ -33,6 +33,56 @@ describe('splitPatch (shared vector, packages/core/test-vectors/hunk-split.json)
   it('numbers lines on both sides', () => {
     const [h] = splitPatch('@@ -10,2 +20,3 @@\n a\n+b\n-c\n+d');
     expect(h!.lines.map((l) => [l.kind, l.oldNo, l.newNo])).toEqual([['ctx', 10, 20], ['add', null, 21], ['del', 11, null], ['add', null, 22]]);
+  });
+});
+
+// Worked examples from docs/ux/dig71-step-code-mapping.md §5/§7 (rev 2): the range covers only
+// `add` lines, or only `del` lines when the hunk has no adds, never context lines.
+describe('hunkRange', () => {
+  it('upload.js worked example: new-side range of just the added lines (12-14)', () => {
+    const [h] = splitPatch([
+      '@@ -10,4 +10,6 @@',
+      ' ',
+      ' function upload(file) {',
+      '+  for (let i = 0; i <= retries; i++) {',
+      '   const res = put(file);',
+      '+    if (res.ok || i === retries) return res;',
+      ' }',
+    ].join('\n'));
+    expect(hunkRange(h!)).toEqual({ side: 'new', start: 12, end: 14 });
+  });
+
+  it('cli.js worked example: a single added line reads as one line, not a 41-41 range', () => {
+    const [h] = splitPatch([
+      '@@ -40,1 +40,2 @@',
+      " program.option('--folder <path>');",
+      "+program.option('--retries <n>', 'retry count', 3);",
+    ].join('\n'));
+    expect(hunkRange(h!)).toEqual({ side: 'new', start: 41, end: 41 });
+  });
+
+  it('a deletion-only hunk with context on both sides: old-side range of just the deleted lines', () => {
+    const [h] = splitPatch(['@@ -5,4 +5,2 @@', ' ctx before', '-first deleted', '-second deleted', ' ctx after'].join('\n'));
+    expect(hunkRange(h!)).toEqual({ side: 'old', start: 6, end: 7 });
+  });
+
+  it('a pure-add hunk (no context, no deletions)', () => {
+    const [h] = splitPatch(['@@ -3,0 +3,2 @@', '+added line one', '+added line two'].join('\n'));
+    expect(hunkRange(h!)).toEqual({ side: 'new', start: 3, end: 4 });
+  });
+
+  it('a mixed hunk (context, a deletion and an addition): still takes the new side', () => {
+    const [h] = splitPatch(['@@ -20,3 +20,3 @@', ' ctx before', '-old line', '+new line', ' ctx after'].join('\n'));
+    expect(hunkRange(h!)).toEqual({ side: 'new', start: 21, end: 21 });
+  });
+
+  it('ranges within a step cannot overlap (unified-diff hunks are strictly ordered, §5)', () => {
+    const hunks = splitPatch(fixtureArea.files[0]!.patch!); // graphPatch: 3 hunks, one file
+    expect(hunks.length).toBeGreaterThan(1);
+    const ranges = hunks.map(hunkRange);
+    for (let i = 1; i < ranges.length; i++) {
+      expect(ranges[i]!.start).toBeGreaterThan(ranges[i - 1]!.end);
+    }
   });
 });
 

@@ -625,6 +625,17 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .uncovered > p { margin: 4px 0 8px; }
 .hunk-block { margin: 0 0 10px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .hunk-block figcaption { padding: 4px 10px; background: var(--bg-inset); border-bottom: 1px solid var(--border); }
+.hunk-caption { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.hunk-range { color: var(--muted); }
+.hunk-pos { margin-left: auto; color: var(--muted); font-size: 11px; }
+/* P2 (docs/ux/dig71-step-code-mapping.md): filled vs. outline is a shape difference, not only a
+   colour one, so the current step still reads under grayscale/forced-colors. */
+.step-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 700;
+  border: 1.5px solid var(--accent); color: var(--accent); background: transparent; flex: none;
+}
+.step-badge.current { background: var(--accent-solid); color: #fff; border-color: var(--accent-solid); }
 .hunk-block .diff { border: 0; }
 .hunk-toggle { display: block; width: 100%; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: var(--bg-inset); color: var(--accent); }
 .hunk-missing { font-size: 12px; }

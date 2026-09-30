@@ -213,6 +213,7 @@ function collectAll(): Entry[] {
     addTable(out, 'walkthroughCopy', lang, walkthroughCopy(lang), {
       regionLabel: (fn) => fn(SAMPLE.title), loadError: (fn) => fn(SAMPLE.msg), generateCost: (fn) => n4(fn),
       stepLabel: (fn) => n4(fn), stepOf: (fn) => fn(2, 5), missingHunk: (fn) => fn(SAMPLE.path, 3), showAll: (fn) => n4(fn),
+      rangeLabel: (fn) => [fn(12, 14), fn(41, 41)], rangeOf: (fn) => fn(1, 2), andMore: (fn) => n4(fn),
     });
     addTable(out, 'graphCopy', lang, graphCopy(lang), {
       loadError: (fn) => fn(SAMPLE.msg), nodeFiles: (fn) => n4(fn), summary: (fn) => [fn(5, 0), fn(5, 2)],
