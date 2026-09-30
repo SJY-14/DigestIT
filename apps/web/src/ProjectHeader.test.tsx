@@ -59,6 +59,7 @@ function baseProps(overrides: Partial<ProjectHeaderProps> = {}): ProjectHeaderPr
     projects: [fixtureProject],
     currentProject: fixtureProject,
     onSwitch: vi.fn(),
+    onRemove: vi.fn(async () => undefined),
     about: fixtureAbout,
     status: fixtureStatus,
     statusError: null,

@@ -23,11 +23,19 @@ let host: HTMLElement;
 let projectsResponse: unknown[];
 let calls: { url: string; method: string }[];
 let createSuggestions: { pattern: string; reason: string }[];
+// UX cycle 2 P4: DELETE /api/projects/:id normally soft-removes (204); a test can set this to
+// simulate the 409 (Explain running) response instead.
+let deleteStatus: 204 | 409;
 
 function mockFetch() {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     calls.push({ url, method });
+    if (/^\/api\/projects\/\d+$/.test(url) && method === 'DELETE') {
+      return deleteStatus === 204
+        ? ({ ok: true, status: 204, json: async () => undefined } as Response)
+        : ({ ok: false, status: 409, json: async () => ({ error: 'explain_running' }) } as Response);
+    }
     const body = ((): unknown => {
       if (url === '/api/about' && method === 'GET') return fixtureAbout;
       if (url === '/api/projects' && method === 'GET') return projectsResponse;
@@ -67,6 +75,7 @@ beforeEach(() => {
   calls = [];
   createSuggestions = [];
   projectsResponse = [fixtureProject];
+  deleteStatus = 204;
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
   mockFetch();
   history.replaceState(null, '', '/');
@@ -243,12 +252,11 @@ const pressKey = async (key: string, target: EventTarget = document.body) => {
 const selectedTab = () => host.querySelector('[role="tab"][aria-selected="true"]')?.textContent;
 const ready = () => waitFor(() => host.querySelector('.l0-headline') !== null || host.querySelector('.level-view') !== null);
 
-const select = async (el: HTMLSelectElement, value: string) => {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')!.set!;
-  await act(async () => {
-    setter.call(el, value);
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  });
+// The project panel (UX cycle 2 P4) replaced the bare `<select>`: open the trigger, then pick the
+// row for the target project (ProjectRow.tsx carries `data-project-id` for exactly this).
+const switchProject = async (id: number) => {
+  await click(host.querySelector('.proj-trigger'));
+  await click(host.querySelector(`.proj-row-main[data-project-id="${id}"]`));
 };
 
 describe('MainV2: onLanguage (DIG-60)', () => {
@@ -259,7 +267,7 @@ describe('MainV2: onLanguage (DIG-60)', () => {
     await ready();
     await waitFor(() => onLanguage.mock.calls.some((c) => c[0] === 'en'));
 
-    await select(host.querySelector('.project-switcher') as HTMLSelectElement, String(fixtureProject2.id));
+    await switchProject(fixtureProject2.id);
     await waitFor(() => onLanguage.mock.calls.some((c) => c[0] === 'ko'));
   });
 });
@@ -277,7 +285,7 @@ describe('MainV2: switching projects (DIG-57)', () => {
     await waitFor(() => host.querySelector('.graph-canvas') !== null);
     expect(host.textContent).toContain(fixtureDigest.l0!.text);
 
-    await select(host.querySelector('.project-switcher') as HTMLSelectElement, String(fixtureProject2.id));
+    await switchProject(fixtureProject2.id);
     await waitFor(() => params().get('project') === String(fixtureProject2.id));
 
     // URL: only `project` survives; digest/level/area/step/node are all gone.
@@ -301,7 +309,7 @@ describe('MainV2: switching projects (DIG-57)', () => {
   it('shows a project-specific first-run state for a project with no digests yet', async () => {
     await render(<MainV2 />);
     await ready();
-    await select(host.querySelector('.project-switcher') as HTMLSelectElement, String(fixtureProject2.id));
+    await switchProject(fixtureProject2.id);
     await waitFor(() => host.querySelector('.empty-state') !== null);
     expect(host.querySelector('.empty-state .box-head')?.textContent).toBe(`No explanations yet for ${fixtureProject2.name}`);
     expect(host.querySelector('.empty-state p')?.textContent).toBe(
@@ -312,13 +320,63 @@ describe('MainV2: switching projects (DIG-57)', () => {
   it('renders the gray first-run graph for a no-digest project, with every node gray and no areas', async () => {
     await render(<MainV2 />);
     await ready();
-    await select(host.querySelector('.project-switcher') as HTMLSelectElement, String(fixtureProject2.id));
+    await switchProject(fixtureProject2.id);
     await waitFor(() => host.querySelector('.graph-canvas') !== null);
     expect(host.querySelectorAll('.graph-node.changed')).toHaveLength(0);
     // A folded folder is still clickable (to unfold); nothing else is, since there are no areas
     // yet for a node click to open.
     const changedOrCollapsed = fixtureProjectGraph.nodes.filter((n) => n.changed || n.collapsed);
     expect(host.querySelectorAll('.graph-node.clickable')).toHaveLength(changedOrCollapsed.length);
+  });
+});
+
+describe('MainV2: removing a project (UX cycle 2 P4, decision-2.md §2)', () => {
+  const removeButtonFor = (id: number) => host.querySelector(`.proj-row-main[data-project-id="${id}"]`)!.closest('.proj-row')!.querySelector('.proj-remove') as HTMLButtonElement;
+  const confirmRemove = async (id: number) => {
+    await click(host.querySelector('.proj-trigger'));
+    const btn = removeButtonFor(id);
+    await click(btn);
+    await click(btn);
+  };
+
+  it('removing a project that is not open just drops it from the panel', async () => {
+    projectsResponse = [fixtureProject, fixtureProject2];
+    await render(<MainV2 />);
+    await ready();
+    await confirmRemove(fixtureProject2.id);
+    await waitFor(() => calls.some((c) => c.method === 'DELETE' && c.url === `/api/projects/${fixtureProject2.id}`));
+    await waitFor(() => host.querySelector(`[data-project-id="${fixtureProject2.id}"]`) === null);
+    // Project 1 stays open and untouched.
+    expect(host.querySelector('.l0-headline')?.textContent).toBe(fixtureDigest.l0!.text);
+  });
+
+  it('removing the open project moves to the next remaining one', async () => {
+    projectsResponse = [fixtureProject, fixtureProject2];
+    await render(<MainV2 />);
+    await ready();
+    await confirmRemove(fixtureProject.id);
+    await waitFor(() => params().get('project') === String(fixtureProject2.id));
+    // No stale project-1 content left on screen.
+    expect(host.querySelector('.l0-headline')).toBeNull();
+  });
+
+  it('removing the last remaining project falls back to the setup form', async () => {
+    projectsResponse = [fixtureProject];
+    await render(<MainV2 />);
+    await ready();
+    await confirmRemove(fixtureProject.id);
+    await waitFor(() => host.querySelector('.setup-form') !== null);
+  });
+
+  it('shows a short message on a 409 (Explain running) and keeps the project', async () => {
+    deleteStatus = 409;
+    projectsResponse = [fixtureProject, fixtureProject2];
+    await render(<MainV2 />);
+    await ready();
+    await confirmRemove(fixtureProject2.id);
+    await waitFor(() => host.querySelector('.proj-remove-error') !== null);
+    expect(host.querySelector('.proj-remove-error')?.textContent).toContain('An Explain is already running for this project.');
+    expect(host.querySelector(`[data-project-id="${fixtureProject2.id}"]`)).toBeTruthy();
   });
 });
 

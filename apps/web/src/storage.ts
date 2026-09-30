@@ -30,6 +30,11 @@ function removeKey(key: string): void {
 
 export interface LastSeen {
   digestId: number;
+  /** The digest's ordinal (`DigestSummaryDto.seq`), used for unread counting (UX cycle 2 P4,
+   * decision-2.md §2: `latestDigest.seq − lastSeen.seq`). Optional so entries written before this
+   * field existed stay readable — `unread.ts`'s `computeUnread` treats a missing `seq` as "New"
+   * rather than guessing a count. */
+  seq?: number;
   /** ISO timestamp of when this was recorded, shown as "2h ago". */
   at: string;
 }
@@ -38,11 +43,12 @@ const lastSeenKey = (projectId: number) => `digestit.lastSeen.${projectId}`;
 
 export function getLastSeen(projectId: number): LastSeen | null {
   const v = readJSON<LastSeen>(lastSeenKey(projectId));
-  return v && typeof v.digestId === 'number' && typeof v.at === 'string' ? v : null;
+  if (!v || typeof v.digestId !== 'number' || typeof v.at !== 'string') return null;
+  return typeof v.seq === 'number' ? { digestId: v.digestId, seq: v.seq, at: v.at } : { digestId: v.digestId, at: v.at };
 }
 
-export function setLastSeen(projectId: number, digestId: number, at: string = new Date().toISOString()): void {
-  writeJSON(lastSeenKey(projectId), { digestId, at } satisfies LastSeen);
+export function setLastSeen(projectId: number, digestId: number, seq: number, at: string = new Date().toISOString()): void {
+  writeJSON(lastSeenKey(projectId), { digestId, seq, at } satisfies LastSeen);
 }
 
 // --- P5 option A: per-area reviewed mark ----------------------------------------------------------
