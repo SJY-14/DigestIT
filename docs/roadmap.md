@@ -56,7 +56,7 @@ the project. Projects can be removed (soft delete). A new "All projects" view so
 |---|---|---|---|---|
 | 0 | DIG-80 | Audit, brief, critique, decision, acceptance | CTO | DIG-90 |
 | 1 | DIG-87 | `GET /api/about`, `ProjectDto.latestDigest`, soft remove (API + `digest remove`). Merged 2026-09-30 | Diff engineer | — |
-| 2 | DIG-88 | IA cleanup, first-run trust + layout, Settings & trust panel (P1, P2, P3, P5) | Frontend engineer | DIG-87, DIG-82 |
+| 2 | DIG-88 | IA cleanup, first-run trust + layout, Settings & trust panel (P1, P2, P3, P5). Merged 2026-09-30 | Frontend engineer | — |
 | 3 | DIG-89 | Project panel with unread + Remove, All projects view (P4, P7) | Frontend engineer | DIG-88 |
 | 4 | DIG-90 | Verify against decision-2, `docs/ux/cycle-2-summary.md` | UX reviewer | DIG-88, DIG-89 |
 
