@@ -199,6 +199,13 @@ async function runPipeline(scenarioName, arm, language, projectDir, init, steps,
   );
   const repoId = initResult.repoId;
   const runner = new ExplainJobRunner(db, home, { budget: BUDGET });
+  // A running server's memory worker does its first daily sweep on the first idle tick after a
+  // project is added (lastDailySweepDate starts empty), so by the first Explain the store already
+  // holds the baseline's areas and terms. Mirror that, or the on arm's first digest sees no memory.
+  if (memoryOn) {
+    const added = listProjects(db).find((p) => p.id === repoId);
+    await updateProjectMemory(db, home, added, 'daily', clockAt(init.at));
+  }
 
   const digests = [];
   const prevOff = process.env.DIGESTIT_MEMORY_TEST_OFF;
@@ -269,17 +276,25 @@ function pipelineMetrics(pipeline) {
   const dateViolations = db.prepare("SELECT count(*) AS n FROM explain_call WHERE violations LIKE '%date/weekday%'").get().n;
   const tokenRow = db.prepare('SELECT COALESCE(SUM(input_tokens), 0) AS n FROM explain_call').get();
   const callCount = db.prepare('SELECT count(*) AS n FROM explain_call').get().n;
+  // Sanity check that the arms really differ: the on arm writes a memory_use row per part that got a
+  // non-empty slice, the off arm must write none.
+  const memoryUseRows = db.prepare('SELECT count(*) AS n FROM memory_use').get().n;
   const durations = db.prepare("SELECT duration_ms AS ms FROM explain_call WHERE part = 'summary' AND outcome = 'ok' ORDER BY ms")
     .all().map((r) => r.ms);
   return {
     digestCount: digests.length,
     explainCallCount: callCount,
+    memoryUseRows,
     firstTryPassRate: attempted === 0 ? null : firstTry / attempted,
     aiTellHits: lint.counts.total,
     dateCheckViolations: dateViolations,
     promptTokensTotal: tokenRow.n,
     promptTokensPerDigest: digests.length === 0 ? null : tokenRow.n / digests.length,
     l0TimeMsP50: percentile(durations, 50),
+    // raw inputs for the per-arm rollup in main(), which pools these rather than averaging rates
+    attemptedParts: attempted,
+    firstTryParts: firstTry,
+    l0DurationsMs: durations,
   };
 }
 
@@ -406,6 +421,7 @@ async function main() {
 
   const metrics = { generatedAt: now.toISOString(), real, scenarios, languages, byScenarioLanguageArm: [], byArm: {}, termCoverage: [] };
   const key = {};
+  const l0Durations = { on: [], off: [] };
 
   for (const scenarioName of scenarios) {
     for (const language of languages) {
@@ -418,7 +434,8 @@ async function main() {
         const { init, steps } = scenarioName === 'snapback' ? snapbackSteps(now) : historySteps(history, projectDir);
         const pipeline = await runPipeline(scenarioName, arm, language, projectDir, init, steps, provider, scratchDirs);
         pipelines[arm] = pipeline;
-        const m = pipelineMetrics(pipeline);
+        const { l0DurationsMs, ...m } = pipelineMetrics(pipeline);
+        l0Durations[arm].push(...l0DurationsMs);
         metrics.byScenarioLanguageArm.push({ scenario: scenarioName, language, arm, ...m });
         console.log(`  digests: ${m.digestCount}, first-try pass rate: ${m.firstTryPassRate === null ? 'n/a' : (m.firstTryPassRate * 100).toFixed(0) + '%'}, AI-tell hits: ${m.aiTellHits}, date-check violations: ${m.dateCheckViolations}`);
       }
@@ -442,16 +459,18 @@ async function main() {
   for (const arm of ARMS) {
     const rows = metrics.byScenarioLanguageArm.filter((r) => r.arm === arm);
     const digestCount = rows.reduce((n, r) => n + r.digestCount, 0);
-    const weightedFirstTry = rows.reduce((n, r) => n + (r.firstTryPassRate ?? 0) * r.digestCount, 0);
+    const attemptedParts = rows.reduce((n, r) => n + r.attemptedParts, 0);
+    const firstTryParts = rows.reduce((n, r) => n + r.firstTryParts, 0);
     metrics.byArm[arm] = {
       digestCount,
       explainCallCount: rows.reduce((n, r) => n + r.explainCallCount, 0),
-      firstTryPassRate: digestCount === 0 ? null : weightedFirstTry / digestCount,
+      memoryUseRows: rows.reduce((n, r) => n + r.memoryUseRows, 0),
+      firstTryPassRate: attemptedParts === 0 ? null : firstTryParts / attemptedParts,
       aiTellHits: rows.reduce((n, r) => n + r.aiTellHits, 0),
       dateCheckViolations: rows.reduce((n, r) => n + r.dateCheckViolations, 0),
       promptTokensTotal: rows.reduce((n, r) => n + r.promptTokensTotal, 0),
       promptTokensPerDigest: digestCount === 0 ? null : rows.reduce((n, r) => n + r.promptTokensTotal, 0) / digestCount,
-      l0TimeMsP50: percentile(rows.flatMap((r) => Array(r.digestCount).fill(r.l0TimeMsP50)).sort((a, b) => a - b), 50),
+      l0TimeMsP50: percentile([...l0Durations[arm]].sort((a, b) => a - b), 50),
     };
   }
 
