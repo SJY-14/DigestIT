@@ -1,6 +1,25 @@
 # Roadmap
 
-## Fast Explain (current priority)
+## Milestone 4: project memory (current)
+
+DIG-97 (Board, 2026-09-30): DigestIT keeps sourced facts about each project (areas, terms, threads of
+work across digests, user notes), updates them in the background and gives each prompt a small,
+relevant slice. Deterministic extraction first; background LLM summaries are opt-in per project and
+have their own small daily share. Design: [milestone-4-memory.md](milestone-4-memory.md), contract
+`packages/core/src/memory.ts`. D1–D3 (summaries default, budget share, what is stored) are with the
+Board; the build starts on the recommended options.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-97 | Design, contract, Board decisions D1–D3, review, acceptance | CTO | DIG-100–103 |
+| 1 | DIG-100 | Store, migration, rollback, export/clear, deterministic extraction, threads, `digest memory` CLI | Diff engineer | — |
+| 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task | Summarization engineer | — |
+| 3 | DIG-103 | `MemoryWorker` triggers, budget share, retrieval wired into Explain, memory API | Diff engineer | DIG-100, DIG-101 |
+| 4 | DIG-102 | "What DigestIT knows" design: brief, critique, decision | UX Designer, UX Reviewer | — |
+| 5 | later | The page and the per-digest "what DigestIT used" | Frontend engineer | DIG-102, DIG-103 |
+| 6 | later | A/B kit and blind read (with and without memory, en/ko) | Summarization engineer, operator, UX Reviewer | DIG-103 |
+
+## Fast Explain
 
 Board feedback DIG-73 (2026-09-29): Explain shows nothing useful for ~50 s (~100 s on a project's first Explain).
 Targets: deterministic view < 1 s, L0 ≤ 10–15 s, full L2 ≤ 30 s, L3 ≤ 15 s streamed step by step. One Explain stays

@@ -4,3 +4,4 @@ export * from './graph.js';
 export * from './db.js';
 export * from './hunks.js';
 export * from './areas.js';
+export * from './memory.js';
