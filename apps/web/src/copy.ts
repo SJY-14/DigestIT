@@ -686,7 +686,8 @@ export function walkthroughCopy(lang: Lang = 'en') {
 
 const GRAPH_EN = {
   label: 'Project graph',
-  legendChanged: 'Blue: changed in this digest',
+  // DIG-82: changed nodes are filled and the rest hollow, so the legend names the shape, not a colour.
+  legendChanged: 'Filled: changed in this digest',
   legendSelected: 'Outlined: selected area',
   fitChanges: 'Fit to changes',
   fitAll: 'Show everything',
@@ -707,7 +708,7 @@ const GRAPH_EN = {
 } as const;
 const GRAPH_KO = {
   label: '프로젝트 그래프',
-  legendChanged: '파란색: 이 다이제스트에서 변경됨',
+  legendChanged: '채운 점: 이 다이제스트에서 변경됨',
   legendSelected: '테두리: 선택된 영역',
   fitChanges: '변경 사항에 맞추기',
   fitAll: '전체 보기',

@@ -268,9 +268,9 @@ describe('styles: History dropdown is not clipped (DIG-46)', () => {
     // (clip-path: inset(0 -100vmax)) clipped the dropdown to the header's height, hiding it.
     // (Vitest stubs CSS imports, even ?raw, so read the file.)
     const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-    const rules = [...css.matchAll(/(^|})\s*([^{}]*)\{([^}]*)\}/g)]
-      .filter((m) => m[2]!.split(',').some((sel) => /^\s*\.(top|nav|history-menu)\s*$/.test(sel)))
-      .map((m) => m[3]!);
+    const rules = [...css.matchAll(/(?<=^|})\s*([^{}]*)\{([^}]*)\}/g)]
+      .filter((m) => m[1]!.split(',').some((sel) => /^\s*\.(top|nav|history-menu)\s*$/.test(sel)))
+      .map((m) => m[2]!);
     expect(rules.length).toBeGreaterThan(0);
     for (const body of rules) expect(body).not.toMatch(/clip-path|overflow\s*:|contain\s*:/);
   });
@@ -279,9 +279,9 @@ describe('styles: History dropdown is not clipped (DIG-46)', () => {
 describe('styles: P4 focus visibility (DIG-60)', () => {
   const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const rulesFor = (selector: string) =>
-    [...css.matchAll(/(^|})\s*([^{}]*)\{([^}]*)\}/g)]
-      .filter((m) => m[2]!.split(',').some((sel) => sel.trim() === selector))
-      .map((m) => m[3]!);
+    [...css.matchAll(/(?<=^|})\s*([^{}]*)\{([^}]*)\}/g)]
+      .filter((m) => m[1]!.split(',').some((sel) => sel.trim() === selector))
+      .map((m) => m[2]!);
 
   it('.digest-row-main:focus-visible no longer drops the outline, so the global focus ring shows', () => {
     const rules = rulesFor('.digest-row-main:focus-visible');

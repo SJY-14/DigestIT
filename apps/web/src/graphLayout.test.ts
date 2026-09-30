@@ -31,10 +31,13 @@ describe('nodeRadius', () => {
   it('is a fixed base radius for unchanged nodes regardless of stats', () => {
     expect(nodeRadius({ changed: false, additions: 999, deletions: 999 })).toBe(5);
   });
-  it('grows with sqrt(lines changed) for changed nodes, clamped to MAX_R', () => {
+  it('is the same radius for changed nodes: one size class, no scaling by lines changed (DIG-82)', () => {
     expect(nodeRadius({ changed: true, additions: 0, deletions: 0 })).toBe(5);
-    expect(nodeRadius({ changed: true, additions: 16, deletions: 0 })).toBe(9);
-    expect(nodeRadius({ changed: true, additions: 10000, deletions: 0 })).toBe(22);
+    expect(nodeRadius({ changed: true, additions: 16, deletions: 0 })).toBe(5);
+    expect(nodeRadius({ changed: true, additions: 10000, deletions: 0 })).toBe(5);
+  });
+  it('still spreads a small graph out with growScale', () => {
+    expect(nodeRadius({ changed: true, additions: 16, deletions: 0 }, 2)).toBe(10);
   });
 });
 

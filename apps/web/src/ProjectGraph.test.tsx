@@ -95,7 +95,7 @@ describe('ProjectGraph', () => {
     const controls = [...host.querySelectorAll('.graph-controls button')];
     expect(controls.map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['Fit to changes', 'Show everything', 'Zoom out', 'Zoom in']);
     expect([...host.querySelectorAll('.graph-legend li')].map((l) => l.textContent?.trim())).toEqual([
-      'Blue: changed in this digest', 'Outlined: selected area',
+      'Filled: changed in this digest', 'Outlined: selected area',
     ]);
     expect(host.querySelector('#graph-summary')?.textContent).toContain(summarize(fixture));
     const buttons = host.querySelectorAll('.graph-node[role="button"]');
@@ -229,5 +229,34 @@ describe('ProjectGraph', () => {
     for (const shape of host.querySelectorAll('.graph-shape, .graph-ring, .graph-hilite-ring')) {
       expect(shape.getAttribute('vector-effect')).toBe('non-scaling-stroke');
     }
+  });
+
+  it('draws every node as the same small dot at a constant screen size, whatever its size or the zoom (DIG-82)', async () => {
+    await render(<ProjectGraph graph={fixture} onSelectNode={noop} onExpand={noop} />);
+    const svg = host.querySelector('svg')!;
+    for (let i = 0; i < 4; i++) act(() => { svg.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })); });
+    const scale = Number(/scale\(([^)]+)\)/.exec(svg.querySelector('g')!.getAttribute('transform')!)![1]);
+    const dots = [...host.querySelectorAll('.graph-node.shape-circle > g > circle.graph-shape')];
+    expect(dots.length).toBeGreaterThan(3);
+    // One radius for all of them, changed (10+2 and 40+0 lines) or not.
+    expect(new Set(dots.map((d) => d.getAttribute('r')))).toEqual(new Set(['4.5']));
+    for (const d of dots) expect(d.parentElement!.getAttribute('transform')).toBe(`scale(${1 / scale})`);
+  });
+
+  it('draws a focus ring around a node focused with the keyboard', async () => {
+    await render(<ProjectGraph graph={fixture} onSelectNode={noop} onExpand={noop} />);
+    const node = host.querySelector<SVGGElement>('.graph-node.clickable')!;
+    expect(node.querySelector('.graph-focus-ring')).toBeNull();
+    await act(async () => node.focus());
+    const ring = node.querySelector('.graph-focus-ring');
+    expect(ring).toBeTruthy();
+    expect(Number(ring!.getAttribute('r'))).toBeGreaterThan(Number(node.querySelector('.graph-shape')!.getAttribute('r') ?? 5));
+  });
+
+  it('gives a clickable node a 24px hit area around its small dot', async () => {
+    await render(<ProjectGraph graph={fixture} onSelectNode={noop} onExpand={noop} />);
+    const node = host.querySelector('.graph-node.clickable')!;
+    expect(node.querySelector('.graph-hit')?.getAttribute('r')).toBe('12');
+    expect(host.querySelector('.graph-node:not(.clickable) .graph-hit')).toBeNull();
   });
 });

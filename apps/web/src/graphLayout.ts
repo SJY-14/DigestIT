@@ -9,8 +9,10 @@ import {
 } from 'd3-force';
 import type { GraphEdge, GraphNode } from '@digestit/core';
 
+/** Layout radius of every node (one size class, DIG-82): used for spacing and fit bounds. The
+ * dot itself is drawn at a constant screen size (ProjectGraph's DOT_R), not scaled by lines
+ * changed; the magnitude is in the tooltip and the node's accessible name. */
 export const BASE_R = 5;
-export const MAX_R = 22;
 const RADIUS_STEP = 90;
 // Tuned to relax a ~400-node graph in well under the 200ms test budget: the radial seed already
 // puts nodes close to their final position, so fewer ticks and a looser Barnes-Hut theta (less
@@ -40,11 +42,10 @@ export interface Point {
   y: number;
 }
 
-/** Changed-node radius scales with sqrt(lines changed), clamped; unchanged nodes get a fixed
- * size. `growScale` (see `growFactor`) enlarges every radius together for a small graph. */
-export function nodeRadius(n: Pick<GraphNode, 'changed' | 'additions' | 'deletions'>, growScale = 1): number {
-  const r = n.changed ? Math.min(MAX_R, BASE_R + Math.sqrt(n.additions + n.deletions)) : BASE_R;
-  return r * growScale;
+/** The same layout radius for every node, changed or not, whatever its size. `growScale` (see
+ * `growFactor`) spreads a small graph out. */
+export function nodeRadius(_n: Pick<GraphNode, 'changed' | 'additions' | 'deletions'>, growScale = 1): number {
+  return BASE_R * growScale;
 }
 
 /** Initial radial position: root at the center, children fanned into their parent's angular
@@ -99,8 +100,8 @@ export function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], prior?: Read
   const simLinks: SimulationLinkDatum<SimNode>[] = edges.map((e) => ({ source: e.source, target: e.target }));
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const growScale = growFactor(nodes.length);
-  // Collide radius follows the drawn radius (plus room for a label) so changed siblings with
-  // labels don't render fully on top of one another.
+  // Collide radius is the layout radius plus room for a label, so labelled siblings don't
+  // render fully on top of one another.
   const collideRadius = (id: string) => {
     const n = byId.get(id);
     return n ? nodeRadius(n, growScale) + 8 * growScale : 8 * growScale;
