@@ -14,3 +14,6 @@ DigestIT is source-available under the [Business Source License 1.1](LICENSE).
 - **Each version converts to Apache 2.0** four years after its release (first Change Date: 2030-09-24).
 
 For other licensing arrangements, open an issue on this repository.
+
+The dashboard bundles the Source Serif 4, Source Sans 3 and Noto Serif KR fonts under the SIL Open
+Font License 1.1; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
