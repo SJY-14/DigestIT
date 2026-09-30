@@ -47,7 +47,7 @@ live, not just in the (already-passing, pre-existing) test suite.
 |---|---|---|---|
 | 1 | History menu → three dead views + Insights | `dig90-light-en-1440-history-menu-before.png`, `dig90-light-en-1440-history-units-dead-before.png`, `dig90-light-en-1440-history-insights-dead-before.png` | Nav is Home (+ All projects at 2+ projects): `dig90-light-en-1440-all-projects-after.png`. Insights demoted behind a gated Settings link (Finding-1's "own top-level nav entry" recommendation was not taken; decision-2 chose the narrower "gated link" instead — see below). |
 | 2 | No trust copy, no provider named | `dig90-light-en-1440-firstrun-before.png` | `dig90-light-en-1440-firstrun-after.png`, `dig90-dark-en-1440-firstrun-after.png`, `dig90-light-ko-1440-firstrun-after.png`, `dig90-dark-ko-1440-firstrun-after.png` |
-| 3 | No way to remove a project | (no UI existed) | `dig90-light-en-1440-remove-panel-after.png`, `dig90-light-en-1440-remove-confirm-after.png`, `dig90-light-en-1440-after-removal-after.png`, `dig90-light-en-1440-after-restore-after.png` (project panel, both projects back, ko chrome — see note), `dig90-light-ko-1440-remove-panel-after.png`, `dig90-light-ko-1440-remove-confirm-after.png` |
+| 3 | No way to remove a project | (no UI existed) | `dig90-light-en-1440-remove-panel-after.png`, `dig90-light-en-1440-remove-confirm-after.png`, `dig90-light-en-1440-after-removal-after.png`, `dig90-light-ko-1440-after-restore-after.png` (project panel, both projects back; captured after the switch to ko — see note), `dig90-light-ko-1440-remove-panel-after.png`, `dig90-light-ko-1440-remove-confirm-after.png` |
 | 4 | Escape drops focus to `<body>` | `dig90-light-en-1440-history-menu-before.png` (the menu itself is gone) | confirmed via `document.activeElement`, not a screenshot — headless BiDi can't render focus rings, and the "still on Home" visual is the same frame as the redirect check, so it isn't cited twice as if it were separate evidence (see "Keyboard pass") |
 | 5 | Instant skeleton unverifiable with stub | not re-tested (unrelated to this cycle) | unchanged; still DIG-77's job |
 | 6 | First-run dead space | `dig90-light-en-1440-firstrun-before.png` | `dig90-light-en-1440-firstrun-after.png`, `dig90-light-en-1280-firstrun-after.png` — measured, not eyeballed (see below) |
@@ -86,7 +86,7 @@ Live, end to end, post-DIG-92: removing the open project (`my-project`) redirect
 (`snapback`) and the nav's "All projects" link drops away below 2 projects
 (`dig90-light-en-1440-after-removal-after.png`); re-registering the same root restores it with
 its full digest history (`digestCount: 2`, same `latestDigest`, not reset to 0 — confirmed via the
-live `/api/projects` response, and visually in `dig90-light-en-1440-after-restore-after.png`,
+live `/api/projects` response, and visually in `dig90-light-ko-1440-after-restore-after.png`,
 which reopens the project panel to show both `snapback` and `my-project` present again with their
 unread state intact), matching `v2.test.ts`'s "is restored, with its digest history" test.
 
