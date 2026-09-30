@@ -112,26 +112,39 @@ export function isStatsLine(text: string): boolean {
     /^\s*\d+\s*개\s*파일/.test(text);
 }
 
+export interface CheckProseOptions {
+  /**
+   * `false` for a one-line headline (DIG-94): an over-limit field is still
+   * flagged in `v` so a retry gets the chance to fix it, but the delivered
+   * text is kept whole rather than cut mid-sentence with a trailing ellipsis.
+   * Default `true` (cut to the limit, as every other prose field already did).
+   */
+  truncate?: boolean;
+}
+
 /**
  * Cleans one prose field and checks it against a word limit, the language's
  * character cap, the boilerplate rules and the AI-tell lint. Over-limit text
- * is cut; boilerplate and tells are reported but never rewritten or
- * truncated on their account (only a retry can replace them). Tells go into
- * `styleWarnings`, never `v`: they are soft signals, not hard violations.
+ * is cut unless `opts.truncate` is `false`; boilerplate and tells are
+ * reported but never rewritten or truncated on their account (only a retry
+ * can replace them). Tells go into `styleWarnings`, never `v`: they are soft
+ * signals, not hard violations.
  */
 export function checkProse(
   raw: string, label: string, words: number, language: ExplainLanguage, v: string[], styleWarnings: string[] = [],
+  opts: CheckProseOptions = {},
 ): string {
+  const truncate = opts.truncate ?? true;
   if (hasUnsafeMarkup(raw)) v.push(`${label}: contains HTML or a link`);
   let text = cleanText(raw);
   if (wordCount(text) > words) {
     v.push(`${label}: ${wordCount(text)} words, limit ${words}`);
-    text = truncateWords(text, words);
+    if (truncate) text = truncateWords(text, words);
   }
   const cap = charCap(language, words);
   if (charLength(text) > cap) {
     v.push(`${label}: ${charLength(text)} characters, limit ${cap}`);
-    text = truncateChars(text, cap);
+    if (truncate) text = truncateChars(text, cap);
   }
   if (text !== '') {
     const bad = boilerplate(text, language);

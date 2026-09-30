@@ -27,18 +27,27 @@ describe('checkLevels', () => {
     expect(checkLevels({ ...good(), l1: { userVisible: 'yes', bullets: [] } }, files)).toBeNull();
   });
 
-  it('flags and repairs over-limit output; repaired output is itself valid', () => {
+  it('flags and repairs over-limit L1-L3 output; repaired output is itself valid', () => {
     const g = good();
-    g.l0.text = w(30);
     g.l1.bullets = [w(30), w(30), w(30), w(30)];
     g.l2.items = Array.from({ length: 10 }, () => ({ path: 'a.ts', role: 'r', change: w(40) }));
     g.l3.annotations = Array.from({ length: 12 }, () => ({ path: 'a.ts', side: 'new' as const, startLine: 2, endLine: 2, note: w(50) }));
     const r = checkLevels(g, files)!;
-    expect(r.violations.length).toBeGreaterThanOrEqual(5);
+    expect(r.violations.length).toBeGreaterThanOrEqual(4);
     const again = checkLevels(r.levels, files)!;
     expect(again.violations).toEqual([]);
     expect(r.levels.l2.items).toHaveLength(8);
     expect(r.levels.l3.annotations).toHaveLength(10);
+  });
+
+  it('flags an over-limit L0 but never cuts it mid-sentence (DIG-94)', () => {
+    const g = good();
+    g.l0.text = w(30);
+    const r = checkLevels(g, files)!;
+    expect(r.violations).toContain('l0: 30 words, limit 20');
+    // Kept whole, not word/char-truncated with a trailing ellipsis: a headline is never a fragment.
+    expect(r.levels.l0.text).toBe(w(30));
+    expect(r.levels.l0.text.endsWith('…')).toBe(false);
   });
 
   it('drops anchors that do not exist in the diff or point at filtered files', () => {

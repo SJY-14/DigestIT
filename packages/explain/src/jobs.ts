@@ -72,21 +72,28 @@ export interface JobCallLog {
   timing?: CallTiming;
   durationMs: number;
   outcome: 'ok' | 'error';
+  /**
+   * Why this attempt was not accepted as delivered (DIG-94): the hard violations and style
+   * warnings the validator found, joined with "; ", or the unusable-shape message. Unset when the
+   * call's own outcome is `error` (no output to validate) or the output was clean.
+   */
+  violations?: string;
 }
 
-/** Logs one provider call with the DIG-73 timing columns and `job_id`/`part` set. */
+/** Logs one provider call with the DIG-73 timing columns, `job_id`/`part`, and the DIG-94 validation reason. */
 export function logJobCall(
   db: DatabaseSync, at: Date, reason: 'digest' | 'area' | 'context', log: JobCallLog,
 ): void {
   db.prepare(
     `INSERT INTO explain_call
-       (at, change_unit_id, reason, duration_ms, outcome, job_id, part, model, effort, startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (at, change_unit_id, reason, duration_ms, outcome, job_id, part, model, effort, startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens, violations)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     at.toISOString(), log.changeUnitId, reason, log.durationMs, log.outcome, log.jobId, log.part, log.model,
     log.effort ?? null,
     log.timing?.startupMs ?? null, log.timing?.ttftMs ?? null, log.timing?.genMs ?? null,
     log.timing?.inputTokens ?? null, log.timing?.outputTokens ?? null,
+    log.violations ?? null,
   );
 }
 

@@ -415,15 +415,16 @@ export async function explainArea(
       // Only the first attempt streams: a retry would restart the steps, and the final result replaces them anyway.
       const res = await provider.explainArea(input, attempt === 0 ? onProgress : undefined);
       used = { provider: res.provider, model: res.model };
+      const checked = checkAreaWalkthrough(res.content, prepared.input.files, language);
       if (options.job) {
         logJobCall(db, at, 'area', {
           jobId: options.job.jobId, part: `walkthrough:${areaId}`, changeUnitId, model: res.model, effort: res.effort,
           timing: res.timing, durationMs: now().getTime() - at.getTime(), outcome: 'ok',
+          violations: checked === null ? 'provider output has an unusable shape' : [...checked.violations, ...checked.styleWarnings].join('; ') || undefined,
         });
       } else {
         logCall(db, at, changeUnitId, now().getTime() - at.getTime(), 'ok');
       }
-      const checked = checkAreaWalkthrough(res.content, prepared.input.files, language);
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
         feedback = [lastError];

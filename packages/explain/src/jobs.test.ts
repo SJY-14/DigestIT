@@ -81,6 +81,19 @@ describe('startJob/finishJob/budgetStatus', () => {
       startup_ms: 100, ttft_ms: 200, gen_ms: 300, input_tokens: 1000, output_tokens: 50,
     });
   });
+
+  it('logs the DIG-94 validation reason when given, and null when omitted', () => {
+    const db = openDb(':memory:');
+    const id = seed(db);
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 5)!;
+    logJobCall(db, new Date(), 'digest', {
+      jobId, part: 'summary', changeUnitId: id, model: 'sonnet', durationMs: 5, outcome: 'ok',
+      violations: 'l0: 24 words, limit 20',
+    });
+    logJobCall(db, new Date(), 'digest', { jobId, part: 'area:a', changeUnitId: id, model: 'sonnet', durationMs: 5, outcome: 'ok' });
+    const rows = db.prepare('SELECT part, violations FROM explain_call WHERE job_id = ? ORDER BY part').all(jobId);
+    expect(rows).toEqual([{ part: 'area:a', violations: null }, { part: 'summary', violations: 'l0: 24 words, limit 20' }]);
+  });
 });
 
 describe('setPrepMs / markPartsBudget', () => {

@@ -309,6 +309,12 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE repo ADD COLUMN removed_at TEXT;
   `,
+  // DIG-94: the validation-failure reason for the attempt this row logged (semicolon-joined hard
+  // violations plus style warnings, or the unusable-shape message), null when the call was clean or
+  // the row logs a provider error instead -- so a doubled call is diagnosable from the log alone.
+  `
+  ALTER TABLE explain_call ADD COLUMN violations TEXT;
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {

@@ -213,6 +213,26 @@ describe('checkSummaryLevels (DIG-74 split)', () => {
     const r = checkSummaryLevels({ l0: { text: 'Changes packages/core/src/db.ts.' }, l1: validReply.l1 });
     expect(r?.violations.some((v) => v.includes('file name'))).toBe(true);
   });
+
+  // DIG-94 (real-provider finding): an over-limit L0 must stay a whole sentence, not a fragment cut
+  // to the word/char limit with a trailing "…" — the fixtures below are shaped like the acceptance
+  // run's actual output (docs/roadmap.md DIG-94), one word/char over budget in each direction.
+  it('flags an over-limit English L0 but keeps the whole sentence, never a "…" fragment (DIG-94)', () => {
+    const long = 'Backups now retry transient network and server failures and keep going past failed files, '
+      + 'so one bad upload no longer stops the whole run.'; // 24 words
+    const r = checkSummaryLevels({ l0: { text: long }, l1: validReply.l1 })!;
+    expect(r.violations).toContain('l0: 24 words, limit 20');
+    expect(r.levels.l0.text).toBe(long);
+    expect(r.levels.l0.text.endsWith('…')).toBe(false);
+  });
+
+  it('flags an over-limit Korean L0 but keeps the whole sentence, never a "…" fragment (DIG-94)', () => {
+    const long = '설정 화면을 추가해 사용자가 앱 안에서 알림을 직접 끌 수 있게 하고 백업이 실패해도 나머지 파일은 계속 진행되도록 하여 작업이 중간에 멈추지 않게 합니다.'; // 24 words
+    const r = checkSummaryLevels({ l0: { text: long }, l1: validReply.l1 }, 'ko')!;
+    expect(r.violations.some((v) => v.startsWith('l0: 24 words, limit 20'))).toBe(true);
+    expect(r.levels.l0.text).toBe(long);
+    expect(r.levels.l0.text.endsWith('…')).toBe(false);
+  });
 });
 
 describe('checkAreaTextContent (DIG-74 split)', () => {
@@ -310,6 +330,42 @@ describe('explainDigestSummary (DIG-74 split)', () => {
     const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
     const r = await explainDigestSummary(db, id, new SummaryProvider([]), { job: { jobId, budget: 40 } });
     expect(r).toEqual({ outcome: 'error', calls: 0, detail: 'digest has no areas yet' });
+  });
+
+  it('logs no validation reason and makes exactly one call when the first attempt is already valid (DIG-94)', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
+    const p = new SummaryProvider([{ l0: validReply.l0, l1: validReply.l1 }]);
+    const r = await explainDigestSummary(db, id, p, { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'ok', calls: 1 });
+    const calls = db.prepare('SELECT outcome, violations FROM explain_call WHERE job_id = ?').all(jobId);
+    expect(calls).toEqual([{ outcome: 'ok', violations: null }]);
+  });
+
+  it('never cuts an over-limit L0 mid-sentence, even after the retry stays over limit, and logs why each attempt failed (DIG-94)', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
+    // Shaped like the acceptance run's actual output (docs/roadmap.md DIG-94): a natural, complete
+    // sentence that runs a few words past the l0 limit on both the first attempt and the retry.
+    const long = 'Backups now retry transient network and server failures and keep going past failed files, '
+      + 'so one bad upload no longer stops the whole run.'; // 24 words
+    const overLimit = { l0: { text: long }, l1: validReply.l1 };
+    const p = new SummaryProvider([overLimit, overLimit]);
+    const r = await explainDigestSummary(db, id, p, { job: { jobId, budget: 40 } });
+    expect(r).toEqual({ outcome: 'truncated', calls: 2, detail: expect.stringContaining('l0: 24 words, limit 20') });
+    const stored = rows(db).find((row) => row.level === 0)!;
+    expect(stored.status).toBe('truncated');
+    expect((JSON.parse(stored.content) as { text: string }).text).toBe(long);
+    expect((JSON.parse(stored.content) as { text: string }).text.endsWith('…')).toBe(false);
+    const calls = db.prepare('SELECT outcome, violations FROM explain_call WHERE job_id = ? ORDER BY id').all(jobId) as
+      { outcome: string; violations: string | null }[];
+    expect(calls).toHaveLength(2);
+    for (const c of calls) {
+      expect(c.outcome).toBe('ok'); // the provider call itself succeeded; only validation failed
+      expect(c.violations).toContain('l0: 24 words, limit 20');
+    }
   });
 });
 

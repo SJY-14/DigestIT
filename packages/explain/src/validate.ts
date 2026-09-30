@@ -91,14 +91,12 @@ export function checkLevels(raw: unknown, files: readonly ProviderFile[]): Check
 
   const v: string[] = [];
 
-  // L0
-  let text = cleanText(l0.text);
+  // L0: never cut mid-sentence (DIG-94) — an over-limit headline is flagged so a retry can fix it,
+  // but the delivered text stays whole rather than a fragment ending in "…".
+  const text = cleanText(l0.text);
   if (hasUnsafeMarkup(l0.text)) v.push('l0: contains HTML or a link');
   if (text === '') v.push('l0: empty');
-  if (wordCount(text) > LIMITS.l0Words) {
-    v.push(`l0: ${wordCount(text)} words, limit ${LIMITS.l0Words}`);
-    text = truncateWords(text, LIMITS.l0Words);
-  }
+  if (wordCount(text) > LIMITS.l0Words) v.push(`l0: ${wordCount(text)} words, limit ${LIMITS.l0Words}`);
   if (/[.!?]\s+[A-Z]/.test(text)) v.push('l0: more than one sentence');
   if (FILE_REF.test(text)) v.push('l0: mentions a file name or code identifier');
 

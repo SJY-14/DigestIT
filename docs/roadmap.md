@@ -62,6 +62,7 @@ the project. Projects can be removed (soft delete). A new "All projects" view so
 | 5 | DIG-92 | Fix: the web client's Remove got 415 (DELETE sent no `content-type`). Found by DIG-90. Merged 2026-09-30 | CTO | — |
 | 6 | DIG-93 | Real-provider acceptance run (`.cache/dig80-acceptance/accept.sh`, all views passed, 2026-09-30) | Board operator | DIG-90 |
 | 7 | DIG-95 | Follow-up from DIG-93: inline code in L0 lines outside the reading pane; L3 "writing" notice stays after the walkthrough (DIG-94 covers the explanation-side findings) | Frontend engineer | — |
+| 8 | DIG-94 | Fix: explain parts fail length check and get generated twice; L0 headline is never cut mid-sentence now (kept whole and flagged instead); the validation reason is logged per attempt (`explain_call.violations`) | Summarization engineer | DIG-93 |
 
 ## Removing the AI-made look (done)
 
