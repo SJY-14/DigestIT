@@ -75,6 +75,9 @@ export function App() {
   // that fetch fails, the last-known value (or the 'en' default) stays.
   const [lang, setLang] = useState<Lang>('en');
   const onLanguage = useCallback((l: Lang) => setLang(l), []);
+  // The page's language follows the chrome's, so screen readers pronounce Korean as Korean and
+  // the stylesheet's `:lang(ko)` rules (word-break: keep-all) apply.
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
   useEffect(() => {
     if (page === 'main' || repoId === null) return;
     const ac = new AbortController();

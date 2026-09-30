@@ -1,11 +1,11 @@
 // Project graph pane (DIG-42, DIG-50; docs/direction-v2.md §5, docs/ux-v3.md §4): folders/files as
-// nodes, containment as edges. Changed nodes are accent blue and sized by sqrt(lines changed);
-// everything else is muted gray. The canvas takes the pane's real size and fits the changed nodes
+// nodes, containment as edges. Every node is the same small dot (DIG-82): changed ones in ink,
+// the rest light gray; lines changed are in the tip and the accessible name, not the dot size. The canvas takes the pane's real size and fits the changed nodes
 // on load and whenever the digest changes. Clickable nodes (changed, or folded) are one roving tab
 // stop: arrow keys move between them, focus shows the same label and tip as hover, Enter opens.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { GraphEdge, GraphNode, ProjectGraphDto } from '@digestit/core';
-import { bounds, fitView, growFactor, layoutGraph, nodeRadius, rotatePositions, shouldRotate, type Point, type View } from './graphLayout.js';
+import { bounds, fitView, layoutGraph, rotatePositions, shouldRotate, type Point, type View } from './graphLayout.js';
 import { useRovingIndex } from './charts/roving.js';
 import { graphCopy, lineDelta, type Lang } from './copy.js';
 
@@ -18,6 +18,12 @@ const MIN_SCALE = 0.05;
 const MAX_SCALE = 6;
 /** Below this scale, only the "always shown" labels (changed/root/top-level/hover/focus) are drawn. */
 const LABEL_ALL_SCALE = 1.5;
+/** Screen radius of a node's dot, whatever the zoom (one size class, DIG-82). */
+const DOT_R = 4.5;
+/** Half the side of a folded folder/group's square. */
+const BOX_R = 5;
+/** Screen radius of a clickable node's invisible hit area (a 24px target, WCAG 2.5.8). */
+const HIT_R = 12;
 
 /** Draw style for one edge kind; edge kinds with no entry are not drawn, so a future `imports` or
  * `cochange` kind can be added to `packages/core/src/v2.ts` without touching this component. */
@@ -103,9 +109,6 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
     return next;
   }, [graph]);
   const rootId = useMemo(() => rootIdOf(graph), [graph]);
-  // A small graph draws bigger nodes (see graphLayout's growFactor) so the fitted picture fills
-  // the pane; `bounds()` (used to fit) applies the same scale, so the two stay in sync.
-  const growScale = useMemo(() => growFactor(graph.nodes.length), [graph]);
 
   // The canvas's real size in CSS pixels; the viewBox matches it, so one layout unit at scale 1 is
   // one pixel and "fit" really fills the pane.
@@ -263,7 +266,6 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
             {graph.nodes.map((n) => {
               const p = positions.get(n.id);
               if (!p) return null;
-              const r = nodeRadius(n, growScale);
               const box = isBoxShaped(n);
               const lit = highlightNodeIds?.has(n.id) ?? false;
               const selected = selectedNodeId === n.id;
@@ -303,26 +305,25 @@ export function ProjectGraph({ graph, highlightNodeIds, selectedNodeId, onSelect
                   onPointerLeave={() => setHoverId((h) => (h === n.id ? null : h))}
                   {...a11y}
                 >
-                  {box ? (
-                    <>
-                      <rect className="graph-shape" vectorEffect="non-scaling-stroke" x={-r} y={-r} width={r * 2} height={r * 2} rx={4} />
-                      <g transform={`scale(${1 / view.scale})`}>
-                        <text className="graph-count" y={4} textAnchor="middle">{n.fileCount}</text>
-                      </g>
-                    </>
-                  ) : (
-                    <>
-                      <circle className="graph-shape" vectorEffect="non-scaling-stroke" r={r} />
-                      {isFolder(n) && <circle className="graph-ring" vectorEffect="non-scaling-stroke" r={r + 3} />}
-                    </>
-                  )}
-                  {(lit || selected) && <circle className="graph-hilite-ring" vectorEffect="non-scaling-stroke" r={r + (box ? 5 : 4)} />}
-                  {focused && <circle className="graph-focus-ring" vectorEffect="non-scaling-stroke" r={r + (box ? 8 : 7)} />}
-                  {label && (
-                    <g transform={`scale(${1 / view.scale})`}>
-                      <text className="graph-label" y={r * view.scale + 12} textAnchor="middle">{label}</text>
-                    </g>
-                  )}
+                  {/* Shapes, rings and labels are drawn at a constant screen size: only the
+                      positions follow the zoom. */}
+                  <g transform={`scale(${1 / view.scale})`}>
+                    {ri !== undefined && <circle className="graph-hit" r={HIT_R} />}
+                    {box ? (
+                      <>
+                        <rect className="graph-shape" vectorEffect="non-scaling-stroke" x={-BOX_R} y={-BOX_R} width={BOX_R * 2} height={BOX_R * 2} rx={1} />
+                        <text className="graph-count" x={BOX_R + 3} y={3.5}>{n.fileCount}</text>
+                      </>
+                    ) : (
+                      <>
+                        <circle className="graph-shape" vectorEffect="non-scaling-stroke" r={DOT_R} />
+                        {isFolder(n) && <circle className="graph-ring" vectorEffect="non-scaling-stroke" r={DOT_R + 2.5} />}
+                      </>
+                    )}
+                    {(lit || selected) && <circle className="graph-hilite-ring" vectorEffect="non-scaling-stroke" r={(box ? BOX_R : DOT_R) + 4} />}
+                    {focused && <circle className="graph-focus-ring" vectorEffect="non-scaling-stroke" r={(box ? BOX_R : DOT_R) + 7} />}
+                    {label && <text className="graph-label" y={DOT_R + 13} textAnchor="middle">{label}</text>}
+                  </g>
                 </g>
               );
             })}
