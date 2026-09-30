@@ -14,6 +14,8 @@ const runProjectExplainCli = vi.fn(async (_argv: string[]) => 0);
 vi.mock('./project-cli.js', () => (
   { runInitCli, runIgnoreCli, runProjectsCli, runRemoveCli, runStatusCli, runProjectExplainCli }
 ));
+const runMemoryCli = vi.fn(async (_argv: string[]) => 0);
+vi.mock('./memory-cli.js', () => ({ runMemoryCli }));
 const { routeDigest } = await import('./route.js');
 
 describe('routeDigest', () => {
@@ -70,6 +72,12 @@ describe('routeDigest', () => {
   it('delegates `remove <project>` to the project CLI', async () => {
     expect(await routeDigest(['remove', 'my-project'])).toBe(0);
     expect(runRemoveCli).toHaveBeenCalledWith(['remove', 'my-project']);
+  });
+  it('delegates `memory <subcommand> [project] [batch]` to the memory CLI', async () => {
+    expect(await routeDigest(['memory', 'update', 'my-project'])).toBe(0);
+    expect(runMemoryCli).toHaveBeenCalledWith(['memory', 'update', 'my-project']);
+    expect(await routeDigest(['memory', 'rollback', 'my-project', '7'])).toBe(0);
+    expect(runMemoryCli).toHaveBeenCalledWith(['memory', 'rollback', 'my-project', '7']);
   });
   it('rejects unknown commands with usage', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});

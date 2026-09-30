@@ -69,7 +69,7 @@ export interface ListMemoryItemsOptions {
 
 export function listMemoryItems(db: DatabaseSync, repoId: number, opts: ListMemoryItemsOptions = {}): MemoryItem[] {
   const clauses = ['repo_id = ?'];
-  const params: unknown[] = [repoId];
+  const params: (string | number)[] = [repoId];
   if (opts.kind) { clauses.push('kind = ?'); params.push(opts.kind); }
   if (opts.status) { clauses.push('status = ?'); params.push(opts.status); }
   const rows = db.prepare(`${SELECT_ITEM} WHERE ${clauses.join(' AND ')} ORDER BY kind, key`)
