@@ -44,7 +44,7 @@ which fonts the host has. CSP is unchanged (`default-src 'self'` covers fonts).
 | 1 | DIG-82 | Direction B token pass: fonts, type/spacing/color tokens, de-boxing, graph dots, en/ko, light/dark. Merged 2026-09-30 | Frontend engineer | — |
 | 2 | DIG-83 | Verify: before/after of every view (en/ko, light/dark), contrast table, font-resolution evidence. No findings above Minor; macOS check doc merged 2026-09-30, owner run pending | UX reviewer | DIG-82 |
 
-## UX improvement cycle 2
+## UX improvement cycle 2 (done)
 
 DIG-80 (Board, 2026-09-30): the whole journey, restyled in direction B. Inputs: `docs/ux/audit-2.md`, `brief-2.md`,
 `dig80-critique.md`. The CTO decision is in [ux/decision-2.md](ux/decision-2.md). One mental model: all projects →
@@ -58,7 +58,7 @@ the project. Projects can be removed (soft delete). A new "All projects" view so
 | 1 | DIG-87 | `GET /api/about`, `ProjectDto.latestDigest`, soft remove (API + `digest remove`). Merged 2026-09-30 | Diff engineer | — |
 | 2 | DIG-88 | IA cleanup, first-run trust + layout, Settings & trust panel (P1, P2, P3, P5). Merged 2026-09-30 | Frontend engineer | — |
 | 3 | DIG-89 | Project panel with unread + Remove, All projects view (P4, P7). Merged 2026-09-30 | Frontend engineer | — |
-| 4 | DIG-90 | Verify against decision-2, `docs/ux/cycle-2-summary.md` | UX reviewer | DIG-88, DIG-89, DIG-92 |
+| 4 | DIG-90 | Verify against decision-2, `docs/ux/cycle-2-summary.md`. Passed, merged 2026-09-30 | UX reviewer | DIG-88, DIG-89, DIG-92 |
 | 5 | DIG-92 | Fix: the web client's Remove got 415 (DELETE sent no `content-type`). Found by DIG-90. Merged 2026-09-30 | CTO | — |
 
 ## Removing the AI-made look (done)
