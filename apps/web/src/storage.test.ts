@@ -5,27 +5,33 @@ import { getLastSeen, getReviewed, setLastSeen, setReviewed } from './storage.js
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.restoreAllMocks());
 
-describe('last-seen digest (P6)', () => {
-  it('round-trips digest id and time', () => {
+describe('last-seen digest (P6, +seq for UX cycle 2 P4)', () => {
+  it('round-trips digest id, seq and time', () => {
     expect(getLastSeen(1)).toBeNull();
-    setLastSeen(1, 41, '2026-09-26T16:40:00Z');
-    expect(getLastSeen(1)).toEqual({ digestId: 41, at: '2026-09-26T16:40:00Z' });
+    setLastSeen(1, 41, 3, '2026-09-26T16:40:00Z');
+    expect(getLastSeen(1)).toEqual({ digestId: 41, seq: 3, at: '2026-09-26T16:40:00Z' });
   });
   it('is keyed per project', () => {
-    setLastSeen(1, 41, '2026-09-26T16:40:00Z');
-    setLastSeen(2, 7, '2026-09-27T09:00:00Z');
-    expect(getLastSeen(1)).toEqual({ digestId: 41, at: '2026-09-26T16:40:00Z' });
-    expect(getLastSeen(2)).toEqual({ digestId: 7, at: '2026-09-27T09:00:00Z' });
+    setLastSeen(1, 41, 3, '2026-09-26T16:40:00Z');
+    setLastSeen(2, 7, 1, '2026-09-27T09:00:00Z');
+    expect(getLastSeen(1)).toEqual({ digestId: 41, seq: 3, at: '2026-09-26T16:40:00Z' });
+    expect(getLastSeen(2)).toEqual({ digestId: 7, seq: 1, at: '2026-09-27T09:00:00Z' });
   });
   it('defaults the timestamp to now when omitted', () => {
     const before = Date.now();
-    setLastSeen(1, 41);
+    setLastSeen(1, 41, 3);
     const after = Date.now();
     const seen = getLastSeen(1)!;
     expect(seen.digestId).toBe(41);
+    expect(seen.seq).toBe(3);
     const t = new Date(seen.at).getTime();
     expect(t).toBeGreaterThanOrEqual(before);
     expect(t).toBeLessThanOrEqual(after);
+  });
+  it('reads an entry written before `seq` existed, with `seq` left undefined', () => {
+    localStorage.setItem('digestit.lastSeen.1', JSON.stringify({ digestId: 41, at: '2026-09-26T16:40:00Z' }));
+    expect(getLastSeen(1)).toEqual({ digestId: 41, at: '2026-09-26T16:40:00Z' });
+    expect(getLastSeen(1)!.seq).toBeUndefined();
   });
   it('ignores a malformed stored value instead of throwing', () => {
     localStorage.setItem('digestit.lastSeen.1', '{"digestId":"not-a-number"}');
@@ -36,7 +42,7 @@ describe('last-seen digest (P6)', () => {
   it('degrades to null/no-op when localStorage throws (private mode, quota, disabled)', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('blocked'); });
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('blocked'); });
-    expect(() => setLastSeen(1, 41)).not.toThrow();
+    expect(() => setLastSeen(1, 41, 3)).not.toThrow();
     expect(getLastSeen(1)).toBeNull();
   });
 });

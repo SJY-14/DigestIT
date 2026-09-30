@@ -6,8 +6,9 @@ import type {
   GraphNode, ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 import {
-  ApiError, addIgnorePatterns, createProject, explainArea, explainProject, fetchAbout, fetchArea, fetchDigest, fetchGraph,
-  fetchProjectGraph, fetchProjectStatus, fetchProjects, openDigestEvents, refreshContext, retryDigest, setProjectLanguage,
+  ApiError, addIgnorePatterns, createProject, deleteProject, explainArea, explainProject, fetchAbout, fetchArea, fetchDigest,
+  fetchGraph, fetchProjectGraph, fetchProjectStatus, fetchProjects, openDigestEvents, refreshContext, retryDigest,
+  setProjectLanguage,
 } from './v2Api.js';
 import { useDigests } from './useDigests.js';
 import { startLive } from './liveClient.js';
@@ -443,7 +444,7 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   useEffect(() => {
     if (currentProjectId === null || digests.items.length === 0) return;
     const newestId = digests.items[0]!.id;
-    if (currentDigestId === newestId) setLastSeen(currentProjectId, newestId);
+    if (currentDigestId === newestId) setLastSeen(currentProjectId, newestId, digests.items[0]!.seq);
   }, [currentProjectId, currentDigestId, digests.items]);
 
   useEffect(() => {
@@ -699,6 +700,19 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
     (id: number) => push({ project: id, digest: null, level: null, node: null, area: null, step: null }),
     [push],
   );
+  // UX cycle 2 P4 (decision-2.md §2): after removing the open project, land on the next remaining
+  // one (same rule as the initial landing, `defaultProject`); removing any other project just drops
+  // it from the list. Removing the last project needs no redirect of its own — `projects.length
+  // === 0` already renders SetupForm below, regardless of what `url.project` still says.
+  const onRemoveProject = useCallback((id: number): Promise<void> => deleteProject(id).then(() => {
+    setProjects((prev) => {
+      const next = (prev ?? []).filter((p) => p.id !== id);
+      if (id === currentProjectId && next.length > 0) {
+        replace({ project: defaultProject(next, loadLastProject())!.id, digest: null, level: null, node: null, area: null, step: null });
+      }
+      return next;
+    });
+  }), [currentProjectId, replace]);
   const onSelectDigest = useCallback((id: number) => push({ digest: id, node: null, area: null, step: null }), [push]);
   const onLevel = useCallback((l: ReadingLevel) => push({ level: l === 0 ? null : l, step: null }), [push]);
   const onOpenArea = useCallback((id: string) => push({ level: 3, area: id, step: null }), [push]);
@@ -908,6 +922,7 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
           projects={projects}
           currentProject={currentProject}
           onSwitch={onSwitchProject}
+          onRemove={onRemoveProject}
           about={about}
           status={status}
           statusError={statusError}

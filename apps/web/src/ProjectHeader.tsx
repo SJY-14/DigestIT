@@ -10,6 +10,7 @@ import {
 } from './copy.js';
 import { relativeTime } from './format.js';
 import { addIgnorePatterns, ApiError, fetchProjectIgnore, removeIgnorePattern } from './v2Api.js';
+import { ProjectPanel } from './ProjectPanel.js';
 
 function ignoreErrorText(e: unknown, lang: Lang): string {
   return e instanceof ApiError ? apiErrorMessage(e.message, lang) : e instanceof Error ? e.message : String(e);
@@ -253,6 +254,9 @@ export interface ProjectHeaderProps {
   projects: ProjectDto[];
   currentProject: ProjectDto;
   onSwitch: (id: number) => void;
+  /** UX cycle 2 P4: soft-removes a project (ProjectPanel.tsx's Remove); resolves once it lands,
+   * rejects with the API error otherwise. */
+  onRemove: (id: number) => Promise<void>;
   /** Global provider/model/read-only/legacy-data info (P5, `GET /api/about`); null while loading. */
   about: AboutDto | null;
   status: ProjectStatusDto | null;
@@ -272,7 +276,7 @@ export interface ProjectHeaderProps {
 }
 
 export function ProjectHeader({
-  projects, currentProject, onSwitch, about, status, statusError, explaining, onExplain,
+  projects, currentProject, onSwitch, onRemove, about, status, statusError, explaining, onExplain,
   onRefreshContext, refreshingContext, onSetLanguage, settingLanguage, languageError, picker, lang = 'en',
 }: ProjectHeaderProps) {
   const T = headerCopy(lang);
@@ -280,13 +284,7 @@ export function ProjectHeader({
   const budgetSpent = status !== null && status.budget.remaining === 0;
   return (
     <div className="project-header">
-      {projects.length > 1 ? (
-        <select className="project-switcher" aria-label={T.projectLabel} value={currentProject.id} onChange={(e) => onSwitch(Number(e.target.value))}>
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-      ) : (
-        <span className="project-name" title={currentProject.rootPath}>{currentProject.name}</span>
-      )}
+      <ProjectPanel projects={projects} currentProject={currentProject} onSwitch={onSwitch} onRemove={onRemove} lang={lang} />
       <div className="header-picker">{picker}</div>
       {statusError && !status && <span role="alert" className="error">{T.statusError(statusError)}</span>}
       {status && (

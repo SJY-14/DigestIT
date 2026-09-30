@@ -463,8 +463,6 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 /* Header (DIG-49): one row, project, digest picker, calls left, info popover, Explain. No box:
    it sits on the page and the level switcher's rule below it does the separating. */
 .project-header { display: flex; align-items: center; gap: var(--space-2); padding: 0; min-width: 0; font-size: var(--text-ui); }
-.project-name { font-weight: 600; white-space: nowrap; }
-.project-switcher { font: inherit; font-weight: 600; padding: 3px 6px; border: 1px solid var(--control-border); border-radius: 3px; background: var(--bg); color: var(--fg); max-width: 220px; }
 .header-picker { flex: 1 1 auto; min-width: 0; }
 .explain-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* Nothing pending / no calls: a calm no-op, not a greyed-out version of the primary action. */
@@ -540,6 +538,46 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .digest-picker-panel .sentinel { padding: 6px 16px; font-size: 12px; }
 .retry { margin: 8px 12px; align-self: center; }
 
+/* Project panel (UX cycle 2 P4, decision-2.md §2): the header trigger + overlay that replaced the
+   bare `<select>`, built like the digest picker above. `.proj-row`/`.proj-row-main` are also used,
+   unmodified, by the All-projects roster (P7, `.all-projects-list`) — one row component, two
+   surfaces. */
+.proj-picker { position: relative; min-width: 0; }
+.proj-trigger { display: flex; align-items: center; gap: 6px; max-width: 220px; font: inherit; font-weight: 600; text-align: left; padding: 3px 8px; border: 1px solid var(--control-border); border-radius: 3px; background: var(--bg); color: var(--fg); cursor: pointer; }
+.proj-trigger:hover { background: var(--hover); }
+.proj-trigger-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-trigger .caret { color: var(--muted); flex: none; }
+.proj-panel {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; width: min(420px, 90vw); max-height: min(60vh, 480px); overflow-y: auto;
+  background: var(--raised); border-top: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.proj-panel h2 { margin: 0; padding: 10px 16px; font-size: var(--text-ui); font-weight: 600; border-bottom: 1px solid var(--border); }
+.proj-list { list-style: none; margin: 0; padding: 0; }
+.proj-row { display: flex; flex-wrap: wrap; align-items: stretch; border-bottom: 1px solid var(--border-muted); }
+.proj-row:last-child { border-bottom: 0; }
+.proj-row.caught-up { color: var(--muted); }
+.proj-row-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; text-align: left; font: inherit; color: inherit; background: none; border: 0; padding: 10px 16px; cursor: pointer; }
+.proj-row-main:hover, .proj-row-main:focus-visible { background: var(--hover); }
+.proj-row-main[aria-current='true'] { background: var(--selected); box-shadow: inset 2px 0 0 var(--accent); }
+.proj-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.proj-name { font-weight: 600; font-size: var(--text-ui); }
+.proj-meta { font-size: var(--text-meta); color: var(--muted); }
+.proj-headline { font-size: var(--text-ui); color: var(--fg); }
+.proj-row.caught-up .proj-headline { color: var(--muted); font-style: italic; }
+.proj-unread { flex: none; }
+.proj-remove { flex: none; align-self: center; margin: 0 12px; font-size: var(--text-meta); color: var(--muted); background: none; border: 1px solid transparent; border-radius: 3px; padding: 3px 8px; cursor: pointer; }
+.proj-remove:hover { color: var(--del); border-color: var(--del); }
+.proj-remove:disabled { cursor: progress; }
+.proj-remove-error { flex-basis: 100%; margin: 0 16px 8px; font-size: var(--text-meta); }
+
+/* All-projects roster (P7): a plain page, not an overlay — reuses .proj-list/.proj-row above. */
+.all-projects { max-width: var(--prose-width); margin: 0 auto; }
+.inbox-head { padding: var(--space-2) 0 4px; }
+.inbox-head h1 { font-family: var(--serif); font-size: var(--text-title); font-weight: 600; margin: 0 0 4px; }
+.inbox-head p { margin: 0; color: var(--muted); font-size: var(--text-ui); }
+.all-projects-list { margin-top: var(--space-2); border-top: 1px solid var(--border); }
+.all-projects-list .proj-row-main { cursor: pointer; padding: 14px 4px; }
+.all-projects-list .proj-name { font-size: var(--text-body); }
 
 .spinner {
   width: 14px; height: 14px; flex: none; border-radius: 50%;

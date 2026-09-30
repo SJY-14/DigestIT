@@ -7,7 +7,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Metrics, WorkUnitDetail, WorkUnitSummary } from './api.js';
 import { App } from './App.js';
-import { fixtureAbout, fixtureProject } from './v2Fixtures.js';
+import { fixtureAbout, fixtureProject, fixtureProject2 } from './v2Fixtures.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -178,6 +178,64 @@ describe('DIG-60: the nav label follows the project language', () => {
     await render(<App />);
     await waitFor(() => host.querySelector('.setup-form') !== null || host.querySelector('.project-header') !== null);
     expect(host.querySelector('a[aria-current="page"]')?.textContent).toBe('Home');
+  });
+});
+
+describe('App: All-projects nav + route (UX cycle 2 P7, decision-2.md §2)', () => {
+  it('hides the "All projects" link with fewer than 2 projects', async () => {
+    history.replaceState(null, '', '/');
+    vi.stubGlobal('fetch', makeFetchMock([fixtureProject]));
+    await render(<App />);
+    await waitFor(() => host.querySelector('.project-header') !== null);
+    expect([...host.querySelectorAll('.nav a')].map((a) => a.textContent)).toEqual(['Home']);
+  });
+
+  it('shows the link once 2+ projects are registered, and it opens /projects', async () => {
+    history.replaceState(null, '', '/');
+    vi.stubGlobal('fetch', makeFetchMock([fixtureProject, fixtureProject2]));
+    await render(<App />);
+    await waitFor(() => [...host.querySelectorAll('.nav a')].some((a) => a.textContent === 'All projects'));
+
+    await click(host.querySelector('a[href="/projects"]'));
+    await waitFor(() => location.pathname === '/projects');
+    await waitFor(() => host.querySelectorAll('.proj-row').length === 2);
+    const names = [...host.querySelectorAll('.proj-name')].map((n) => n.textContent).sort();
+    expect(names).toEqual([fixtureProject.name, fixtureProject2.name].sort());
+    expect(host.querySelector('a[aria-current="page"]')?.textContent).toBe('All projects');
+  });
+
+  it('is reachable as a direct deep link', async () => {
+    history.replaceState(null, '', '/projects');
+    vi.stubGlobal('fetch', makeFetchMock([fixtureProject, fixtureProject2]));
+    await render(<App />);
+    await waitFor(() => host.querySelectorAll('.proj-row').length === 2);
+    expect(host.querySelector('a[aria-current="page"]')?.textContent).toBe('All projects');
+  });
+
+  it('opens a project row back on Home, at that project\'s newest digest', async () => {
+    history.replaceState(null, '', '/projects');
+    vi.stubGlobal('fetch', makeFetchMock([fixtureProject, fixtureProject2]));
+    await render(<App />);
+    await waitFor(() => host.querySelectorAll('.proj-row').length === 2);
+
+    await click(host.querySelector(`.proj-row-main[data-project-id="${fixtureProject.id}"]`));
+    await waitFor(() => location.pathname === '/');
+    const params = new URLSearchParams(location.search);
+    expect(params.get('project')).toBe(String(fixtureProject.id));
+    expect(params.get('digest')).toBe(String(fixtureProject.latestDigest!.id));
+  });
+
+  it('opens a never-explained project at first run (no digest param)', async () => {
+    history.replaceState(null, '', '/projects');
+    vi.stubGlobal('fetch', makeFetchMock([fixtureProject, fixtureProject2]));
+    await render(<App />);
+    await waitFor(() => host.querySelectorAll('.proj-row').length === 2);
+
+    await click(host.querySelector(`.proj-row-main[data-project-id="${fixtureProject2.id}"]`));
+    await waitFor(() => location.pathname === '/');
+    const params = new URLSearchParams(location.search);
+    expect(params.get('project')).toBe(String(fixtureProject2.id));
+    expect(params.has('digest')).toBe(false);
   });
 });
 

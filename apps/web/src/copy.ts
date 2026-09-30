@@ -158,7 +158,6 @@ export function trustCopy(lang: Lang = 'en') {
 // --- Header (DIG-49/52): project switcher, digest picker, Explain, calls left, info popover ----
 
 const HEADER_EN = {
-  projectLabel: 'Project',
   loadingStatus: 'Loading…',
   statusError: (msg: string) => `Could not load the project status: ${msg}`,
   // UX cycle 2 P5 (decision-2.md): the ⓘ trigger is relabeled "Settings" — it now holds budget,
@@ -178,7 +177,6 @@ const HEADER_EN = {
   resets: (when: string) => `Resets ${when}`,
 } as const;
 const HEADER_KO = {
-  projectLabel: '프로젝트',
   loadingStatus: '불러오는 중…',
   statusError: (msg: string) => `프로젝트 상태를 불러오지 못했습니다: ${msg}`,
   settingsLabel: '설정',
@@ -207,13 +205,61 @@ export function headerCopy(lang: Lang = 'en') {
 const NAV_EN = {
   pagesLabel: 'Pages',
   home: 'Home',
+  // UX cycle 2 P7 (decision-2.md): shown only once 2+ projects are registered — App.tsx.
+  allProjects: 'All projects',
 } as const;
 const NAV_KO = {
   pagesLabel: '페이지',
   home: '홈',
+  allProjects: '전체 프로젝트',
 } as const;
 export function navCopy(lang: Lang = 'en') {
   return lang === 'ko' ? NAV_KO : NAV_EN;
+}
+
+// --- Project panel (P4) + All-projects view (P7), decision-2.md §2 and "Build" P4/P7: the
+// switcher's overlay panel (ProjectPanel.tsx) and the /projects route (AllProjects.tsx) share one
+// row component (ProjectRow.tsx) and this copy table.
+const PROJECTS_EN = {
+  switchProjectLabel: 'Switch project',
+  projectsHeading: 'Projects',
+  lastActivity: (when: string) => `Last activity ${when}`,
+  noActivity: 'No activity yet',
+  unreadNew: 'New',
+  unreadCount: (n: number) => `${n} new`,
+  removeLabel: 'Remove',
+  removeConfirmLabel: 'Confirm remove?',
+  removeTitle: (name: string) => `Remove ${name} from this dashboard`,
+  removing: 'Removing…',
+  removeError: (msg: string) => `Could not remove this project: ${msg}`,
+  caughtUp: 'You’re caught up',
+  noHeadlineYet: 'Not explained yet',
+  noDigestsYet: 'No digests yet',
+  allProjectsHeading: (total: number, needAttention: number) =>
+    needAttention === 0 ? `${plural(total, 'project')}, you’re all caught up` : `${plural(total, 'project')}, ${needAttention} ${needAttention === 1 ? 'needs' : 'need'} attention`,
+  allProjectsSubheading: 'Sorted by what’s new since you last looked at each.',
+} as const;
+const PROJECTS_KO = {
+  switchProjectLabel: '프로젝트 전환',
+  projectsHeading: '프로젝트',
+  lastActivity: (when: string) => `마지막 활동 ${when}`,
+  noActivity: '아직 활동 없음',
+  unreadNew: '새 항목',
+  unreadCount: (n: number) => `새 항목 ${n}개`,
+  removeLabel: '제거',
+  removeConfirmLabel: '제거 확인',
+  removeTitle: (name: string) => `${name} 제거`,
+  removing: '제거 중…',
+  removeError: (msg: string) => `프로젝트를 제거하지 못했습니다: ${msg}`,
+  caughtUp: '모두 확인함',
+  noHeadlineYet: '아직 설명되지 않음',
+  noDigestsYet: '아직 다이제스트 없음',
+  allProjectsHeading: (total: number, needAttention: number) =>
+    needAttention === 0 ? `프로젝트 ${total}개, 모두 확인함` : `프로젝트 ${total}개, ${needAttention}개 확인 필요`,
+  allProjectsSubheading: '각 프로젝트를 마지막으로 본 뒤 새로워진 순서입니다.',
+} as const;
+export function projectsCopy(lang: Lang = 'en') {
+  return lang === 'ko' ? PROJECTS_KO : PROJECTS_EN;
 }
 
 /** The primary Explain button's label: the pending count, or a plain "nothing to do" state

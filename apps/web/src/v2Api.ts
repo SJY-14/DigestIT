@@ -47,6 +47,11 @@ async function patchJson<T>(url: string, body: unknown, signal?: AbortSignal): P
   return (await res.json()) as T;
 }
 
+async function del(url: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(url, { method: 'DELETE', signal, headers: { accept: 'application/json', 'x-digestit': '1' } });
+  if (!res.ok) throw await readError(res);
+}
+
 export function fetchProjects(signal?: AbortSignal): Promise<ProjectDto[]> {
   return getJson('/api/projects', signal);
 }
@@ -67,6 +72,12 @@ export function fetchProjectStatus(id: number, signal?: AbortSignal): Promise<Pr
 
 export function setProjectLanguage(id: number, language: ExplainLanguage, signal?: AbortSignal): Promise<ProjectDto> {
   return patchJson(`/api/projects/${id}`, { language }, signal);
+}
+
+/** Soft-remove (UX cycle 2 P4, decision-2.md): 204 on success, 409 `explain_running` while an
+ * Explain is in flight for this project, 404 if it is already gone. */
+export function deleteProject(id: number, signal?: AbortSignal): Promise<void> {
+  return del(`/api/projects/${id}`, signal);
 }
 
 export function fetchProjectIgnore(id: number, signal?: AbortSignal): Promise<ProjectIgnoreDto> {
