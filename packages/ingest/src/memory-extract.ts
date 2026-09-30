@@ -417,7 +417,9 @@ function areaDoc(reader: TreeReader, area: AreaGroup): string | null {
 // ---- putting it together ----------------------------------------------------------------------
 
 export interface ExtractedMemory {
-  areas: { path: string; content: AreaMemory }[];
+  /** `files` is the area's own file list (unbounded), for the caller's provenance bookkeeping --
+   * `AreaMemory` itself only carries `fileCount`. */
+  areas: { path: string; content: AreaMemory; files: string[] }[];
   terms: TermMemory[];
 }
 
@@ -499,7 +501,7 @@ export function extractProjectMemory(reader: TreeReader, opts: { workspacePrefix
     }
   }
 
-  const areas: { path: string; content: AreaMemory }[] = [];
+  const areas: { path: string; content: AreaMemory; files: string[] }[] = [];
   const allExports: MemorySymbol[] = [];
   for (const g of areaGroups) {
     const exportsRaw: MemorySymbol[] = [];
@@ -522,7 +524,7 @@ export function extractProjectMemory(reader: TreeReader, opts: { workspacePrefix
       .update(JSON.stringify({ exports: exports.map((e) => [e.name, e.kind, e.file, e.line]), uses, doc }))
       .digest('hex');
     const content: AreaMemory = { kind: 'area', path: g.path, fileCount: g.paths.length, exports, uses, usedBy, doc, summary: null, fingerprint };
-    areas.push({ path: g.path, content });
+    areas.push({ path: g.path, content, files: g.paths });
   }
 
   const seen = new Set<string>();
