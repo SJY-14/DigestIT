@@ -1,47 +1,53 @@
 # macOS font check (DIG-83)
 
-We can't run macOS here, so this is a check for the owner to run by hand. It takes about two
-minutes. Direction B (`docs/ux/brief-2-visual-refinement.md` §3) self-hosts two Latin faces, so
-only Korean UI chrome and code depend on what's installed on your Mac.
+We can't run macOS here, so the owner runs this check by hand. It takes about five minutes.
+Direction B (`docs/ux/brief-2-visual-refinement.md` §3) self-hosts Source Serif 4, Source Sans 3
+and Noto Serif KR. Only the Korean UI face and the code face come from the Mac itself.
 
 ## How
 
-1. Open the dashboard in **Safari or Chrome** on the Mac, on any digest, in both English and
-   Korean (the language switch is in the info popover next to "Digests:").
-2. For each row below, select the text named, then open the browser's font inspector:
-   - **Safari**: Develop menu → Show Web Inspector → Elements tab → select the text → the Fonts
-     pane on the right shows "Rendered Fonts."
-   - **Chrome**: right-click the text → Inspect → Elements tab → Computed tab → scroll to
-     "Rendered Fonts" near the bottom.
-3. Compare the name shown against the "Expected" column.
+1. Open the dashboard in **Safari or Chrome** on the Mac. You need one digest written in English
+   and one written in Korean. The explanation language is set in the info popover in the project
+   header. It only applies to digests explained *after* you change it; older digests keep their
+   language. If you have no Korean digest yet, switch to Korean and Explain one.
+2. For each row below, select the text, then open the font inspector:
+   - **Safari**: Develop → Show Web Inspector → Elements → select the node → the **Font** panel
+     in the details sidebar lists the rendered fonts.
+   - **Chrome**: right-click → Inspect → Elements → **Computed** → scroll to **Rendered Fonts** at
+     the bottom. Self-hosted faces are marked "Network resource", Mac faces "Local file".
+3. Compare the name shown with the Expected column. Mixed Korean/Latin text lists two fonts:
+   one for the Latin glyphs and one for the Hangul glyphs. Check both.
 
 ## What to check
 
-| Row | Where to click | Language | Expected rendered font |
+| Row | Where | Digest language | Expected |
 | --- | --- | --- | --- |
-| L0 headline | The large one-line summary at the top of a digest (e.g. "Retries now back off exponentially...") | English | **Source Serif 4** |
-| L0 headline | Same, after switching to Korean | Korean | **Source Serif 4** (Latin is self-hosted regardless of language; a Korean headline is still set in the serif stack, it just has no Hangul glyphs to fall through) |
-| Area title | A file/area name in the L2 list or an L0 area card (e.g. "retry.js") | English | **Source Serif 4** |
-| Body paragraph | The L1 "what changed" prose, or an L3 step's explanation text | English | **Source Serif 4** |
-| Body paragraph | Same, in Korean | Korean | **Noto Serif KR** for the Hangul characters (Source Serif 4 has no Hangul glyphs, so the browser falls through to the next serif in the stack) |
-| Tab label | "L0 Summary" / "L2 Structure" etc. in the level switcher | English | **Source Sans 3** |
-| Tab label | Same tab labels in Korean ("L0 요약" etc.) | Korean | **Apple SD Gothic Neo** for the Hangul characters (there is no self-hosted Korean sans; the stack falls through to the platform's Korean UI face) |
-| Diff line | Any line of code in an L3 step's diff | either | **SF Mono** |
+| L0 headline | The large one-line summary at the top of a digest | English | **Source Serif 4** |
+| L0 headline | Same | Korean | Hangul: **Noto Serif KR**. Latin letters and digits in it: Source Serif 4 |
+| Area title | An area name in the L0 "Areas in this digest" list or the L2 list | either | **Source Serif 4** (plus Noto Serif KR for any Hangul) |
+| Body paragraph | L1 prose, or an L3 step's explanation | English | **Source Serif 4** |
+| Body paragraph | Same | Korean | Hangul: **Noto Serif KR** |
+| Tab label | The level switcher ("L0 Summary", "L2 Structure") | English | **Source Sans 3** |
+| Tab label | Same ("L0 요약") | Korean | Hangul: **Apple SD Gothic Neo**. "L0": Source Sans 3 |
+| Diff line | Any code line in an L3 step's diff | either | **SF Mono** in Safari. Chrome may show **Menlo** (Chrome can't use SF Mono by name); that is fine |
+
+The names may carry a suffix: Chrome can show "Source Serif 4 Variable" or add a weight, and Safari
+can show SF Mono as "SFMono-Regular" or ".SF NS Mono". These still count as correct. If you have
+installed Noto Serif CJK KR yourself, it can appear instead of Noto Serif KR. That is also fine.
 
 ## What a wrong result looks like
 
-- **Any row showing "Helvetica," "Arial," ".AppleSystemUIFont," or "LucidaGrande" for the L0
-  headline, an area title, or a body paragraph** — the self-hosted serif failed to load (network
-  block, CSP change, or a build that dropped the font files). This is the regression the
-  Board originally flagged: the reading text would look like generic system UI again, not a
-  considered serif.
-- **The Korean body paragraph or tab label showing a Latin fallback face** (e.g. Times, Helvetica)
-  **instead of a Korean-specific name** — the Hangul glyphs are being rendered by a font that
-  doesn't actually have them (the browser is showing its own tofu/fallback box glyphs), or the
-  platform's Korean font is missing entirely.
-- **The Korean tab label showing "Noto Serif KR" instead of "Apple SD Gothic Neo"** — the UI
-  chrome stack is accidentally pulling in the reading serif for a role that should be sans.
-- **The diff line showing a proportional font** (anything other than a monospace name) — code
-  would no longer align, which breaks the point of a diff view.
+- **Headline, area title or body in "Times", "Helvetica", "Georgia" or ".AppleSystemUIFont".** The
+  self-hosted serif didn't load (blocked request, or a build without the font files). The reading
+  text falls back to generic system type, which is the look the Board originally rejected. In
+  Chrome the entry would also say "Local file" where it should say "Network resource".
+- **Korean headline or body with Hangul in "AppleMyungjo" or "Apple SD Gothic Neo".** The
+  self-hosted Noto Serif KR didn't load. The browser used the Mac's default Korean serif or sans
+  instead.
+- **Korean tab label with Hangul in "Noto Serif KR".** The UI stack pulls in the reading serif,
+  so the chrome would look like body text.
+- **Diff line in any proportional font** (not SF Mono, Menlo or another monospace). Code columns
+  no longer line up.
 
-Report back which rows (if any) showed a wrong font, with the exact name the inspector gave.
+Report which rows were wrong and the exact name the inspector showed. A screenshot of the font
+panel is enough.
