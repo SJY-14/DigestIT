@@ -18,6 +18,7 @@ import {
 } from '@digestit/explain';
 import { projectDataDir } from './datahome.js';
 import { listMemoryItems, recordMemoryUse } from './memory.js';
+import { memoryAreaKey } from './memory-threads.js';
 import { DEFAULT_DAILY_BUDGET } from './scheduler.js';
 import { ensureContext, latestContextText, mapOfTree } from './project-context.js';
 import {
@@ -295,7 +296,10 @@ export class ExplainJobRunner {
       const { language } = opts;
       const memoryCtx = this.loadMemoryContext(project.id);
       const diffFiles = toProviderFiles(loadChange(this.db, changeUnitId)?.files);
-      const areaIds = keys.filter((k) => k.startsWith('area:')).map((k) => k.slice('area:'.length));
+      // `selectMemory` matches memory area keys (paths), not the digest's area ids (slugs). The
+      // summary is about every area of the digest, even on a retry that re-runs only some parts.
+      const digestAreas = this.loadDigest(changeUnitId)?.areas ?? [];
+      const memoryKeyOf = (areaId: string): string[] => digestAreas.filter((a) => a.id === areaId).map(memoryAreaKey);
 
       const runPart = (key: PartKey, fn: () => Promise<PartOutcome | null>): Promise<void> => limiter.run(async () => {
         state.parts.set(key, 'running');
@@ -323,7 +327,7 @@ export class ExplainJobRunner {
       const runs: Promise<void>[] = [];
       for (const key of keys) {
         if (key === 'summary') {
-          const slice = this.memorySliceFor(memoryCtx, 'summary', areaIds, diffFiles, language);
+          const slice = this.memorySliceFor(memoryCtx, 'summary', digestAreas.map(memoryAreaKey), diffFiles, language);
           runs.push(runPart(key, async () => {
             const outcome = await explainDigestSummary(this.db, changeUnitId, provider, { job, context, language, force: opts.force, memory: slice });
             this.logMemoryUse(jobId, 'summary', changeUnitId, slice, outcome.calls);
@@ -333,7 +337,7 @@ export class ExplainJobRunner {
           runs.push(runPart(key, () => this.runContext(project, provider, job)));
         } else {
           const areaId = key.slice('area:'.length);
-          const slice = this.memorySliceFor(memoryCtx, 'area', [areaId], diffFiles, language);
+          const slice = this.memorySliceFor(memoryCtx, 'area', memoryKeyOf(areaId), diffFiles, language);
           runs.push(runPart(key, async () => {
             const outcome = await explainDigestAreaText(this.db, changeUnitId, areaId, provider, { job, context, language, memory: slice });
             this.logMemoryUse(jobId, `area:${areaId}`, changeUnitId, slice, outcome.calls);
@@ -408,7 +412,8 @@ export class ExplainJobRunner {
     const job: JobRef = { jobId, budget: this.budget, now: this.now };
     const memoryCtx = this.loadMemoryContext(project.id);
     const diffFiles = toProviderFiles(loadChange(this.db, digestId)?.files);
-    const slice = this.memorySliceFor(memoryCtx, 'walkthrough', [areaId], diffFiles, language);
+    const areaKeys = (this.loadDigest(digestId)?.areas ?? []).filter((a) => a.id === areaId).map(memoryAreaKey);
+    const slice = this.memorySliceFor(memoryCtx, 'walkthrough', areaKeys, diffFiles, language);
     const settled = (async (): Promise<PartOutcome> => {
       let outcome: PartOutcome;
       try {

@@ -175,6 +175,27 @@ describe('ExplainJobRunner.start', () => {
     expect(usedInDigests.get(serverAreaItem.id)).toBe(1);
   });
 
+  it('DIG-103: matches memory by area path, not by the digest area id, for nested areas', async () => {
+    for (const pkg of ['core', 'web']) for (const f of ['a', 'b', 'c']) write(`packages/${pkg}/${f}.ts`, `export const ${pkg}_${f} = 1;\n`);
+    const init = await initProject(db, home, proj);
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+    await updateProjectMemory(db, home, project, 'manual');
+    expect(getMemoryItem(db, project.id, 'area', 'packages/core', null)).not.toBeNull();
+    write('packages/core/a.ts', 'export const core_a = 2;\n');
+    const runner = new ExplainJobRunner(db, home);
+    const r = await runner.start(project, provider());
+    await settle(runner, r.digestId!);
+    await r.settled;
+    const areas = JSON.parse((db.prepare('SELECT areas FROM digest WHERE change_unit_id = ?').get(r.digestId!) as { areas: string }).areas) as { id: string; label: string }[];
+    expect(areas.map((a) => [a.id, a.label])).toEqual([['packages-core', 'packages/core']]);
+
+    const area = await runner.startArea(project, r.digestId!, 'packages-core', provider());
+    await area.settled;
+    const coreId = getMemoryItem(db, project.id, 'area', 'packages/core', null)!.id;
+    const parts = (db.prepare('SELECT part FROM memory_use WHERE item_id = ? ORDER BY part').all(coreId) as { part: string }[]).map((x) => x.part);
+    expect(parts).toEqual(['area:packages-core', 'summary', 'walkthrough:packages-core']);
+  });
+
   it('409s a second Explain while the first runs, and releases the lock once it settles', async () => {
     const project = await initAndEdit();
     const p = provider();
