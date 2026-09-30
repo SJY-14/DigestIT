@@ -54,13 +54,14 @@ the project. Projects can be removed (soft delete). A new "All projects" view so
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-80 | Audit, brief, critique, decision, acceptance | CTO | DIG-93 |
+| 0 | DIG-80 | Audit, brief, critique, decision, acceptance. Done 2026-09-30 | CTO | DIG-93 |
 | 1 | DIG-87 | `GET /api/about`, `ProjectDto.latestDigest`, soft remove (API + `digest remove`). Merged 2026-09-30 | Diff engineer | — |
 | 2 | DIG-88 | IA cleanup, first-run trust + layout, Settings & trust panel (P1, P2, P3, P5). Merged 2026-09-30 | Frontend engineer | — |
 | 3 | DIG-89 | Project panel with unread + Remove, All projects view (P4, P7). Merged 2026-09-30 | Frontend engineer | — |
 | 4 | DIG-90 | Verify against decision-2, `docs/ux/cycle-2-summary.md`. Passed, merged 2026-09-30 | UX reviewer | DIG-88, DIG-89, DIG-92 |
 | 5 | DIG-92 | Fix: the web client's Remove got 415 (DELETE sent no `content-type`). Found by DIG-90. Merged 2026-09-30 | CTO | — |
-| 6 | DIG-93 | Real-provider acceptance run (`.cache/dig80-acceptance/accept.sh`, stub dry run passed) | Board operator | DIG-90 |
+| 6 | DIG-93 | Real-provider acceptance run (`.cache/dig80-acceptance/accept.sh`, all views passed, 2026-09-30) | Board operator | DIG-90 |
+| 7 | DIG-95 | Follow-up from DIG-93: inline code in L0 lines outside the reading pane; L3 "writing" notice stays after the walkthrough (DIG-94 covers the explanation-side findings) | Frontend engineer | — |
 
 ## Removing the AI-made look (done)
 
