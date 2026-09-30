@@ -6,6 +6,7 @@
 // DigestPicker's `.digest-row-main[aria-current='true']` already use, not a background tint alone.
 import { projectsCopy, type Lang } from './copy.js';
 import { relativeTime } from './format.js';
+import { renderProse } from './prose.js';
 import type { UnreadState } from './unread.js';
 
 export type RemoveState = 'idle' | 'confirm' | 'removing';
@@ -48,7 +49,7 @@ export function ProjectRow({ project, current, unread, onSelect, headline, quiet
         <span className="proj-main">
           <span className="proj-name">{project.name}</span>
           <span className="proj-meta">{activity}</span>
-          {headline !== undefined && <span className="proj-headline">{headline}</span>}
+          {headline !== undefined && <span className="proj-headline">{renderProse(headline)}</span>}
         </span>
         {unread.kind !== 'none' && (
           <span className="badge unread proj-unread">{unread.kind === 'new' ? T.unreadNew : T.unreadCount(unread.n)}</span>

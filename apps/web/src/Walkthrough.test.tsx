@@ -197,6 +197,13 @@ describe('WalkthroughView', () => {
     expect(onGenerate).toHaveBeenCalled();
   });
 
+  it('drops the "writing…" spinner once a walkthrough has landed, even if status is still pending', async () => {
+    await render(view({ ...fixtureArea, status: 'pending', l3: fixtureWalkthrough }));
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    expect(host.querySelector('.overview')).toBeTruthy();
+    expect(host.querySelectorAll('section.step')).toHaveLength(fixtureWalkthrough.steps.length);
+  });
+
   it('no reviewed toggle when the caller has nothing to mark yet', async () => {
     await render(view());
     expect(host.querySelector('.reviewed-toggle')).toBeNull();
