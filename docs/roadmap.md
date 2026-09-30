@@ -13,7 +13,7 @@ one budget unit. Design and contract: [explain-speed.md](explain-speed.md).
 | 2 | DIG-75 | Deterministic areas, async Explain job runner, per-part status, digest events SSE, async L3 | Diff engineer | DIG-74 (signatures in the doc) |
 | 3 | DIG-76 | Instant digest skeleton, per-part fill-in and retry, SSE client, streamed L3 steps | Frontend engineer | — (fixtures until DIG-75) |
 | 4 | DIG-77 | Real-provider timing and quality acceptance (en and ko) | Board operator | DIG-74, DIG-75, DIG-76 |
-| 5 | DIG-84 | Bug: Explain button stays "Explaining…" after a server-run Explain (live stream misses in-process writes) | Diff engineer | — |
+| 5 | DIG-84 | Bug: Explain button stays "Explaining…" after a server-run Explain (live stream misses in-process writes). Merged 2026-09-30 | Diff engineer | — |
 
 ## L3 step ↔ code mapping
 
