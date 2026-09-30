@@ -44,6 +44,22 @@ which fonts the host has. CSP is unchanged (`default-src 'self'` covers fonts).
 | 1 | DIG-82 | Direction B token pass: fonts, type/spacing/color tokens, de-boxing, graph dots, en/ko, light/dark | Frontend engineer | DIG-81 |
 | 2 | DIG-83 | Verify: before/after of every view (en/ko, light/dark), contrast table, font-resolution evidence | UX reviewer | DIG-82 |
 
+## UX improvement cycle 2
+
+DIG-80 (Board, 2026-09-30): the whole journey, restyled in direction B. Inputs: `docs/ux/audit-2.md`, `brief-2.md`,
+`dig80-critique.md`. The CTO decision is in [ux/decision-2.md](ux/decision-2.md). One mental model: all projects →
+project → digest → level. Units, Timeline and Briefing leave the web app. Insights stays behind a gated "legacy" link in
+Settings. First run and Settings state exactly what is sent, to which provider, and when, and that DigestIT only reads
+the project. Projects can be removed (soft delete). A new "All projects" view sorts projects unread first.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 0 | DIG-80 | Audit, brief, critique, decision, acceptance | CTO | DIG-90 |
+| 1 | DIG-87 | `GET /api/about`, `ProjectDto.latestDigest`, soft remove (API + `digest remove`) | Diff engineer | — |
+| 2 | DIG-88 | IA cleanup, first-run trust + layout, Settings & trust panel (P1, P2, P3, P5) | Frontend engineer | DIG-87, DIG-82 |
+| 3 | DIG-89 | Project panel with unread + Remove, All projects view (P4, P7) | Frontend engineer | DIG-88 |
+| 4 | DIG-90 | Verify against decision-2, `docs/ux/cycle-2-summary.md` | UX reviewer | DIG-88, DIG-89 |
+
 ## Removing the AI-made look (done)
 
 DIG-63 (Board, 2026-09-29): the UI and the generated explanations should read as human-crafted. The audit and its
