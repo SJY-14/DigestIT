@@ -390,6 +390,19 @@ export interface DigestMemoryUse {
   droppedForBudget: number;
 }
 
+// ---- per-project settings (D1: background summaries default off) ----------------------------
+
+/** Per-project opt-in for background LLM summaries (docs/milestone-4-memory.md §5, D1).
+ * Deterministic memory (areas/terms/threads from code) is always on and does not check this. */
+export function memorySummariesEnabled(db: DatabaseSync, repoId: number): boolean {
+  const row = db.prepare('SELECT memory_summaries AS v FROM repo WHERE id = ?').get(repoId) as { v: number } | undefined;
+  return row?.v === 1;
+}
+
+export function setMemorySummariesEnabled(db: DatabaseSync, repoId: number, enabled: boolean): void {
+  db.prepare('UPDATE repo SET memory_summaries = ? WHERE id = ?').run(enabled ? 1 : 0, repoId);
+}
+
 /** `GET /api/digests/:id/memory-used`'s raw query: item ids only, so the API layer can join in
  * each item's current `MemoryItemDto` fields (`getMemoryItemById`, `usedInDigestsCounts`). */
 export function memoryUsedForDigest(db: DatabaseSync, changeUnitId: number): DigestMemoryUse {

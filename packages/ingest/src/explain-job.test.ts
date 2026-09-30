@@ -9,6 +9,8 @@ import {
   type DigestAreaTextInput, type DigestAreaTextResult, type DigestSummaryInput, type DigestSummaryResult,
 } from '@digestit/explain';
 import { AreaExplainRunningError, ExplainJobRunner, explainProject, retryDigest } from './explain-job.js';
+import { getMemoryItem, usedInDigestsCounts } from './memory.js';
+import { updateProjectMemory } from './memory-update.js';
 import { findProject, initProject, ProjectLockedError, type ProjectRow } from './project.js';
 
 let root: string;
@@ -136,6 +138,41 @@ describe('ExplainJobRunner.start', () => {
     expect(done.summary).toBe('ok');
     expect(Object.values(done.areas)).toEqual(['ok', 'ok', 'ok']);
     expect(done.finishedAt).not.toBeNull();
+  });
+
+  it('DIG-103: records memory_use for the summary and area parts, scoped to their own touched area', async () => {
+    const project = await initAndEdit();
+    await updateProjectMemory(db, home, project, 'manual');
+    const p = provider();
+    const runner = new ExplainJobRunner(db, home);
+    const r = await runner.start(project, p);
+    await settle(runner, r.digestId!);
+    await r.settled;
+
+    const rows = db.prepare('SELECT job_id AS jobId, part, item_id AS itemId FROM memory_use ORDER BY part, item_id')
+      .all() as { jobId: number; part: string; itemId: number }[];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(new Set(rows.map((row) => row.jobId)).size).toBe(1);
+
+    const itemKey = (id: number) => (db.prepare('SELECT kind, key FROM memory_item WHERE id = ?').get(id) as { kind: string; key: string });
+    const summaryKeys = rows.filter((row) => row.part === 'summary').map((row) => itemKey(row.itemId).key).sort();
+    // The summary part sees every touched area (server, web, project-root).
+    expect(summaryKeys).toContain('server');
+    expect(summaryKeys).toContain('web');
+    // The `area:server` part's own slice only carries the `server` area itself (no `web`): a
+    // per-area prompt is scoped to that one area's neighbourhood, not the whole digest.
+    const areaServerKeys = rows.filter((row) => row.part === 'area:server').map((row) => itemKey(row.itemId).key);
+    expect(areaServerKeys).toContain('server');
+    expect(areaServerKeys).not.toContain('web');
+
+    const sliceRows = db.prepare("SELECT part, change_unit_id AS changeUnitId FROM memory_slice WHERE part = 'summary'").all() as
+      { part: string; changeUnitId: number }[];
+    expect(sliceRows).toHaveLength(1);
+    expect(sliceRows[0]!.changeUnitId).toBe(r.digestId);
+
+    const usedInDigests = usedInDigestsCounts(db, project.id);
+    const serverAreaItem = getMemoryItem(db, project.id, 'area', 'server', null)!;
+    expect(usedInDigests.get(serverAreaItem.id)).toBe(1);
   });
 
   it('409s a second Explain while the first runs, and releases the lock once it settles', async () => {

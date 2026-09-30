@@ -1,8 +1,8 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { CallTiming, Effort } from './provider.js';
 
-/** `explain_job.kind` (migration 10). */
-export type ExplainJobKind = 'explain' | 'retry' | 'area' | 'context';
+/** `explain_job.kind` (migration 10; `memory` added by migration 12, DIG-103). */
+export type ExplainJobKind = 'explain' | 'retry' | 'area' | 'context' | 'memory';
 
 /**
  * A started job, handed to every part function of that job (docs/explain-speed.md, "Signatures
@@ -40,6 +40,31 @@ export function budgetStatus(db: DatabaseSync, now: Date): number {
     `SELECT count(*) AS n FROM explain_call WHERE job_id IS NULL AND outcome IN ('ok','error') AND at >= ?`,
   ).get(dayStart) as { n: number };
   return jobs.n + legacy.n;
+}
+
+/** Background `memory`-kind jobs with at least one `ok`/`error` call today (docs/milestone-4-memory.md
+ * §4): counted separately from `budgetStatus` (which this is a subset of) so the daily share can be
+ * enforced on top of, not instead of, the shared 40-job budget. */
+export function memoryJobsToday(db: DatabaseSync, now: Date): number {
+  const dayStart = startOfLocalDay(now).toISOString();
+  return (db.prepare(
+    `SELECT count(*) AS n FROM (
+       SELECT DISTINCT j.id FROM explain_job j JOIN explain_call c ON c.job_id = j.id
+        WHERE j.kind = 'memory' AND c.outcome IN ('ok','error') AND c.at >= ?
+     )`,
+  ).get(dayStart) as { n: number }).n;
+}
+
+/**
+ * The budget-share gate for a background `memory` job (docs/milestone-4-memory.md §4): today's
+ * memory jobs must be under the daily `share` (0 turns memory jobs off entirely), and starting one
+ * must still leave at least `reserve` of the shared daily budget for user actions. Checked before
+ * `startJob`, which then does its own (looser) check against the full budget.
+ */
+export function canStartMemoryJob(db: DatabaseSync, now: Date, budgetLimit: number, share: number, reserve: number): boolean {
+  if (share <= 0) return false;
+  if (memoryJobsToday(db, now) >= share) return false;
+  return budgetLimit - budgetStatus(db, now) >= reserve;
 }
 
 /**

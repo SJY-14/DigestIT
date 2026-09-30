@@ -7,13 +7,17 @@
 // and nothing stored, it reads `error`.
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  AreaProgressEvent, AreaWalkthrough, DigestAreaSkeleton, DigestL2Content, DigestPartsDto, PartStatus,
+  AreaMemory, AreaProgressEvent, AreaWalkthrough, DigestAreaSkeleton, DigestL2Content, DigestPartsDto, ExplainLanguage,
+  MemoryItem, MemorySlice, PartStatus, TermMemory,
 } from '@digestit/core';
+import { MEMORY_LIMITS } from '@digestit/core';
 import {
-  type ExplainJobKind, type ExplanationProvider, type JobRef, type PartOutcome,
-  explainArea, explainDigestAreaText, explainDigestSummary, finishJob, markPartsBudget, renderMap, setPrepMs, startJob,
+  type ExplainJobKind, type ExplanationProvider, type JobRef, type MemoryPromptKind, type PartOutcome, type ProviderFile,
+  explainArea, explainDigestAreaText, explainDigestSummary, finishJob, identifiersInDiff, loadChange, markPartsBudget,
+  renderMap, selectMemory, setPrepMs, startJob,
 } from '@digestit/explain';
 import { projectDataDir } from './datahome.js';
+import { listMemoryItems, recordMemoryUse } from './memory.js';
 import { DEFAULT_DAILY_BUDGET } from './scheduler.js';
 import { ensureContext, latestContextText, mapOfTree } from './project-context.js';
 import {
@@ -29,6 +33,13 @@ export class AreaExplainRunningError extends Error {
 }
 
 export type PartKey = 'summary' | 'context' | `area:${string}`;
+
+/** `RawChange['files']` (`RawFile[]`) has the same shape as `ProviderFile[]` except `filteredReason`
+ * is optional there and required (nullable) here -- `identifiersInDiff` only reads `.patch`, so this
+ * is just closing that gap, not a real conversion. */
+function toProviderFiles(files: { filteredReason?: string | null }[] | undefined): ProviderFile[] {
+  return (files ?? []).map((f) => ({ ...f, filteredReason: f.filteredReason ?? null }) as ProviderFile);
+}
 
 /** At most `max` callbacks run at once; the others wait in the order they were queued. */
 class Limiter {
@@ -80,6 +91,11 @@ export interface ExplainJobRunnerOptions {
    * detects a `data_version` bump from another connection, and this runner shares its `db` handle
    * with the SSE route). Omitted in tests/CLI runs with no live stream to notify. */
   notify?: () => void;
+  /** MemoryWorker's "after an Explain job finishes" trigger (docs/milestone-4-memory.md §2, DIG-103):
+   * called once a job's LLM parts have all settled and its DB writes (areas, thread attach) are
+   * durable -- the project lock is already released, so the worker's own memory batch never races
+   * this job. Fires for every settled job (`explain`/`retry`/an area `startArea`), not per part. */
+  onJobSettled?: (repoId: number) => void;
 }
 
 export interface StartResult {
@@ -135,6 +151,38 @@ export class ExplainJobRunner {
       .get(changeUnitId) as { repoId: number; areas: string | null; language: ProjectRow['language'] } | undefined;
     if (!row || row.areas === null) return null;
     return { repoId: row.repoId, areas: JSON.parse(row.areas) as DigestAreaSkeleton[], language: row.language };
+  }
+
+  /** One repo-wide read of active memory (docs/milestone-4-memory.md §3), shared by every part of
+   * one job/area call so a job's several `selectMemory` calls see the same snapshot. `knownTerms`
+   * is every term item's name plus every area item's export names -- what `identifiersInDiff` may
+   * match in the diff. */
+  private loadMemoryContext(repoId: number): { items: MemoryItem[]; knownTerms: string[] } {
+    const items = listMemoryItems(this.db, repoId);
+    const knownTerms = [
+      ...items.filter((it) => it.kind === 'term').map((it) => (it.content as TermMemory).term),
+      ...items.filter((it) => it.kind === 'area').flatMap((it) => (it.content as AreaMemory).exports.map((e) => e.name)),
+    ];
+    return { items, knownTerms };
+  }
+
+  /** `selectMemory` for one prompt part (docs/milestone-4-memory.md §3): `files` is the digest's
+   * whole (unfiltered) diff even for a per-area prompt, since a second, area-scoped `loadChange`
+   * read would cost a query for a marginal precision gain on which identifiers are "in the diff". */
+  private memorySliceFor(
+    ctx: { items: MemoryItem[]; knownTerms: string[] }, kind: MemoryPromptKind, touchedAreas: string[],
+    files: readonly ProviderFile[], language: ExplainLanguage,
+  ): MemorySlice {
+    const identifiers = identifiersInDiff(files, ctx.knownTerms);
+    return selectMemory(ctx.items, { touchedAreas, identifiers, kind, language }, MEMORY_LIMITS.sliceTokens[kind]);
+  }
+
+  /** Logs `slice.items`/`droppedForBudget` against the part that used them (docs/milestone-4-memory.md
+   * §3, "the slice's item versions go to `memory_use`") -- only when the part actually made a call
+   * (`calls > 0`); a cached or budget-refused part never sent the slice to a prompt. */
+  private logMemoryUse(jobId: number, part: string, changeUnitId: number | null, slice: MemorySlice, calls: number): void {
+    if (calls === 0) return;
+    recordMemoryUse(this.db, { jobId, part, changeUnitId, items: slice.items, droppedForBudget: slice.droppedForBudget });
   }
 
   /** The compact, deterministic `ProjectMap` rendering (docs/explain-speed.md §4 "Context off the
@@ -245,6 +293,9 @@ export class ExplainJobRunner {
       const limiter = new Limiter(this.maxInFlight);
       const job: JobRef = { jobId, budget: this.budget, now: this.now };
       const { language } = opts;
+      const memoryCtx = this.loadMemoryContext(project.id);
+      const diffFiles = toProviderFiles(loadChange(this.db, changeUnitId)?.files);
+      const areaIds = keys.filter((k) => k.startsWith('area:')).map((k) => k.slice('area:'.length));
 
       const runPart = (key: PartKey, fn: () => Promise<PartOutcome | null>): Promise<void> => limiter.run(async () => {
         state.parts.set(key, 'running');
@@ -272,12 +323,22 @@ export class ExplainJobRunner {
       const runs: Promise<void>[] = [];
       for (const key of keys) {
         if (key === 'summary') {
-          runs.push(runPart(key, () => explainDigestSummary(this.db, changeUnitId, provider, { job, context, language, force: opts.force })));
+          const slice = this.memorySliceFor(memoryCtx, 'summary', areaIds, diffFiles, language);
+          runs.push(runPart(key, async () => {
+            const outcome = await explainDigestSummary(this.db, changeUnitId, provider, { job, context, language, force: opts.force, memory: slice });
+            this.logMemoryUse(jobId, 'summary', changeUnitId, slice, outcome.calls);
+            return outcome;
+          }));
         } else if (key === 'context') {
           runs.push(runPart(key, () => this.runContext(project, provider, job)));
         } else {
           const areaId = key.slice('area:'.length);
-          runs.push(runPart(key, () => explainDigestAreaText(this.db, changeUnitId, areaId, provider, { job, context, language })));
+          const slice = this.memorySliceFor(memoryCtx, 'area', [areaId], diffFiles, language);
+          runs.push(runPart(key, async () => {
+            const outcome = await explainDigestAreaText(this.db, changeUnitId, areaId, provider, { job, context, language, memory: slice });
+            this.logMemoryUse(jobId, `area:${areaId}`, changeUnitId, slice, outcome.calls);
+            return outcome;
+          }));
         }
       }
       // A later Explain refreshes the context in the background when `ensureContext`'s rules say so;
@@ -295,6 +356,7 @@ export class ExplainJobRunner {
       } catch { /* left unfinished: its parts read as stored, or `error` */ }
       releaseProjectLock(opts.dataDir);
       this.opts.notify?.();
+      this.opts.onJobSettled?.(project.id);
       // Take the listeners before dropping the live state, so the final notification (the one the
       // SSE route turns into `done`) still reaches them.
       const { listeners } = state;
@@ -344,15 +406,19 @@ export class ExplainJobRunner {
     const context = latestContextText(this.db, project.id);
     const language = this.loadDigest(digestId)?.language ?? project.language; // the digest's own language
     const job: JobRef = { jobId, budget: this.budget, now: this.now };
+    const memoryCtx = this.loadMemoryContext(project.id);
+    const diffFiles = toProviderFiles(loadChange(this.db, digestId)?.files);
+    const slice = this.memorySliceFor(memoryCtx, 'walkthrough', [areaId], diffFiles, language);
     const settled = (async (): Promise<PartOutcome> => {
       let outcome: PartOutcome;
       try {
         const r = await explainArea(this.db, digestId, areaId, provider, {
-          job, context, language,
+          job, context, language, memory: slice,
           // The provider's own `done` comes before validation; only the stored result below is final.
           onProgress: (e) => this.emitAreaProgress(digestId, { ...e, done: false }),
         });
         outcome = { outcome: r.outcome === 'budget' ? 'error' : r.outcome, calls: r.calls, detail: r.detail };
+        this.logMemoryUse(jobId, `walkthrough:${areaId}`, digestId, slice, outcome.calls);
       } catch (e) {
         outcome = { outcome: 'error', calls: 0, detail: e instanceof Error ? e.message : String(e) };
       }
