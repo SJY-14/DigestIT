@@ -45,6 +45,12 @@ export async function runMemoryCli(argv: string[]): Promise<number> {
 
   const { db, home } = openProjectDb(values.db ?? process.env.DIGESTIT_DB);
   try {
+    const found = findProject(db, projectRef);
+    if ('error' in found) {
+      console.error(found.error);
+      return 1;
+    }
+
     if (subcommand === 'rollback') {
       const batchId = Number(batchArg);
       if (!batchArg || !Number.isInteger(batchId)) {
@@ -52,19 +58,17 @@ export async function runMemoryCli(argv: string[]): Promise<number> {
         return 2;
       }
       const target = getBatch(db, batchId);
-      if (!target) {
-        console.error(`no memory batch ${batchId}`);
+      if (!target || target.repoId !== found.id) {
+        console.error(`no memory batch ${batchId} for project "${found.name}"`);
+        return 1;
+      }
+      if (target.rolledBack) {
+        console.error(`memory batch ${batchId} was already rolled back`);
         return 1;
       }
       const result = rollbackBatch(db, batchId);
-      console.log(`rolled back batch ${batchId}: ${result.restored} item(s) restored, ${result.hidden} item(s) hidden (new batch ${result.batchId})`);
+      console.log(`rolled back batch ${batchId}: ${result.restored} item(s) restored, ${result.staled} item(s) staled (new batch ${result.batchId})`);
       return 0;
-    }
-
-    const found = findProject(db, projectRef);
-    if ('error' in found) {
-      console.error(found.error);
-      return 1;
     }
 
     if (subcommand === 'update') {

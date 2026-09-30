@@ -387,10 +387,13 @@ function leadingDocComment(text: string, lang: Lang): string | null {
   return null;
 }
 
+/** Redact first, then cap: capping first could cut a token mid-way so `redact()` no longer
+ * recognises it, leaking a fragment into storage. */
 function capAndRedact(text: string | null): string | null {
   if (!text) return null;
-  const capped = text.length > MEMORY_LIMITS.docChars ? text.slice(0, MEMORY_LIMITS.docChars) : text;
-  const cleaned = redact(capped).trim();
+  const redacted = redact(text);
+  const capped = redacted.length > MEMORY_LIMITS.docChars ? redacted.slice(0, MEMORY_LIMITS.docChars) : redacted;
+  const cleaned = capped.trim();
   return cleaned.length > 0 ? cleaned : null;
 }
 

@@ -5,9 +5,14 @@ import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
 import type { AreaMemory } from '@digestit/core';
-import { findProject, initProject, type ProjectRow } from './project.js';
-import { createBatch, listMemoryItems, markHidden } from './memory.js';
+import { findProject, initProject, prepareExplainDigest, type ProjectRow } from './project.js';
+import { createBatch, getMemoryItem, listMemoryItems, markHidden, upsertMemoryItem } from './memory.js';
 import { updateProjectMemory } from './memory-update.js';
+
+/** No-LLM way to advance the project's checkpoint (the same prep phase `digest explain` runs
+ * before any provider call), so a test can simulate "the user's edit was digested" without a
+ * provider. `updateProjectMemory` itself must never do this (see the blocking-fix test below). */
+const advanceCheckpoint = (project: ProjectRow, now: () => Date) => prepareExplainDigest(db, home, project, now);
 
 let root: string;
 let proj: string;
@@ -79,6 +84,7 @@ describe('updateProjectMemory', () => {
     const libV1 = listMemoryItems(db, project.id, { kind: 'area' }).find((a) => a.key === 'lib')!.version;
 
     write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\nexport function sub(a: number, b: number) { return a - b; }\n`);
+    await advanceCheckpoint(project, () => new Date('2026-10-01T00:00:00.000Z'));
     const result = await updateProjectMemory(db, home, project, 'manual', () => new Date('2026-10-01T00:00:00.000Z'));
     expect(result.areasChanged).toBe(1);
     const areas = listMemoryItems(db, project.id, { kind: 'area' });
@@ -94,6 +100,7 @@ describe('updateProjectMemory', () => {
     await updateProjectMemory(db, home, project, 'init', () => new Date('2026-09-30T00:00:00.000Z'));
 
     rmSync(join(proj, 'lib'), { recursive: true, force: true });
+    await advanceCheckpoint(project, () => new Date('2026-10-01T00:00:00.000Z'));
     const result = await updateProjectMemory(db, home, project, 'manual', () => new Date('2026-10-01T00:00:00.000Z'));
     expect(result.areasStale).toBe(1);
     expect(listMemoryItems(db, project.id, { kind: 'area' }).find((a) => a.key === 'lib')!.status).toBe('stale');
@@ -109,20 +116,42 @@ describe('updateProjectMemory', () => {
     markHidden(db, hideBatch, src.id, () => new Date('2026-09-30T01:00:00.000Z'));
 
     write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\nexport function sub() {}\n`);
+    await advanceCheckpoint(project, () => new Date('2026-10-01T00:00:00.000Z'));
     const result = await updateProjectMemory(db, home, project, 'manual', () => new Date('2026-10-01T00:00:00.000Z'));
     expect(result.areasChanged).toBe(0); // the extractor skipped the hidden area entirely
     expect(listMemoryItems(db, project.id, { kind: 'area' }).find((a) => a.key === 'src')!.status).toBe('hidden');
   });
 
-  it('a denylisted file never surfaces in an extracted area\'s doc, exports or provenance', async () => {
+  it('never mints its own checkpoint: pending changes are still digested by an Explain after a memory update', async () => {
+    write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\n`);
+    const init = await initProject(db, home, proj);
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+
+    write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\nexport function sub() {}\n`);
+    await updateProjectMemory(db, home, project, 'manual', () => new Date('2026-09-30T00:00:00.000Z'));
+
+    const prepared = await prepareExplainDigest(db, home, project, () => new Date('2026-09-30T01:00:00.000Z'));
+    expect(prepared.noChanges).toBe(false); // the edit above must still show up in the next digest
+    expect(prepared.changeUnitId).not.toBeNull();
+  });
+
+  it('a denylisted file never surfaces in an extracted area\'s key, exports, terms or provenance', async () => {
     write('.env', 'API_KEY=super-secret-value-should-never-appear\n');
+    write('id_rsa', '-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key-but-should-never-appear\n-----END OPENSSH PRIVATE KEY-----\n');
     write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\n`);
     const init = await initProject(db, home, proj);
     const project = findProject(db, String(init.repoId)) as ProjectRow;
     await updateProjectMemory(db, home, project, 'init', () => new Date('2026-09-30T00:00:00.000Z'));
-    const dump = JSON.stringify(listMemoryItems(db, project.id));
+    const items = listMemoryItems(db, project.id);
+    for (const item of items) {
+      expect(item.key).not.toMatch(/\.env|id_rsa/);
+      for (const f of item.provenance.files) expect(f).not.toMatch(/\.env|id_rsa/);
+    }
+    const dump = JSON.stringify(items);
     expect(dump).not.toContain('.env');
+    expect(dump).not.toContain('id_rsa');
     expect(dump).not.toContain('super-secret-value-should-never-appear');
+    expect(dump).not.toContain('not-a-real-key-but-should-never-appear');
   });
 
   it('redacts a token found in a README doc paragraph before it is ever stored', async () => {
@@ -134,5 +163,63 @@ describe('updateProjectMemory', () => {
     const src = listMemoryItems(db, project.id, { kind: 'area' }).find((a) => a.key === 'src')!.content as AreaMemory;
     expect(src.doc).not.toContain('sk-ant-');
     expect(src.doc).toContain('[REDACTED]');
+  });
+
+  it('reads pnpm-workspace.yaml from the checkpoint tree, not whatever the live folder has now', async () => {
+    write('pnpm-workspace.yaml', "packages:\n  - packages/*\n");
+    write('packages/core/src/index.ts', `export function coreFn() {}\n`);
+    write('packages/explain/src/index.ts', `export function explainFn() {}\n`);
+    const init = await initProject(db, home, proj);
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+
+    // The live file changes after checkpoint #1 was taken, but no new checkpoint captures it --
+    // extraction must still bucket by the checkpoint's own manifest, not this one.
+    writeFileSync(join(proj, 'pnpm-workspace.yaml'), 'packages:\n  - nonexistent/*\n');
+
+    await updateProjectMemory(db, home, project, 'init', () => new Date('2026-09-30T00:00:00.000Z'));
+    const areas = listMemoryItems(db, project.id, { kind: 'area' }).map((a) => a.key).sort();
+    expect(areas).toEqual(['', 'packages/core', 'packages/explain']); // '' is the root (pnpm-workspace.yaml itself)
+  });
+
+  it('a user-sourced area is never overwritten by a later code-only update', async () => {
+    write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\n`);
+    const init = await initProject(db, home, proj);
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+    await updateProjectMemory(db, home, project, 'init', () => new Date('2026-09-30T00:00:00.000Z'));
+    const src = getMemoryItem(db, project.id, 'area', 'src', null)!;
+    // Simulates a future user correction that takes ownership of this item (scope: "user items
+    // never touched" -- the extractor must leave a source: 'user' item alone even though it is not
+    // itself a `note`).
+    const userBatch = createBatch(db, project.id, 'user', null, () => new Date('2026-09-30T01:00:00.000Z'));
+    const userContent: AreaMemory = { ...(src.content as AreaMemory), doc: 'the user\'s own description' };
+    upsertMemoryItem(db, userBatch, project.id, 'area', 'src', null, userContent, 'user', src.provenance, () => new Date('2026-09-30T01:00:00.000Z'));
+
+    write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\nexport function sub() {}\n`);
+    await advanceCheckpoint(project, () => new Date('2026-10-01T00:00:00.000Z'));
+    const result = await updateProjectMemory(db, home, project, 'manual', () => new Date('2026-10-01T00:00:00.000Z'));
+    expect(result.areasChanged).toBe(0);
+    const after = getMemoryItem(db, project.id, 'area', 'src', null)!;
+    expect(after.source).toBe('user');
+    expect((after.content as AreaMemory).doc).toBe('the user\'s own description');
+  });
+
+  it('an area\'s background summary survives a later code-only update instead of being wiped', async () => {
+    write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\n`);
+    const init = await initProject(db, home, proj);
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+    await updateProjectMemory(db, home, project, 'init', () => new Date('2026-09-30T00:00:00.000Z'));
+    const src = getMemoryItem(db, project.id, 'area', 'src', null)!;
+    // Simulates DIG-103's background summary job: same extracted content, plus a written summary.
+    const summaryBatch = createBatch(db, project.id, 'idle', null, () => new Date('2026-09-30T01:00:00.000Z'));
+    const summarised: AreaMemory = { ...(src.content as AreaMemory), summary: 'Adds two numbers together.' };
+    upsertMemoryItem(db, summaryBatch, project.id, 'area', 'src', null, summarised, 'summary', src.provenance, () => new Date('2026-09-30T01:00:00.000Z'));
+
+    write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\nexport function sub() {}\n`);
+    await advanceCheckpoint(project, () => new Date('2026-10-01T00:00:00.000Z'));
+    await updateProjectMemory(db, home, project, 'manual', () => new Date('2026-10-01T00:00:00.000Z'));
+    const after = getMemoryItem(db, project.id, 'area', 'src', null)!;
+    expect(after.source).toBe('summary'); // not downgraded back to 'code'
+    expect((after.content as AreaMemory).summary).toBe('Adds two numbers together.'); // carried over
+    expect((after.content as AreaMemory).exports.map((e) => e.name).sort()).toEqual(['add', 'sub']); // code still re-extracted
   });
 });

@@ -130,23 +130,36 @@ describe('memory store', () => {
 
     const result = rollbackBatch(db, b2, now);
     expect(result.restored).toBe(1);
-    expect(result.hidden).toBe(0);
+    expect(result.staled).toBe(0);
     const restored = getMemoryItemById(db, created.id)!;
     expect((restored.content as AreaMemory).fileCount).toBe(3); // exact previous content
     expect(restored.version).toBe(3); // rollback is a forward move, not a rewind of the counter
     expect(getBatch(db, b2)!.rolledBack).toBe(true);
   });
 
-  it('rollbackBatch hides (never revives) an item the rolled-back batch created', () => {
+  it('rollbackBatch stales (never hides) an item the rolled-back batch created, so it is reconfirmable later', () => {
     const { db, repoId } = setup();
     const b1 = createBatch(db, repoId, 'init', null, now);
     const created = upsertMemoryItem(db, b1, repoId, 'area', 'new-area', null, area(1), 'code', provenance, now);
     finishBatch(db, b1, 0, now);
 
     const result = rollbackBatch(db, b1, now);
-    expect(result.hidden).toBe(1);
+    expect(result.staled).toBe(1);
     expect(result.restored).toBe(0);
-    expect(getMemoryItemById(db, created.id)!.status).toBe('hidden');
+    expect(getMemoryItemById(db, created.id)!.status).toBe('stale');
+
+    const b2 = createBatch(db, repoId, 'after-explain', null, now);
+    const reExtracted = upsertMemoryItem(db, b2, repoId, 'area', 'new-area', null, area(1), 'code', provenance, now);
+    expect(reExtracted.status).toBe('active'); // a stale item is revived by the extractor, unlike hidden
+  });
+
+  it('rollbackBatch refuses a batch that was already rolled back', () => {
+    const { db, repoId } = setup();
+    const b1 = createBatch(db, repoId, 'init', null, now);
+    upsertMemoryItem(db, b1, repoId, 'area', 'src', null, area(3), 'code', provenance, now);
+    finishBatch(db, b1, 0, now);
+    rollbackBatch(db, b1, now);
+    expect(() => rollbackBatch(db, b1, now)).toThrow(/already rolled back/);
   });
 
   it('rollbackBatch on a batch that only marked an item stale flips it back, unchanged content', () => {

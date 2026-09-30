@@ -232,58 +232,71 @@ export interface RollbackResult {
   /** Items put back to the version they held just before the rolled-back batch. */
   restored: number;
   /** Items the rolled-back batch created: memory rows are never hard-deleted (`memory_revision`
-   * keeps referring to them), so "undo the creation" means hiding it instead. */
-  hidden: number;
+   * keeps referring to them), so "undo the creation" makes it `stale` instead -- never sent, but
+   * reconfirmable by a later extraction, unlike `hidden` (reserved for an explicit user delete). */
+  staled: number;
 }
 
 /**
  * Replays a batch's revisions backwards: every item it touched goes back to the version it held
- * just before the batch (or, if the batch created the item, gets hidden). Recorded as a new batch
+ * just before the batch (or, if the batch created the item, goes `stale`). Recorded as a new batch
  * (trigger `rollback`) rather than rewriting history, so `memory_revision` stays append-only and a
- * rollback can itself be inspected or rolled back later.
+ * rollback can itself be inspected or rolled back later. The whole replay is one transaction, since
+ * a batch is the unit of rollback and must land or fail as a whole.
  */
 export function rollbackBatch(db: DatabaseSync, targetBatchId: number, now: () => Date = () => new Date()): RollbackResult {
   const target = getBatch(db, targetBatchId);
   if (!target) throw new Error(`no memory batch ${targetBatchId}`);
+  if (target.rolledBack) throw new Error(`memory batch ${targetBatchId} was already rolled back`);
   const at = now().toISOString();
-  const rollbackBatchId = createBatch(db, target.repoId, 'rollback', target.checkpointId, now);
-  const touched = db.prepare(
-    'SELECT item_id AS itemId, MIN(version) AS firstVersion FROM memory_revision WHERE batch_id = ? GROUP BY item_id',
-  ).all(targetBatchId) as unknown as { itemId: number; firstVersion: number }[];
 
-  let restored = 0;
-  let hidden = 0;
-  for (const { itemId, firstVersion } of touched) {
-    const current = getMemoryItemById(db, itemId);
-    if (!current) continue; // items are never hard-deleted; defensive only
-    const version = current.version + 1;
-    const prevVersion = firstVersion - 1;
-    if (prevVersion < 1) {
-      db.prepare('UPDATE memory_item SET status = ?, updated_at = ?, version = ? WHERE id = ?').run('hidden', at, version, itemId);
+  db.exec('BEGIN');
+  let result: RollbackResult;
+  try {
+    const rollbackBatchId = createBatch(db, target.repoId, 'rollback', target.checkpointId, now);
+    const touched = db.prepare(
+      'SELECT item_id AS itemId, MIN(version) AS firstVersion FROM memory_revision WHERE batch_id = ? GROUP BY item_id',
+    ).all(targetBatchId) as unknown as { itemId: number; firstVersion: number }[];
+
+    let restored = 0;
+    let staled = 0;
+    for (const { itemId, firstVersion } of touched) {
+      const current = getMemoryItemById(db, itemId);
+      if (!current) continue; // items are never hard-deleted; defensive only
+      const version = current.version + 1;
+      const prevVersion = firstVersion - 1;
+      if (prevVersion < 1) {
+        db.prepare('UPDATE memory_item SET status = ?, updated_at = ?, version = ? WHERE id = ?').run('stale', at, version, itemId);
+        writeRevision(db, itemId, version, rollbackBatchId, {
+          content: current.content, source: current.source, status: 'stale', pinned: current.pinned, provenance: current.provenance,
+        }, at);
+        staled++;
+        continue;
+      }
+      const prev = db.prepare(
+        'SELECT content, source, status, pinned, provenance FROM memory_revision WHERE item_id = ? AND version = ?',
+      ).get(itemId, prevVersion) as { content: string; source: MemorySource; status: MemoryStatus; pinned: number; provenance: string } | undefined;
+      if (!prev) continue; // no earlier revision recorded; defensive only
+      db.prepare(
+        `UPDATE memory_item SET content = ?, source = ?, status = ?, pinned = ?, provenance = ?, updated_at = ?, version = ?
+         WHERE id = ?`,
+      ).run(prev.content, prev.source, prev.status, prev.pinned, prev.provenance, at, version, itemId);
       writeRevision(db, itemId, version, rollbackBatchId, {
-        content: current.content, source: current.source, status: 'hidden', pinned: current.pinned, provenance: current.provenance,
+        content: JSON.parse(prev.content) as MemoryContent, source: prev.source, status: prev.status,
+        pinned: prev.pinned === 1, provenance: JSON.parse(prev.provenance) as MemoryProvenance,
       }, at);
-      hidden++;
-      continue;
+      restored++;
     }
-    const prev = db.prepare(
-      'SELECT content, source, status, pinned, provenance FROM memory_revision WHERE item_id = ? AND version = ?',
-    ).get(itemId, prevVersion) as { content: string; source: MemorySource; status: MemoryStatus; pinned: number; provenance: string } | undefined;
-    if (!prev) continue; // no earlier revision recorded; defensive only
-    db.prepare(
-      `UPDATE memory_item SET content = ?, source = ?, status = ?, pinned = ?, provenance = ?, updated_at = ?, version = ?
-       WHERE id = ?`,
-    ).run(prev.content, prev.source, prev.status, prev.pinned, prev.provenance, at, version, itemId);
-    writeRevision(db, itemId, version, rollbackBatchId, {
-      content: JSON.parse(prev.content) as MemoryContent, source: prev.source, status: prev.status,
-      pinned: prev.pinned === 1, provenance: JSON.parse(prev.provenance) as MemoryProvenance,
-    }, at);
-    restored++;
-  }
 
-  db.prepare('UPDATE memory_batch SET rolled_back = 1 WHERE id = ?').run(targetBatchId);
-  finishBatch(db, rollbackBatchId, 0, now);
-  return { batchId: rollbackBatchId, restored, hidden };
+    db.prepare('UPDATE memory_batch SET rolled_back = 1 WHERE id = ?').run(targetBatchId);
+    finishBatch(db, rollbackBatchId, 0, now);
+    result = { batchId: rollbackBatchId, restored, staled };
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  return result;
 }
 
 // ---- export / clear --------------------------------------------------------------------------

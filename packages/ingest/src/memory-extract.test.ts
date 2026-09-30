@@ -74,6 +74,18 @@ describe('extractProjectMemory: TS/JS', () => {
     expect(doc).toContain('[REDACTED]');
   });
 
+  it('redacts before capping, so a token straddling the 400-char limit never leaks a raw fragment', () => {
+    const prefix = `${'x'.repeat(394)} `; // a space keeps the token's own \b word boundary intact
+    const token = 'sk-ant-abcdefghijklmnopqrstuvwxyz'; // starts at index 395, spans past the 400-char cap
+    const result = extractProjectMemory(reader({
+      'src/README.md': `# Src\n\n${prefix}${token} end.\n`,
+      'src/index.ts': `export function f() {}\n`,
+    }));
+    const doc = areaOf(result, 'src').doc!;
+    expect(doc.length).toBeLessThanOrEqual(400);
+    expect(doc).not.toMatch(/sk-an/); // no raw fragment of the secret survives the cap
+  });
+
   it('falls back to the leading doc comment of the main file when there is no README', () => {
     const result = extractProjectMemory(reader({
       'src/index.ts': `/**\n * Talks to the widget service.\n */\nexport function f() {}\n`,

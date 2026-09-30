@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runInitCli } from './project-cli.js';
+import { runInitCli, runProjectExplainCli } from './project-cli.js';
 import { runMemoryCli } from './memory-cli.js';
 
 let root: string;
@@ -63,6 +63,11 @@ describe('runMemoryCli', () => {
     logs = [];
 
     write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\nexport function sub(a: number, b: number) { return a - b; }\n`);
+    // No LLM call: the stub provider generates canned text with no network access, used the same
+    // way across this codebase's own test suite. Memory itself never advances the checkpoint (a
+    // blocking review fix), so an Explain is what makes the edit above visible to the next update.
+    await runProjectExplainCli(['explain', 'demo', '--provider', 'stub', '--db', dbPath]);
+    logs = [];
     await runMemoryCli(['memory', 'update', 'demo', '--db', dbPath]);
     const batchLine = logs.find((l) => l.includes('batch'))!;
     const secondBatchId = Number(/batch (\d+)/.exec(batchLine)![1]);
@@ -75,8 +80,27 @@ describe('runMemoryCli', () => {
     await runMemoryCli(['memory', 'show', 'demo', '--db', dbPath, '--kind', 'term', '--status', 'active']);
     expect(logs.join('\n')).not.toContain('sub'); // 'sub' only existed after the rolled-back batch
     logs = [];
-    await runMemoryCli(['memory', 'show', 'demo', '--db', dbPath, '--kind', 'term', '--status', 'hidden']);
-    expect(logs.join('\n')).toContain('sub'); // hidden, not silently dropped (items are never hard-deleted)
+    await runMemoryCli(['memory', 'show', 'demo', '--db', dbPath, '--kind', 'term', '--status', 'stale']);
+    expect(logs.join('\n')).toContain('sub'); // stale, not hidden -- a later update can reconfirm it
+
+    expect(await runMemoryCli(['memory', 'rollback', 'demo', String(secondBatchId), '--db', dbPath])).toBe(1);
+    expect(errs.join('\n')).toContain('already rolled back');
+  });
+
+  it('rollback refuses a batch that belongs to a different project', async () => {
+    write('src/index.ts', `export function add() {}\n`);
+    await runInitCli(['init', proj, '--db', dbPath, '--name', 'demo']);
+    await runMemoryCli(['memory', 'update', 'demo', '--db', dbPath]);
+    const other = join(root, 'other');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'a.ts'), 'export const x = 1;\n');
+    await runInitCli(['init', other, '--db', dbPath, '--name', 'other']);
+    logs = [];
+    await runMemoryCli(['memory', 'update', 'other', '--db', dbPath]);
+    const otherBatchId = Number(/batch (\d+)/.exec(logs.find((l) => l.includes('batch'))!)![1]);
+
+    expect(await runMemoryCli(['memory', 'rollback', 'demo', String(otherBatchId), '--db', dbPath])).toBe(1);
+    expect(errs.join('\n')).toContain(`no memory batch ${otherBatchId} for project "demo"`);
   });
 
   it('rejects an unknown --kind, and a missing batch id for rollback', async () => {
