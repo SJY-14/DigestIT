@@ -1,10 +1,12 @@
 import type { AreaWalkthrough, ExplainLanguage, HunkRef, WalkthroughStep } from '@digestit/core';
 import { NO_CHANGE, LIMITS, truncateWords } from './validate.js';
 import { areaHunks } from './difflines.js';
+import { MEMORY_TASK_LIMITS } from './memory-tasks.js';
 import type {
   AreaInput, AreaResult, AreaStreamChunk, BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult,
   DigestAreaTextInput, DigestAreaTextResult, DigestInput, DigestResult, DigestSummaryInput, DigestSummaryResult,
-  ExplanationInput, ExplanationProvider, ProviderFile, ProviderResult, RangeInput, RollupInput, RollupResult,
+  ExplanationInput, ExplanationProvider, MemoryAreaSummaryOut, MemorySummarizeAreasInput, MemorySummarizeAreasResult,
+  MemorySummarizeThreadInput, MemorySummarizeThreadResult, ProviderFile, ProviderResult, RangeInput, RollupInput, RollupResult,
 } from './provider.js';
 
 function firstSentence(text: string): string {
@@ -306,5 +308,36 @@ export class StubProvider implements ExplanationProvider {
     const content: AreaWalkthrough = { overview, steps, check };
     onProgress?.({ overview, steps, done: true });
     return { provider: this.id, model: this.model, content };
+  }
+
+  /** Deterministic area summaries: relationships only, no inferred purpose. */
+  async summarizeAreas(input: MemorySummarizeAreasInput): Promise<MemorySummarizeAreasResult> {
+    const ko = input.language === 'ko';
+    const areas: MemoryAreaSummaryOut[] = input.areas.map((a) => ({
+      path: a.path,
+      summary: truncateWords(
+        ko
+          ? `${a.path}: 파일 ${a.fileCount}개, 사용: ${list(a.uses, 'ko') || '없음'}, 피사용: ${list(a.usedBy, 'ko') || '없음'}.`
+          : `${a.path}: ${count(a.fileCount, 'file')}, uses ${list(a.uses, 'en') || 'nothing tracked'}, used by ${list(a.usedBy, 'en') || 'nothing tracked'}.`,
+        MEMORY_TASK_LIMITS.areaSummaryWords,
+      ),
+      terms: a.terms.slice(0, MEMORY_TASK_LIMITS.termsPerArea).map((term) => ({
+        term,
+        meaning: ko ? `${a.path}에서 쓰이는 식별자입니다.` : `An identifier used in ${a.path}.`,
+      })),
+    }));
+    return { provider: this.id, model: this.model, areas };
+  }
+
+  /** Deterministic thread summary: names the areas and the digest count, no inferred narrative. */
+  async summarizeThread(input: MemorySummarizeThreadInput): Promise<MemorySummarizeThreadResult> {
+    const ko = input.language === 'ko';
+    const summary = truncateWords(
+      ko
+        ? `${input.title}: ${list(input.areas, 'ko') || '영역 없음'}에서 digest ${input.digests.length}개가 진행되었습니다.`
+        : `${input.title}: ${count(input.digests.length, 'digest')} across ${list(input.areas, 'en') || 'no tracked area'}.`,
+      MEMORY_TASK_LIMITS.threadSummaryWords,
+    );
+    return { provider: this.id, model: this.model, summary };
   }
 }

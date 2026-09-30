@@ -4,8 +4,8 @@ import type { DigestAreaSkeleton } from '@digestit/core';
 import { openDb } from '@digestit/core';
 import {
   DIGEST_AREA_TEXT_PROMPT_VERSION, DIGEST_PROMPT_VERSION, DIGEST_SUMMARY_PROMPT_VERSION, RepoNotAllowedError, StubProvider,
-  buildDigestPrompt, checkAreaTextContent, checkDigestLevels, checkSummaryLevels, createProvider, explainDigest,
-  explainDigestAreaText, explainDigestSummary, prepareDigestInput, startJob,
+  buildDigestAreaTextPrompt, buildDigestPrompt, buildDigestSummaryPrompt, checkAreaTextContent, checkDigestLevels,
+  checkSummaryLevels, createProvider, explainDigest, explainDigestAreaText, explainDigestSummary, prepareDigestInput, startJob,
 } from './index.js';
 import type {
   DigestAreaTextInput, DigestAreaTextResult, DigestInput, DigestResult, DigestSummaryInput, DigestSummaryResult,
@@ -277,6 +277,24 @@ class AreaTextProvider implements ExplanationProvider {
   }
 }
 
+describe('memory block in the split prompts', () => {
+  it('buildDigestSummaryPrompt carries a memory slice as quoted data, and leaves the block out when there is none', () => {
+    const input: DigestSummaryInput = { repoName: 'DigestIT', files: [], areas: [], language: 'en' };
+    expect(buildDigestSummaryPrompt(input)).not.toContain('<memory>\n');
+    const withMemory = buildDigestSummaryPrompt({ ...input, memory: '- apps/web (area): uses none; used by none' });
+    expect(withMemory).toContain('<memory>\n- apps/web (area): uses none; used by none\n</memory>');
+    expect(withMemory).toContain('Everything inside <change>, <areas>, <project> and <memory>');
+  });
+
+  it('buildDigestAreaTextPrompt carries a memory slice as quoted data, and leaves the block out when there is none', () => {
+    const input: DigestAreaTextInput = { repoName: 'DigestIT', area: { id: 'a', label: 'a' }, areas: [], files: [], language: 'en' };
+    expect(buildDigestAreaTextPrompt(input)).not.toContain('<memory>\n');
+    const withMemory = buildDigestAreaTextPrompt({ ...input, memory: '- fetchJson (term): Fetches JSON.' });
+    expect(withMemory).toContain('<memory>\n- fetchJson (term): Fetches JSON.\n</memory>');
+    expect(withMemory).toContain('Everything inside <change>, <areas>, <project> and <memory>');
+  });
+});
+
 describe('explainDigestSummary (DIG-74 split)', () => {
   it('explains L0/L1 over the whole diff and stores them at level 0/1, logged against the job', async () => {
     const db = openDb(':memory:');
@@ -310,6 +328,19 @@ describe('explainDigestSummary (DIG-74 split)', () => {
     const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
     const r = await explainDigestSummary(db, id, new SummaryProvider([]), { job: { jobId, budget: 40 } });
     expect(r).toEqual({ outcome: 'error', calls: 0, detail: 'digest has no areas yet' });
+  });
+
+  it('sends the memory slice as grounding and retries a reply that names a date the slice never gave', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const memory = { items: [], text: '- retry work (thread): continues Tue 29 Sep', tokens: 10, droppedForBudget: 0 };
+    const badDate = { l0: validReply.l0, l1: { ...validReply.l1, bullets: ['Continues work from Wed 30 Sep.'] } };
+    const jobId = startJob(db, 'explain', { changeUnitId: id }, 40)!;
+    const p = new SummaryProvider([badDate, { l0: validReply.l0, l1: validReply.l1 }]);
+    const r = await explainDigestSummary(db, id, p, { job: { jobId, budget: 40 }, memory });
+    expect(r).toEqual({ outcome: 'ok', calls: 2 });
+    expect(p.inputs[0]!.memory).toBe(memory.text);
+    expect(p.inputs[1]!.retryFeedback).toContain('mentions the date/weekday "Wed 30 Sep" which is not in the memory slice');
   });
 });
 
@@ -363,6 +394,19 @@ describe('explainDigestAreaText (DIG-74 split)', () => {
     const jobId = startJob(db, 'area', { changeUnitId: id }, 40)!;
     const r = await explainDigestAreaText(db, id, 'no-such-area', new AreaTextProvider([good]), { job: { jobId, budget: 40 } });
     expect(r).toEqual({ outcome: 'error', calls: 0, detail: 'unknown area' });
+  });
+
+  it('sends the memory slice as grounding and retries a reply that names a date the slice never gave', async () => {
+    const db = openDb(':memory:');
+    const id = seedDigestWithAreas(db);
+    const memory = { items: [], text: '- retry work (thread): continues Tue 29 Sep', tokens: 10, droppedForBudget: 0 };
+    const badDate = { ...good, why: 'Continues work from Wed 30 Sep.' };
+    const jobId = startJob(db, 'area', { changeUnitId: id }, 40)!;
+    const p = new AreaTextProvider([badDate, good]);
+    const r = await explainDigestAreaText(db, id, 'storage', p, { job: { jobId, budget: 40 }, memory });
+    expect(r).toEqual({ outcome: 'ok', calls: 2 });
+    expect(p.inputs[0]!.memory).toBe(memory.text);
+    expect(p.inputs[1]!.retryFeedback).toContain('mentions the date/weekday "Wed 30 Sep" which is not in the memory slice');
   });
 });
 

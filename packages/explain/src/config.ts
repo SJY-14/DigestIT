@@ -2,7 +2,8 @@ import type { CheapRunFlags, TaskModelConfig } from './claude-code.js';
 import { ClaudeCodeProvider } from './claude-code.js';
 import type {
   AreaInput, AreaResult, AreaStreamChunk, ContextInput, ContextResult, Effort, ExplainTask, ExplanationInput,
-  ExplanationProvider, ProviderResult,
+  ExplanationProvider, MemorySummarizeAreasInput, MemorySummarizeAreasResult, MemorySummarizeThreadInput,
+  MemorySummarizeThreadResult, ProviderResult,
 } from './provider.js';
 import { EXPLAIN_TASKS } from './provider.js';
 import { StubProvider } from './stub.js';
@@ -98,6 +99,14 @@ export function withAllowlist(
     explainArea: inner.explainArea && ((input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult> => {
       if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
       return inner.explainArea!(input, onProgress);
+    }),
+    summarizeAreas: inner.summarizeAreas && ((input: MemorySummarizeAreasInput): Promise<MemorySummarizeAreasResult> => {
+      if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
+      return inner.summarizeAreas!(input);
+    }),
+    summarizeThread: inner.summarizeThread && ((input: MemorySummarizeThreadInput): Promise<MemorySummarizeThreadResult> => {
+      if (!allowlist.includes(input.repoName)) return Promise.reject(new RepoNotAllowedError(input.repoName));
+      return inner.summarizeThread!(input);
     }),
   };
 }

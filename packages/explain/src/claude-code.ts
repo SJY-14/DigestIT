@@ -24,6 +24,11 @@ import type {
   ExplainTask,
   ExplanationInput,
   ExplanationProvider,
+  MemoryAreaSummaryOut,
+  MemorySummarizeAreasInput,
+  MemorySummarizeAreasResult,
+  MemorySummarizeThreadInput,
+  MemorySummarizeThreadResult,
   ProviderResult,
   RangeInput,
   RollupInput,
@@ -38,6 +43,9 @@ import {
   DIGEST_AREA_TEXT_INSTRUCTIONS, DIGEST_INSTRUCTIONS, DIGEST_SUMMARY_INSTRUCTIONS,
 } from './digest.js';
 import { buildAreaPrompt, AREA_INSTRUCTIONS } from './area.js';
+import {
+  AREA_SUMMARY_INSTRUCTIONS, THREAD_SUMMARY_INSTRUCTIONS, buildAreaSummaryPrompt, buildThreadSummaryPrompt,
+} from './memory-tasks.js';
 
 export type SpawnFn = (cmd: string, args: string[]) => ChildProcessWithoutNullStreams;
 
@@ -73,6 +81,7 @@ export const DEFAULT_TASK_CONFIG: Record<ExplainTask, TaskModelConfig> = {
   summary: { model: 'sonnet', effort: 'low' },
   area: { model: 'sonnet', effort: 'low' },
   walkthrough: { model: 'sonnet', effort: 'medium' },
+  memory: { model: 'sonnet', effort: 'low' },
 };
 
 export interface ClaudeCodeOptions {
@@ -146,6 +155,22 @@ function parseAreaTextContent(text: string): DigestAreaTextContent {
     throw new Error('invalid area text');
   }
   return v as unknown as DigestAreaTextContent;
+}
+
+function isMemoryAreaSummaryShape(v: unknown): v is MemoryAreaSummaryOut {
+  return isObj(v) && typeof v.path === 'string' && typeof v.summary === 'string' && Array.isArray(v.terms);
+}
+
+function parseAreaSummaries(text: string): MemoryAreaSummaryOut[] {
+  const v = parseJson(text);
+  if (!Array.isArray(v.areas) || !v.areas.every(isMemoryAreaSummaryShape)) throw new Error('invalid area summaries');
+  return v.areas as MemoryAreaSummaryOut[];
+}
+
+function parseThreadSummary(text: string): string {
+  const v = parseJson(text);
+  if (typeof v.summary !== 'string') throw new Error('invalid thread summary');
+  return v.summary;
 }
 
 // ---- stream-json (docs/explain-speed.md §1) ----
@@ -285,6 +310,7 @@ export class ClaudeCodeProvider implements ExplanationProvider {
       summary: { ...DEFAULT_TASK_CONFIG.summary, ...opts.tasks?.summary },
       area: { ...DEFAULT_TASK_CONFIG.area, ...opts.tasks?.area },
       walkthrough: { ...DEFAULT_TASK_CONFIG.walkthrough, ...opts.tasks?.walkthrough },
+      memory: { ...DEFAULT_TASK_CONFIG.memory, ...opts.tasks?.memory },
     };
   }
 
@@ -360,6 +386,16 @@ export class ClaudeCodeProvider implements ExplanationProvider {
       throw new Error('invalid area walkthrough');
     }
     return { content: v as unknown as AreaResult['content'], provider: this.id, model: r.model, effort: r.effort, timing: r.timing };
+  }
+
+  async summarizeAreas(input: MemorySummarizeAreasInput): Promise<MemorySummarizeAreasResult> {
+    const r = await this.runTask('memory', AREA_SUMMARY_INSTRUCTIONS, buildAreaSummaryPrompt(input));
+    return { areas: parseAreaSummaries(r.text), provider: this.id, model: r.model, effort: r.effort, timing: r.timing };
+  }
+
+  async summarizeThread(input: MemorySummarizeThreadInput): Promise<MemorySummarizeThreadResult> {
+    const r = await this.runTask('memory', THREAD_SUMMARY_INSTRUCTIONS, buildThreadSummaryPrompt(input));
+    return { summary: parseThreadSummary(r.text), provider: this.id, model: r.model, effort: r.effort, timing: r.timing };
   }
 
   /** Runs one prompt over `stream-json` for a Fast Explain task, timed per docs/explain-speed.md §1. */
