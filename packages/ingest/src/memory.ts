@@ -403,6 +403,29 @@ export function setMemorySummariesEnabled(db: DatabaseSync, repoId: number, enab
   db.prepare('UPDATE repo SET memory_summaries = ? WHERE id = ?').run(enabled ? 1 : 0, repoId);
 }
 
+/** The daily sweep's "drop stale items older than 30 days" (docs/milestone-4-memory.md §1-2): a
+ * hard delete, unlike a rollback's "undo a creation" (that leaves the item `stale` so a future
+ * rollback can still find it) -- a `stale` item this old is not coming back, and `user`/`hidden`
+ * items are never eligible regardless of age. Same item+revision+use triplet as `clearMemory`. */
+export function dropStaleItems(db: DatabaseSync, repoId: number, olderThanDays: number, now: () => Date = () => new Date()): number {
+  const cutoff = new Date(now().getTime() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+  const ids = (db.prepare("SELECT id FROM memory_item WHERE repo_id = ? AND status = 'stale' AND updated_at < ?")
+    .all(repoId, cutoff) as unknown as { id: number }[]).map((r) => r.id);
+  if (ids.length === 0) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  db.exec('BEGIN');
+  try {
+    db.prepare(`DELETE FROM memory_use WHERE item_id IN (${placeholders})`).run(...ids);
+    db.prepare(`DELETE FROM memory_revision WHERE item_id IN (${placeholders})`).run(...ids);
+    db.prepare(`DELETE FROM memory_item WHERE id IN (${placeholders})`).run(...ids);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  return ids.length;
+}
+
 /** `GET /api/digests/:id/memory-used`'s raw query: item ids only, so the API layer can join in
  * each item's current `MemoryItemDto` fields (`getMemoryItemById`, `usedInDigestsCounts`). */
 export function memoryUsedForDigest(db: DatabaseSync, changeUnitId: number): DigestMemoryUse {
