@@ -59,6 +59,40 @@ describe('StubProvider', () => {
     expect(a.levels.l2.items.map((i) => i.path)).toEqual(['a.ts']);
     expect(a.levels.l2.notAnalysed).toEqual(['pnpm-lock.yaml (lockfile)']);
   });
+
+  it('handles the memory task: one summary per requested area, using only its own terms', async () => {
+    const p = new StubProvider();
+    const r = await p.summarizeAreas({
+      repoName: 'DigestIT',
+      language: 'en',
+      areas: [
+        { path: 'src/a', fileCount: 3, exports: ['fn1'], uses: [], usedBy: ['src/b'], doc: null, terms: ['fn1', 'fn2'] },
+        { path: 'src/b', fileCount: 1, exports: [], uses: ['src/a'], usedBy: [], doc: null, terms: [] },
+      ],
+    });
+    expect(r.areas.map((a) => a.path)).toEqual(['src/a', 'src/b']);
+    expect(r.areas[0]!.terms.map((t) => t.term)).toEqual(['fn1', 'fn2']);
+    expect(r.areas[1]!.terms).toEqual([]);
+    expect(r).toEqual(await p.summarizeAreas({
+      repoName: 'DigestIT',
+      language: 'en',
+      areas: [
+        { path: 'src/a', fileCount: 3, exports: ['fn1'], uses: [], usedBy: ['src/b'], doc: null, terms: ['fn1', 'fn2'] },
+        { path: 'src/b', fileCount: 1, exports: [], uses: ['src/a'], usedBy: [], doc: null, terms: [] },
+      ],
+    }));
+  });
+
+  it('handles the memory task: a deterministic thread summary naming its areas', async () => {
+    const p = new StubProvider();
+    const r = await p.summarizeThread({
+      repoName: 'DigestIT', title: 'Retry work', areas: ['src/a', 'src/b'], terms: [],
+      digests: [{ at: '2026-09-29T00:00:00.000Z', l0: 'Did a thing.' }],
+      language: 'en',
+    });
+    expect(r.summary).toContain('Retry work');
+    expect(r.summary).toContain('src/a');
+  });
 });
 
 describe('createProvider', () => {

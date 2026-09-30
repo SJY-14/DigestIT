@@ -461,6 +461,20 @@ describe('compactContext', () => {
     expect(out).toContain('- Run "build" via the package manager.');
   });
 
+  it('leaves out the Modules section when omitModules is set, keeping the rest', () => {
+    const c: ProjectContextContent = {
+      purpose: 'Helps people digest changes.',
+      modules: [{ path: 'src', role: 'core logic' }],
+      glossary: [{ term: 'digest', meaning: 'the changes since last check' }],
+      conventions: [],
+    };
+    const out = compactContext(c, undefined, { omitModules: true });
+    expect(out).toContain('Purpose: Helps people digest changes.');
+    expect(out).not.toContain('Modules:');
+    expect(out).not.toContain('core logic');
+    expect(out).toContain('- digest: the changes since last check');
+  });
+
   it('is hard-capped at the compact token budget regardless of input size', () => {
     const c: ProjectContextContent = {
       purpose: 'x',

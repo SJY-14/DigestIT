@@ -19,3 +19,5 @@ export * from './tells.js';
 export * from './lint-report.js';
 export * from './jobs.js';
 export * from './timing-report.js';
+export * from './memory.js';
+export * from './memory-tasks.js';

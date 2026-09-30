@@ -11,9 +11,10 @@ import type {
   WalkthroughStep,
 } from '@digestit/core';
 
-/** The four Fast Explain tasks (docs/explain-speed.md §3), each with its own model/effort. */
-export type ExplainTask = 'context' | 'summary' | 'area' | 'walkthrough';
-export const EXPLAIN_TASKS: readonly ExplainTask[] = ['context', 'summary', 'area', 'walkthrough'];
+/** The Fast Explain tasks (docs/explain-speed.md §3), each with its own model/effort. `memory` is the
+ * background area/thread summariser (docs/milestone-4-memory.md §4). */
+export type ExplainTask = 'context' | 'summary' | 'area' | 'walkthrough' | 'memory';
+export const EXPLAIN_TASKS: readonly ExplainTask[] = ['context', 'summary', 'area', 'walkthrough', 'memory'];
 
 /** `claude --effort`. */
 export type Effort = 'low' | 'medium' | 'high';
@@ -282,6 +283,8 @@ export interface DigestSummaryInput {
   files: ProviderFile[];
   areas: Pick<DigestAreaSkeleton, 'id' | 'label'>[];
   context?: string;
+  /** Rendered `<memory>` slice (docs/milestone-4-memory.md §3), already redacted; `selectMemory`'s `text`. */
+  memory?: string;
   language: ExplainLanguage;
   retryFeedback?: string[];
 }
@@ -304,6 +307,8 @@ export interface DigestAreaTextInput {
   areas: Pick<DigestAreaSkeleton, 'id' | 'label'>[];
   files: ProviderFile[];
   context?: string;
+  /** Rendered `<memory>` slice (docs/milestone-4-memory.md §3), already redacted; `selectMemory`'s `text`. */
+  memory?: string;
   language: ExplainLanguage;
   retryFeedback?: string[];
 }
@@ -329,6 +334,8 @@ export interface DigestAreaTextResult extends CallMeta {
 export interface AreaInput {
   repoName: string;
   context?: string;
+  /** Rendered `<memory>` slice (docs/milestone-4-memory.md §3), already redacted; `selectMemory`'s `text`. */
+  memory?: string;
   digest: { l0: string; l1Bullets: string[] };
   area: { id: string; title: string; effect: string; how: string; why: string };
   files: ProviderFile[];
@@ -339,6 +346,59 @@ export interface AreaInput {
 
 export interface AreaResult extends CallMeta {
   content: AreaWalkthrough;
+  provider: string;
+  model: string;
+}
+
+// ---- Memory task (Milestone 4, docs/milestone-4-memory.md §4): background area/thread summaries ----
+
+/** One area to summarise, deterministic fields only (redacted, already capped). */
+export interface MemoryAreaSummaryRequest {
+  /** `AreaMemory.path`; also this call's identifier for its summary in the result. */
+  path: string;
+  fileCount: number;
+  /** Export names only, most-imported first (already capped to `MEMORY_LIMITS.symbolsPerArea`). */
+  exports: string[];
+  uses: string[];
+  usedBy: string[];
+  doc: string | null;
+  /** Up to 10 of this area's own terms that still need a meaning. */
+  terms: string[];
+}
+
+/** Up to 4 areas per call (docs/milestone-4-memory.md §4). */
+export interface MemorySummarizeAreasInput {
+  repoName: string;
+  areas: MemoryAreaSummaryRequest[];
+  language: ExplainLanguage;
+  retryFeedback?: string[];
+}
+
+export interface MemoryAreaSummaryOut {
+  path: string;
+  summary: string;
+  terms: { term: string; meaning: string }[];
+}
+
+export interface MemorySummarizeAreasResult extends CallMeta {
+  areas: MemoryAreaSummaryOut[];
+  provider: string;
+  model: string;
+}
+
+/** One thread to summarise: its title, areas/terms and the L0 of each digest it has picked up so far. */
+export interface MemorySummarizeThreadInput {
+  repoName: string;
+  title: string;
+  areas: string[];
+  terms: string[];
+  digests: { at: string; l0: string }[];
+  language: ExplainLanguage;
+  retryFeedback?: string[];
+}
+
+export interface MemorySummarizeThreadResult extends CallMeta {
+  summary: string;
   provider: string;
   model: string;
 }
@@ -368,4 +428,8 @@ export interface ExplanationProvider {
    * steps are only ever appended, never reordered or edited.
    */
   explainArea?(input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult>;
+  /** `memory` task (docs/milestone-4-memory.md §4): up to 4 areas in, one ≤40-word summary each plus meanings for up to 10 of their terms. */
+  summarizeAreas?(input: MemorySummarizeAreasInput): Promise<MemorySummarizeAreasResult>;
+  /** `memory` task: one thread in, one ≤40-word summary. */
+  summarizeThread?(input: MemorySummarizeThreadInput): Promise<MemorySummarizeThreadResult>;
 }
