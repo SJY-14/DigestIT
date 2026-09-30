@@ -1,12 +1,12 @@
 // Compact project header (DIG-49, docs/ux-v3.md §4): one row with the project switcher, the digest
-// picker (passed in as `picker`), a calls-left badge, an info popover (context status + language)
-// behind an ⓘ trigger, and the primary Explain button. Every pixel it takes comes out of the
-// reading pane below, so it stays a single line.
+// picker (passed in as `picker`), a calls-left badge, the Settings panel (context/language/ignore,
+// plus budget/provider/read-only per UX cycle 2 P5) behind a "Settings" trigger, and the primary
+// Explain button. Every pixel it takes comes out of the reading pane below, so it stays a single line.
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import type { ExplainLanguage, ProjectDto, ProjectIgnoreDto, ProjectStatusDto } from '@digestit/core';
+import type { AboutDto, ExplainLanguage, ProjectDto, ProjectIgnoreDto, ProjectStatusDto } from '@digestit/core';
 import {
   apiErrorMessage, callsLeftLabel, contextSummary, EXPLAIN_LANGUAGE_LIST, explainButtonLabel, explainingLabel,
-  headerCopy, humanDateTime, ignoreCopy, LANGUAGE_NAMES, notTrackedReasonLabel, type Lang,
+  headerCopy, humanDateTime, ignoreCopy, LANGUAGE_NAMES, notTrackedReasonLabel, trustCopy, type Lang,
 } from './copy.js';
 import { relativeTime } from './format.js';
 import { addIgnorePatterns, ApiError, fetchProjectIgnore, removeIgnorePattern } from './v2Api.js';
@@ -65,9 +65,11 @@ function ExplainButton({
 }
 
 function InfoPopover({
-  project, status, statusError, onRefreshContext, refreshingContext, onSetLanguage, settingLanguage, languageError, lang,
+  project, about, status, statusError, onRefreshContext, refreshingContext, onSetLanguage, settingLanguage, languageError, lang,
 }: {
   project: ProjectDto;
+  /** Global provider/model/read-only/legacy-data info (P5, `GET /api/about`); null while loading. */
+  about: AboutDto | null;
   status: ProjectStatusDto | null;
   statusError: string | null;
   onRefreshContext: () => void;
@@ -78,6 +80,7 @@ function InfoPopover({
   lang: Lang;
 }) {
   const T = headerCopy(lang);
+  const TT = trustCopy(lang);
   const TI = ignoreCopy(lang);
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [open, setOpen] = useState(false);
@@ -144,8 +147,22 @@ function InfoPopover({
 
   return (
     <details className="info-popover" ref={detailsRef} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary aria-label={T.infoLabel} title={T.infoLabel}>ⓘ</summary>
-      <div className="info-popover-panel" role="dialog" aria-label={T.infoLabel}>
+      <summary aria-label={T.settingsLabel} title={T.settingsLabel}>{T.settingsLabel}</summary>
+      <div className="info-popover-panel" role="dialog" aria-label={T.settingsLabel}>
+        {status && (
+          <div className="settings-row">
+            <span>{T.budgetRowLabel}</span>
+            <span>{callsLeftLabel(status.budget.remaining, status.budget.resetsAt, Date.now(), lang)}</span>
+          </div>
+        )}
+        {about && (
+          <div className="settings-row"><span>{T.providerRowLabel}</span><span className="mono">{about.provider}</span></div>
+        )}
+        {about?.model && (
+          <div className="settings-row"><span>{T.modelRowLabel}</span><span className="mono">{about.model}</span></div>
+        )}
+        <p className="settings-readonly">{TT.readOnly}</p>
+
         <p className="context-status">
           {statusError ? T.statusError(statusError) : (summary ?? T.loadingStatus)}
         </p>
@@ -218,6 +235,15 @@ function InfoPopover({
             </>
           )}
         </div>
+        {about?.hasLegacyData && (
+          // Demoted, not deleted (decision-2.md IA decision): the only way to reach the pre-v2
+          // Insights view is this link, and only once a project actually has legacy data
+          // (`unit_event` rows) — a clean v2-only install never sees it. A plain navigation, not a
+          // client-side route push: Settings has no reference to App.tsx's page state.
+          <a className="legacy-insights-link" href="/insights">
+            {T.legacyInsightsLink} <span aria-hidden="true">→</span>
+          </a>
+        )}
       </div>
     </details>
   );
@@ -227,6 +253,8 @@ export interface ProjectHeaderProps {
   projects: ProjectDto[];
   currentProject: ProjectDto;
   onSwitch: (id: number) => void;
+  /** Global provider/model/read-only/legacy-data info (P5, `GET /api/about`); null while loading. */
+  about: AboutDto | null;
   status: ProjectStatusDto | null;
   statusError: string | null;
   explaining: boolean;
@@ -244,7 +272,7 @@ export interface ProjectHeaderProps {
 }
 
 export function ProjectHeader({
-  projects, currentProject, onSwitch, status, statusError, explaining, onExplain,
+  projects, currentProject, onSwitch, about, status, statusError, explaining, onExplain,
   onRefreshContext, refreshingContext, onSetLanguage, settingLanguage, languageError, picker, lang = 'en',
 }: ProjectHeaderProps) {
   const T = headerCopy(lang);
@@ -272,6 +300,7 @@ export function ProjectHeader({
       )}
       <InfoPopover
         project={currentProject}
+        about={about}
         status={status}
         statusError={statusError}
         onRefreshContext={onRefreshContext}

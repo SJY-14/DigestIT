@@ -3,7 +3,7 @@ import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkUnitSummary } from './api.js';
-import { NewPill, UnitList, UnitPanel } from './Units.js';
+import { UnitList, UnitPanel } from './Units.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,18 +72,6 @@ describe('UnitList', () => {
   it('marks the selected unit', async () => {
     await render(<UnitList label="l" units={[unit()]} reviews={new Map()} selectedId={7} onSelect={noop} onOpenCommit={noop} />);
     expect(host.querySelector('.unit-main')?.getAttribute('aria-current')).toBe('true');
-  });
-});
-
-describe('NewPill', () => {
-  it('renders only when there is something new, and reports clicks', async () => {
-    const onClick = vi.fn();
-    await render(<NewPill count={0} onClick={onClick} />);
-    expect(host.querySelector('button')).toBeNull();
-    await render(<NewPill count={3} onClick={onClick} />);
-    expect(host.querySelector('button')?.textContent).toBe('3 new');
-    await click(host.querySelector('button'));
-    expect(onClick).toHaveBeenCalled();
   });
 });
 

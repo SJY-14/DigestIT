@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeFilter, defaultProject, MainV2, nodeTarget, unseenDigests } from './MainV2.js';
 import { humanDateTime, plural } from './copy.js';
 import {
-  fixtureArea, fixtureAreaProgressSteps, fixtureDigest, fixtureDigestDone, fixtureDigestPage, fixtureDigestPartial, fixtureDigestPending,
-  fixtureFastDigestSummary, fixtureFastGraph, fixtureGraph, fixtureProject, fixtureProject2, fixtureProjectGraph, fixtureStatus, fixtureStatus2,
-  fixtureStreamingArea, fixtureStreamingAreaFinal,
+  fixtureAbout, fixtureArea, fixtureAreaProgressSteps, fixtureDigest, fixtureDigestDone, fixtureDigestPage, fixtureDigestPartial,
+  fixtureDigestPending, fixtureFastDigestSummary, fixtureFastGraph, fixtureGraph, fixtureProject, fixtureProject2, fixtureProjectGraph,
+  fixtureStatus, fixtureStatus2, fixtureStreamingArea, fixtureStreamingAreaFinal,
 } from './v2Fixtures.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,6 +29,7 @@ function mockFetch() {
     const method = init?.method ?? 'GET';
     calls.push({ url, method });
     const body = ((): unknown => {
+      if (url === '/api/about' && method === 'GET') return fixtureAbout;
       if (url === '/api/projects' && method === 'GET') return projectsResponse;
       if (url === '/api/projects' && method === 'POST') return { ...fixtureProject, suggestedIgnorePatterns: createSuggestions };
       if (/^\/api\/projects\/\d+\/ignore$/.test(url) && method === 'POST') return { patterns: ['out/'], notTracked: [] };
@@ -150,6 +151,58 @@ describe('MainV2: setup', () => {
     await click(host.querySelector('button[type="submit"]'));
     await waitFor(() => host.querySelector('.explain-btn') !== null);
     expect(host.querySelector('.suggestion-chip')).toBeNull();
+  });
+});
+
+describe('MainV2: first-run trust box (UX cycle 2 P2/P3, decision-2.md)', () => {
+  it('lays out two columns: the steps + trust box, and the form, as siblings', async () => {
+    projectsResponse = [];
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.setup-form') !== null);
+    expect(host.querySelector('.firstrun')).toBeTruthy();
+    expect(host.querySelector('.firstrun > .fr-explain')).toBeTruthy();
+    expect(host.querySelector('.firstrun > .fr-explain .fr-steps')).toBeTruthy();
+    expect(host.querySelector('.firstrun > .fr-explain .fr-trust')).toBeTruthy();
+    expect(host.querySelector('.firstrun > .fr-form .setup-form')).toBeTruthy();
+  });
+
+  it('names the claude-code provider and Anthropic once /api/about loads', async () => {
+    projectsResponse = [];
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.fr-trust')?.textContent?.includes('Anthropic') ?? false);
+    const text = host.querySelector('.fr-trust')?.textContent ?? '';
+    expect(text).toContain('Claude Code');
+    expect(text).toContain('never writes to your project folder');
+    expect(text).toContain('Nothing is sent anywhere until you run Explain');
+  });
+
+  it('renders the first-run screen in Korean when the browser prefers Korean', async () => {
+    projectsResponse = [];
+    const langSpy = vi.spyOn(navigator, 'language', 'get').mockReturnValue('ko-KR');
+    try {
+      await render(<MainV2 />);
+      await waitFor(() => host.querySelector('.fr-trust')?.textContent?.includes('Anthropic') ?? false);
+      expect(host.querySelector('.fr-form .box-head')?.textContent).toBe('프로젝트 등록');
+      const text = host.querySelector('.fr-trust')?.textContent ?? '';
+      expect(text).toContain('Explain이 보내는 것');
+      expect(text).toContain('Claude Code CLI를 통해 Anthropic으로 전송됩니다');
+      expect(text).toContain('DigestIT는 프로젝트 폴더나 git 기록에 쓰지 않습니다');
+    } finally {
+      langSpy.mockRestore();
+    }
+  });
+
+  it('says nothing leaves the machine for the stub provider', async () => {
+    projectsResponse = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (url === '/api/about' && method === 'GET') return { ok: true, status: 200, json: async () => ({ ...fixtureAbout, provider: 'stub', model: null }) } as Response;
+      if (url === '/api/projects' && method === 'GET') return { ok: true, status: 200, json: async () => [] } as Response;
+      throw new Error(`unhandled fetch in test: ${method} ${url}`);
+    }));
+    await render(<MainV2 />);
+    await waitFor(() => host.querySelector('.fr-trust')?.textContent?.includes('stub provider') ?? false);
+    expect(host.querySelector('.fr-trust')?.textContent).toContain('nothing leaves this machine');
   });
 });
 
@@ -618,11 +671,18 @@ describe('MainV2: empty and error states', () => {
     expect(host.textContent).not.toContain('Loading context…');
   });
 
-  it('shows a short notice pointing to History when /api/projects 404s (DIG-39 not landed yet)', async () => {
+  it("shows a short notice when /api/projects 404s (DIG-39 not landed yet)", async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({ error: 'not found' }) } as Response)));
     await render(<MainV2 />);
-    await waitFor(() => host.textContent?.includes('History') ?? false);
-    expect(host.textContent).toContain("doesn't have the v2 project API yet");
+    await waitFor(() => host.textContent?.includes("doesn't have the v2 project API yet") ?? false);
+  });
+
+  it('shows a distinct message for a 401 on /api/projects, not the generic load error (decision-2.md P5)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 401, json: async () => ({ error: 'unauthorized' }) } as Response)));
+    await render(<MainV2 />);
+    await waitFor(() => host.textContent?.includes('digest token') ?? false);
+    expect(host.textContent).toContain('access link');
+    expect(host.textContent).not.toContain('Could not load projects');
   });
 });
 

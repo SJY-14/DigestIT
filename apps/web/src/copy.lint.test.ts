@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest';
 import {
   apiErrorMessage, callsLeftLabel, contextSummary, digestRowLabel, elapsedLabel, emptyCopy, explainButtonLabel, explainingLabel,
   explainOutcomeMessage, graphCopy, headerCopy, humanDateTime, ignoreCopy, LANGUAGE_NAMES, levelsCopy, lineDelta, navCopy,
-  notTrackedReasonLabel, pickerCopy, plural, readerCopy, resetsLabel, reviewedCopy, setupCopy, walkthroughCopy, welcomeBackCopy,
-  type Lang,
+  notTrackedReasonLabel, pickerCopy, plural, readerCopy, resetsLabel, reviewedCopy, setupCopy, trustCopy, walkthroughCopy,
+  welcomeBackCopy, type Lang,
 } from './copy.js';
 
 // --- banned patterns (edit here to extend the lint) -----------------------------------------------
@@ -220,6 +220,7 @@ function collectAll(): Entry[] {
       openHint: (fn) => [0, 1, 2].map(fn),
     });
     addTable(out, 'setupCopy', lang, setupCopy(lang), { projectsLoadError: (fn) => fn(SAMPLE.msg) });
+    addTable(out, 'trustCopy', lang, trustCopy(lang), { providerOther: (fn) => fn('acme-provider') });
   }
 
   return out;

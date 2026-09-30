@@ -3,9 +3,16 @@
 // fine under vitest (Node) but must never end up in the browser bundle.
 import { buildProjectGraph } from '@digestit/core';
 import type {
-  AreaDetailDto, AreaProgressEvent, AreaWalkthrough, ContextStatusDto, DigestAreaSkeleton, DigestDetailDto, DigestFileDto,
-  DigestPageDto, DigestPartsDto, DigestSummaryDto, ProjectDto, ProjectGraphDto, ProjectStatusDto,
+  AboutDto, AreaDetailDto, AreaProgressEvent, AreaWalkthrough, ContextStatusDto, DigestAreaSkeleton, DigestDetailDto,
+  DigestFileDto, DigestPageDto, DigestPartsDto, DigestSummaryDto, ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
+
+export const fixtureAbout: AboutDto = {
+  provider: 'claude-code',
+  model: 'claude-sonnet-5-5',
+  readOnly: true,
+  hasLegacyData: false,
+};
 
 export const fixtureContext: ContextStatusDto = {
   status: 'ok',

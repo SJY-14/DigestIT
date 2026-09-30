@@ -2,11 +2,11 @@
 // the digest picker (DIG-49, ProjectHeader.tsx / DigestPicker.tsx), and the reading pane + graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import type {
-  AreaDetailDto, AreaProgressEvent, CreateProjectResponseDto, DigestDetailDto, DigestSummaryDto, ExplainLanguage, GraphNode,
-  ProjectDto, ProjectGraphDto, ProjectStatusDto,
+  AboutDto, AreaDetailDto, AreaProgressEvent, CreateProjectResponseDto, DigestDetailDto, DigestSummaryDto, ExplainLanguage,
+  GraphNode, ProjectDto, ProjectGraphDto, ProjectStatusDto,
 } from '@digestit/core';
 import {
-  ApiError, addIgnorePatterns, createProject, explainArea, explainProject, fetchArea, fetchDigest, fetchGraph,
+  ApiError, addIgnorePatterns, createProject, explainArea, explainProject, fetchAbout, fetchArea, fetchDigest, fetchGraph,
   fetchProjectGraph, fetchProjectStatus, fetchProjects, openDigestEvents, refreshContext, retryDigest, setProjectLanguage,
 } from './v2Api.js';
 import { useDigests } from './useDigests.js';
@@ -21,7 +21,7 @@ import {
 } from './Reader.js';
 import {
   apiErrorMessage, emptyCopy, explainOutcomeMessage, graphCopy, headerCopy, ignoreCopy, levelsCopy, readerCopy,
-  setupCopy, walkthroughCopy, welcomeBackCopy,
+  setupCopy, trustCopy, walkthroughCopy, welcomeBackCopy, type Lang,
 } from './copy.js';
 import { relativeTime } from './format.js';
 import { getLastSeen, getReviewed, setLastSeen, setReviewed, type LastSeen } from './storage.js';
@@ -29,15 +29,20 @@ import { useV2Url, type ReadingLevel, type V2Url } from './v2Url.js';
 
 // --- setup form (no project registered yet) -----------------------------------------------------
 
+/** The chrome language before any project exists: Korean when the browser prefers it, else English. */
+function browserLang(): Lang {
+  return typeof navigator !== 'undefined' && /^ko\b/i.test(navigator.language) ? 'ko' : 'en';
+}
+
 /** Shown after creation, only when the folder had no `.gitignore` of its own and DigestIT detected
  * likely output areas (DIG-56): one-click chips to add suggested ignore patterns. Never applied
  * automatically — this is the only place the operator confirms them before moving on. */
-function IgnoreSuggestionsStep({ project, onContinue }: { project: CreateProjectResponseDto; onContinue: () => void }) {
+function IgnoreSuggestionsStep({ project, onContinue, lang }: { project: CreateProjectResponseDto; onContinue: () => void; lang: Lang }) {
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [addingPattern, setAddingPattern] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const T = emptyCopy();
-  const TI = ignoreCopy();
+  const T = emptyCopy(lang);
+  const TI = ignoreCopy(lang);
 
   const onAdd = (pattern: string) => {
     setAddingPattern(pattern);
@@ -75,7 +80,32 @@ function IgnoreSuggestionsStep({ project, onContinue }: { project: CreateProject
   );
 }
 
-function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
+/** What Explain sends and what DigestIT never does (UX cycle 2 P2, decision-2.md "Changes to the
+ * brief" 4): left column of the first-run screen, below the step list. `about` names the
+ * configured provider (`GET /api/about`, packages/core/src/v2.ts) so the sentence is concrete
+ * ("goes to Anthropic through Claude Code") rather than a vague "a provider" — null while it is
+ * still loading, which drops only that one clause, not the rest of the box. */
+function TrustBox({ about, lang }: { about: AboutDto | null; lang: Lang }) {
+  const T = trustCopy(lang);
+  const provider = !about ? null
+    : about.provider === 'claude-code' ? T.providerClaudeCode
+      : about.provider === 'stub' ? T.providerStub
+        : T.providerOther(about.provider);
+  return (
+    <div className="fr-trust">
+      <b className="fr-trust-label">{T.label}</b>
+      <p>{T.local}</p>
+      <p>{T.sent}{provider ? ` ${provider}` : ''}</p>
+      <p>{T.readOnly}</p>
+    </div>
+  );
+}
+
+/** UX cycle 2 P3 (decision-2.md): two columns instead of one floated card, so the first-run screen
+ * uses the width and height the empty `.app.with-panel.home` layout otherwise leaves blank. Left:
+ * the step list plus the trust box (P2, above); right: the unchanged form fields, now in a card
+ * that stretches to the left column's height instead of block-centering on its own. */
+function SetupForm({ onCreated, about, lang }: { onCreated: (p: ProjectDto) => void; about: AboutDto | null; lang: Lang }) {
   const [rootPath, setRootPath] = useState('');
   const [contextPath, setContextPath] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -97,42 +127,48 @@ function SetupForm({ onCreated }: { onCreated: (p: ProjectDto) => void }) {
     }
   };
 
-  if (created) return <IgnoreSuggestionsStep project={created} onContinue={() => onCreated(created)} />;
+  if (created) return <IgnoreSuggestionsStep project={created} lang={lang} onContinue={() => onCreated(created)} />;
 
-  const T = emptyCopy();
-  const TS = setupCopy();
+  const T = emptyCopy(lang);
+  const TS = setupCopy(lang);
   return (
-    <div className="box setup">
-      <h2 className="box-head">{T.noProjects.heading}</h2>
-      <ol className="empty-steps">
-        {T.noProjects.steps.map((s, i) => <li key={i}>{s}</li>)}
-      </ol>
-      <form className="setup-form" onSubmit={(e) => void submit(e)}>
-        <label className="field">
-          <span>{TS.projectFolderLabel}</span>
-          <input
-            type="text"
-            value={rootPath}
-            onChange={(e) => setRootPath(e.target.value)}
-            placeholder={TS.projectFolderPlaceholder}
-            required
-            autoFocus
-          />
-        </label>
-        <label className="field">
-          <span>{TS.contextFileLabel}</span>
-          <input
-            type="text"
-            value={contextPath}
-            onChange={(e) => setContextPath(e.target.value)}
-            placeholder={TS.contextFilePlaceholder}
-          />
-        </label>
-        {error && <p role="alert" className="error">{error}</p>}
-        <button type="submit" className="btn primary" disabled={submitting || rootPath.trim() === ''}>
-          {submitting ? TS.starting : TS.start}
-        </button>
-      </form>
+    <div className="firstrun">
+      <div className="fr-explain">
+        <h2 className="fr-heading">{T.noProjects.heading}</h2>
+        <ol className="fr-steps">
+          {T.noProjects.steps.map((s, i) => <li key={i}>{s}</li>)}
+        </ol>
+        <TrustBox about={about} lang={lang} />
+      </div>
+      <div className="fr-form box">
+        <h2 className="box-head">{TS.formHeading}</h2>
+        <form className="setup-form" onSubmit={(e) => void submit(e)}>
+          <label className="field">
+            <span>{TS.projectFolderLabel}</span>
+            <input
+              type="text"
+              value={rootPath}
+              onChange={(e) => setRootPath(e.target.value)}
+              placeholder={TS.projectFolderPlaceholder}
+              required
+              autoFocus
+            />
+          </label>
+          <label className="field">
+            <span>{TS.contextFileLabel}</span>
+            <input
+              type="text"
+              value={contextPath}
+              onChange={(e) => setContextPath(e.target.value)}
+              placeholder={TS.contextFilePlaceholder}
+            />
+          </label>
+          {error && <p role="alert" className="error">{error}</p>}
+          <button type="submit" className="btn primary" disabled={submitting || rootPath.trim() === ''}>
+            {submitting ? TS.starting : TS.start}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -305,6 +341,13 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   const [projects, setProjects] = useState<ProjectDto[] | null>(null);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [projectsNotFound, setProjectsNotFound] = useState(false);
+  // A 401 on the projects fetch gets its own message (decision-2.md P5), not the generic
+  // `projectsError` one: this dashboard needs an access link, not a retry.
+  const [projectsUnauthorized, setProjectsUnauthorized] = useState(false);
+  // Global, project-independent info for the first-run trust box (P2) and the Settings panel (P5):
+  // provider/model, the read-only flag and whether the legacy Insights link should show at all.
+  // Fetched once, independent of whether any project exists yet — first run has none.
+  const [about, setAbout] = useState<AboutDto | null>(null);
   const [url, push, replace] = useV2Url('/');
   const [explainingLocal, setExplainingLocal] = useState(false);
   const [explainError, setExplainError] = useState<string | null>(null);
@@ -350,9 +393,19 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   useEffect(() => {
     const ac = new AbortController();
     fetchProjects(ac.signal).then(setProjects, (e: unknown) => {
-      if (e instanceof ApiError && e.status === 404) setProjectsNotFound(true);
+      if (e instanceof ApiError && e.status === 401) setProjectsUnauthorized(true);
+      else if (e instanceof ApiError && e.status === 404) setProjectsNotFound(true);
       else setProjectsError(e instanceof Error ? e.message : String(e));
     });
+    return () => ac.abort();
+  }, []);
+
+  // First-run trust box (P2) and Settings panel (P5) both read this; fetched unconditionally since
+  // first run has no project to hang it off of. A failure here is non-fatal: the boxes that use it
+  // just render without the provider-specific sentence/rows until it loads.
+  useEffect(() => {
+    const ac = new AbortController();
+    fetchAbout(ac.signal).then(setAbout, () => undefined);
     return () => ac.abort();
   }, []);
 
@@ -364,10 +417,10 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   useEffect(() => {
     lastSeenOnLandingRef.current = currentProjectId === null ? null : getLastSeen(currentProjectId);
   }, [currentProjectId]);
-  // The UI chrome's language follows the current project's setting; 'en' before any project is
-  // known (the setup form, or while projects are still loading).
-  const lang: ExplainLanguage = projects?.find((p) => p.id === currentProjectId)?.language ?? 'en';
-  // App keeps the last-known project language for its own chrome (the nav, the History menu),
+  // The UI chrome's language follows the current project's setting. Before any project is known
+  // (first run, or while projects are still loading) it follows the browser's language instead.
+  const lang: ExplainLanguage = projects?.find((p) => p.id === currentProjectId)?.language ?? browserLang();
+  // App keeps the last-known project language for its own chrome (the nav),
   // since it stays mounted on pages this component doesn't (DIG-60).
   useEffect(() => { onLanguage?.(lang); }, [lang, onLanguage]);
   useEffect(() => {
@@ -727,19 +780,26 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
   }, [currentDigestId, digests, push, refreshStatus]);
 
   const TS = setupCopy(lang);
-  if (projectsNotFound) {
+  if (projectsUnauthorized) {
     return (
       <div className="box setup">
         <p className="muted">
-          {TS.noApiHint.before}<strong>{TS.noApiHint.historyWord}</strong>{TS.noApiHint.after}
+          {TS.accessLinkNeeded.before}<code>{TS.accessLinkNeeded.code}</code>{TS.accessLinkNeeded.after}
         </p>
+      </div>
+    );
+  }
+  if (projectsNotFound) {
+    return (
+      <div className="box setup">
+        <p className="muted">{TS.noApiHint}</p>
       </div>
     );
   }
   if (projectsError) return <p role="alert" className="error">{TS.projectsLoadError(projectsError)}</p>;
   if (projects === null) return <p className="muted">{headerCopy(lang).loadingStatus}</p>;
   if (projects.length === 0) {
-    return <SetupForm onCreated={(p) => { setProjects([p]); replace({ project: p.id }); }} />;
+    return <SetupForm about={about} lang={lang} onCreated={(p) => { setProjects([p]); replace({ project: p.id }); }} />;
   }
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? projects[0]!;
   const noBudget = (status?.budget.remaining ?? 1) === 0;
@@ -848,6 +908,7 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
           projects={projects}
           currentProject={currentProject}
           onSwitch={onSwitchProject}
+          about={about}
           status={status}
           statusError={statusError}
           explaining={explaining}

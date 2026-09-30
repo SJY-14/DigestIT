@@ -88,6 +88,9 @@ export function levelsCopy(lang: Lang = 'en') {
 // 'en' until the project list has loaded.
 
 const SETUP_EN = {
+  // UX cycle 2 P3 (decision-2.md): the right column's card heading, next to the left column's
+  // step list + trust box (`trustCopy` above).
+  formHeading: 'Register a project',
   projectFolderLabel: 'Project folder',
   projectFolderPlaceholder: '/path/to/project',
   contextFileLabel: 'Context file (optional)',
@@ -95,13 +98,18 @@ const SETUP_EN = {
   starting: 'Starting…',
   start: 'Start',
   projectsLoadError: (msg: string) => `Could not load projects: ${msg}`,
-  noApiHint: {
-    before: "This server doesn't have the v2 project API yet. Use ",
-    historyWord: 'History',
-    after: ' above for the existing commit timeline and insights.',
+  noApiHint: "This server doesn't have the v2 project API yet.",
+  /** A 401 on the projects fetch: this dashboard needs an access link, distinct from a plain
+   * network/server error (UX cycle 2, decision-2.md P5: "show a 401 as its own message"). The
+   * operator mints the link with the CLI's `digest token` command (apps/server/src/cli.ts:11). */
+  accessLinkNeeded: {
+    before: 'This dashboard needs an access link. Ask whoever runs DigestIT to print one with ',
+    code: 'digest token',
+    after: '.',
   },
 } as const;
 const SETUP_KO = {
+  formHeading: '프로젝트 등록',
   projectFolderLabel: '프로젝트 폴더',
   projectFolderPlaceholder: '/path/to/project',
   contextFileLabel: '컨텍스트 파일 (선택)',
@@ -109,14 +117,42 @@ const SETUP_KO = {
   starting: '시작하는 중…',
   start: '시작',
   projectsLoadError: (msg: string) => `프로젝트를 불러오지 못했습니다: ${msg}`,
-  noApiHint: {
-    before: '이 서버에는 아직 v2 프로젝트 API가 없습니다. 기존 커밋 타임라인과 인사이트는 위의 ',
-    historyWord: '기록',
-    after: '을 이용하세요.',
+  noApiHint: '이 서버에는 아직 v2 프로젝트 API가 없습니다.',
+  accessLinkNeeded: {
+    before: '이 대시보드를 사용하려면 접속 링크가 필요합니다. DigestIT 운영자에게 ',
+    code: 'digest token',
+    after: ' 명령으로 링크를 만들어 달라고 요청하세요.',
   },
 } as const;
 export function setupCopy(lang: Lang = 'en') {
   return lang === 'ko' ? SETUP_KO : SETUP_EN;
+}
+
+// --- Trust: what Explain sends and what DigestIT never does (UX cycle 2 P2/P5, decision-2.md
+// "Changes to the brief" 4). `readOnly` is the one line shared verbatim between the first-run
+// trust box and the Settings panel; `providerClaudeCode`/`providerStub`/`providerOther` are picked
+// by the caller from `AboutDto.provider` (GET /api/about, packages/core/src/v2.ts).
+
+const TRUST_EN = {
+  label: 'What Explain sends',
+  local: 'Registering a project and taking checkpoints stay on this machine. Nothing is sent anywhere until you run Explain, Retry, or Build context.',
+  sent: 'That sends the changed lines of your tracked files — ignored files never go out — plus a project map: file paths, the README, manifest metadata, top-level doc headings, and your optional note. Anything that looks like a secret is redacted first.',
+  providerClaudeCode: 'It goes to Anthropic, through the Claude Code CLI on this machine.',
+  providerStub: 'This server is set to the stub provider, so nothing leaves this machine.',
+  providerOther: (provider: string) => `It goes to the provider configured on this server: ${provider}.`,
+  readOnly: 'DigestIT never writes to your project folder or its git history. Its own data lives in a separate data directory.',
+} as const;
+const TRUST_KO = {
+  label: 'Explain이 보내는 것',
+  local: '프로젝트 등록과 체크포인트 생성은 이 기기에만 남습니다. Explain, Retry, 컨텍스트 빌드 중 하나를 실행하기 전까지는 아무것도 전송되지 않습니다.',
+  sent: '실행하면 추적 중인 파일의 변경된 줄(무시된 파일은 제외)과 프로젝트 맵(파일 경로, README, 매니페스트 메타데이터, 최상위 문서 제목, 남긴 메모)이 전송됩니다. 비밀 정보로 보이는 문자열은 먼저 마스킹됩니다.',
+  providerClaudeCode: '이 기기에 설치된 Claude Code CLI를 통해 Anthropic으로 전송됩니다.',
+  providerStub: '이 서버는 stub 제공자로 설정되어 있어 아무것도 이 기기 밖으로 나가지 않습니다.',
+  providerOther: (provider: string) => `이 서버에 설정된 제공자(${provider})로 전송됩니다.`,
+  readOnly: 'DigestIT는 프로젝트 폴더나 git 기록에 쓰지 않습니다. 자체 데이터는 별도의 데이터 디렉터리에 저장됩니다.',
+} as const;
+export function trustCopy(lang: Lang = 'en') {
+  return lang === 'ko' ? TRUST_KO : TRUST_EN;
 }
 
 // --- Header (DIG-49/52): project switcher, digest picker, Explain, calls left, info popover ----
@@ -125,7 +161,13 @@ const HEADER_EN = {
   projectLabel: 'Project',
   loadingStatus: 'Loading…',
   statusError: (msg: string) => `Could not load the project status: ${msg}`,
-  infoLabel: 'Project context and language',
+  // UX cycle 2 P5 (decision-2.md): the ⓘ trigger is relabeled "Settings" — it now holds budget,
+  // provider/model and the read-only line alongside the existing context/language/ignore controls.
+  settingsLabel: 'Settings',
+  budgetRowLabel: 'Daily budget',
+  providerRowLabel: 'Provider',
+  modelRowLabel: 'Model',
+  legacyInsightsLink: 'Legacy insights (pre-v2 data)',
   refreshContext: 'Refresh context',
   refreshingContext: 'Refreshing…',
   languageLabel: 'Explanation language',
@@ -139,7 +181,11 @@ const HEADER_KO = {
   projectLabel: '프로젝트',
   loadingStatus: '불러오는 중…',
   statusError: (msg: string) => `프로젝트 상태를 불러오지 못했습니다: ${msg}`,
-  infoLabel: '프로젝트 컨텍스트 및 언어',
+  settingsLabel: '설정',
+  budgetRowLabel: '일일 예산',
+  providerRowLabel: '제공자',
+  modelRowLabel: '모델',
+  legacyInsightsLink: '레거시 인사이트 (v2 이전 데이터)',
   refreshContext: '컨텍스트 새로고침',
   refreshingContext: '새로고침 중…',
   languageLabel: '설명 언어',
@@ -153,35 +199,18 @@ export function headerCopy(lang: Lang = 'en') {
   return lang === 'ko' ? HEADER_KO : HEADER_EN;
 }
 
-// --- Top nav and History menu (DIG-60): follows the current project's language, so a Korean
-// project never shows an English "DigestIT | Home | History" bar (see App.tsx's `lang` state).
+// --- Top nav (DIG-60, cut to Home-only by UX cycle 2 decision-2.md IA decision): follows the
+// current project's language, so a Korean project never shows an English "DigestIT | Home" bar
+// (see App.tsx's `lang` state). Units/Timeline/Briefing and their History menu are gone; Insights
+// stays reachable only via the Settings panel's "Legacy insights" link (see `settingsLabel` etc.
+// below), not from this nav.
 const NAV_EN = {
   pagesLabel: 'Pages',
   home: 'Home',
-  history: 'History',
-  otherViews: 'Other views',
-  units: 'Units',
-  unitsDesc: 'Group changes by ticket/issue',
-  timeline: 'Timeline',
-  timelineDesc: 'Changes in chronological order',
-  briefing: 'Briefing',
-  briefingDesc: 'Narrative summary over a date range',
-  insights: 'Insights',
-  insightsDesc: 'Charts and trends across digests',
 } as const;
 const NAV_KO = {
   pagesLabel: '페이지',
   home: '홈',
-  history: '기록',
-  otherViews: '다른 보기',
-  units: '단위',
-  unitsDesc: '티켓/이슈별로 변경 사항을 묶어서 봅니다',
-  timeline: '타임라인',
-  timelineDesc: '변경 사항을 시간 순서대로 봅니다',
-  briefing: '브리핑',
-  briefingDesc: '기간별 서술형 요약입니다',
-  insights: '인사이트',
-  insightsDesc: '다이제스트 전반의 차트와 추세입니다',
 } as const;
 export function navCopy(lang: Lang = 'en') {
   return lang === 'ko' ? NAV_KO : NAV_EN;
