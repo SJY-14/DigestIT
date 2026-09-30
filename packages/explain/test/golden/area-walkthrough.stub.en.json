@@ -1,28 +1,68 @@
 {
- "overview": "This area covers App.tsx and Settings.tsx. The stub provider lists each file's hunks without reading them.",
+ "overview": "This area covers App.tsx and Settings.tsx. The stub provider lists each hunk without reading them.",
  "steps": [
   {
-   "title": "Edit App.tsx",
-   "body": "Edits apps/web/src/App.tsx in 2 hunks, adding 2 lines. The stub provider does not explain why.",
-   "hunks": [
+   "title": "Edit App.tsx, hunk 1",
+   "body": "Edits apps/web/src/App.tsx hunk 1, adding 1 line. The stub provider does not explain why.",
+   "ranges": [
     {
      "path": "apps/web/src/App.tsx",
-     "hunk": 1
-    },
+     "side": "new",
+     "start": 2,
+     "end": 2
+    }
+   ],
+   "callouts": [
     {
      "path": "apps/web/src/App.tsx",
-     "hunk": 2
+     "side": "new",
+     "start": 2,
+     "end": 2,
+     "note": "stub callout: not analysed"
+    }
+   ],
+   "mechanical": false
+  },
+  {
+   "title": "Edit App.tsx, hunk 2",
+   "body": "Edits apps/web/src/App.tsx hunk 2, adding 1 line. The stub provider does not explain why.",
+   "ranges": [
+    {
+     "path": "apps/web/src/App.tsx",
+     "side": "new",
+     "start": 22,
+     "end": 22
+    }
+   ],
+   "callouts": [
+    {
+     "path": "apps/web/src/App.tsx",
+     "side": "new",
+     "start": 22,
+     "end": 22,
+     "note": "stub callout: not analysed"
     }
    ],
    "mechanical": false
   },
   {
    "title": "Add Settings.tsx",
-   "body": "Adds apps/web/src/Settings.tsx in 1 hunk, adding 2 lines. The stub provider does not explain why.",
-   "hunks": [
+   "body": "Adds apps/web/src/Settings.tsx hunk 1, adding 2 lines. The stub provider does not explain why.",
+   "ranges": [
     {
      "path": "apps/web/src/Settings.tsx",
-     "hunk": 1
+     "side": "new",
+     "start": 1,
+     "end": 2
+    }
+   ],
+   "callouts": [
+    {
+     "path": "apps/web/src/Settings.tsx",
+     "side": "new",
+     "start": 1,
+     "end": 1,
+     "note": "stub callout: not analysed"
     }
    ],
    "mechanical": false

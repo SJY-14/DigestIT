@@ -283,8 +283,9 @@ function extractArrayObjects(text: string, key: string, already: number): unknow
   return out;
 }
 
-function isStepShape(v: unknown): v is { title: string; body: string; hunks: unknown[]; mechanical: boolean } {
-  return isObj(v) && typeof v.title === 'string' && typeof v.body === 'string' && Array.isArray(v.hunks) && typeof v.mechanical === 'boolean';
+function isStepShape(v: unknown): v is { title: string; body: string; ranges: unknown[]; callouts: unknown[]; mechanical: boolean } {
+  return isObj(v) && typeof v.title === 'string' && typeof v.body === 'string' &&
+    Array.isArray(v.ranges) && Array.isArray(v.callouts) && typeof v.mechanical === 'boolean';
 }
 
 /** `claude -p --output-format json` with all tools disabled. Sends code to Anthropic (Board decision D2). */

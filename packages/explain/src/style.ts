@@ -118,9 +118,13 @@ export function isStatsLine(text: string): boolean {
  * is cut; boilerplate and tells are reported but never rewritten or
  * truncated on their account (only a retry can replace them). Tells go into
  * `styleWarnings`, never `v`: they are soft signals, not hard violations.
+ * `koCharsOverride` replaces the generic `charCap` formula for fields (like a
+ * step callout note) whose Korean limit is stated in characters directly,
+ * not as a multiple of the English word count.
  */
 export function checkProse(
   raw: string, label: string, words: number, language: ExplainLanguage, v: string[], styleWarnings: string[] = [],
+  koCharsOverride?: number,
 ): string {
   if (hasUnsafeMarkup(raw)) v.push(`${label}: contains HTML or a link`);
   let text = cleanText(raw);
@@ -128,7 +132,7 @@ export function checkProse(
     v.push(`${label}: ${wordCount(text)} words, limit ${words}`);
     text = truncateWords(text, words);
   }
-  const cap = charCap(language, words);
+  const cap = language === 'ko' && koCharsOverride !== undefined ? koCharsOverride : charCap(language, words);
   if (charLength(text) > cap) {
     v.push(`${label}: ${charLength(text)} characters, limit ${cap}`);
     text = truncateChars(text, cap);

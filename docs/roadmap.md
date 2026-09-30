@@ -15,8 +15,8 @@ Board; the build starts on the recommended options.
 | 1 | DIG-100 | Store, migration, rollback, export/clear, deterministic extraction, threads, `digest memory` CLI | Diff engineer | — |
 | 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task | Summarization engineer | — |
 | 3 | DIG-103 | `MemoryWorker` triggers, budget share, retrieval wired into Explain, memory API | Diff engineer | DIG-100, DIG-101 |
-| 4 | DIG-102 | "What DigestIT knows" design: brief, critique, decision | UX Designer, UX Reviewer | — |
-| 5 | later | The page and the per-digest "what DigestIT used" | Frontend engineer | DIG-102, DIG-103 |
+| 4 | DIG-102 | "What DigestIT knows" design: brief, critique, decision (done: `docs/ux/decision-4-memory.md`) | UX Designer, UX Reviewer | — |
+| 5 | DIG-104 | The page and the per-digest "what DigestIT used" | Frontend engineer | DIG-102, DIG-103 |
 | 6 | later | A/B kit and blind read (with and without memory, en/ko) | Summarization engineer, operator, UX Reviewer | DIG-103 |
 
 ## Fast Explain
@@ -39,13 +39,15 @@ one budget unit. Design and contract: [explain-speed.md](explain-speed.md).
 DIG-96 (Board, 2026-09-30, critical): "Explain code" still repeats the whole diff under every step, because steps point
 at whole hunks and a new file is one hunk. Steps now carry exact line ranges and line-anchored callouts; each step shows
 only its own lines, the full diff is shown once. Spec and contract (types, `rangeSpan` in core) merged to `main`:
-[l3-step-snippets.md](l3-step-snippets.md). Supersedes the hunk anchors of DIG-71 below.
+[l3-step-snippets.md](l3-step-snippets.md). Supersedes the hunk anchors of DIG-71 below. DIG-98 and DIG-99 merged
+together (the web UI needs the new required `ranges`); DIG-94 still has to merge `main` in (small `checkProse` conflict
+in `style.ts`). Next: the real-provider acceptance run (row 3).
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
 | 0 | DIG-96 | Contract, review, acceptance kit | CTO | DIG-98, DIG-99 |
-| 1 | DIG-98 | Schema, prompt `a6`, validator, stub, streaming | Diff engineer | — (rebase on DIG-94) |
-| 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed | Frontend engineer | — |
+| 1 | DIG-98 | Schema, prompt `a6`, validator, stub, streaming — **merged** | Diff engineer | — |
+| 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed — **merged** | Frontend engineer | — |
 | 3 | — | Real-provider run en/ko, light/dark, 60+ line multi-hunk change; UX Reviewer sentence-to-line check | Board operator, UX reviewer | DIG-98, DIG-99 |
 
 ## L3 step ↔ code mapping

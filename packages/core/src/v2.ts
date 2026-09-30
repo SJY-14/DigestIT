@@ -96,18 +96,15 @@ export interface WalkthroughStep {
   /** Prose: what this code does now, what it did before, and why it was changed this way. */
   body: string;
   /**
-   * The hunks this step explains, in reading order; at least one. Shown right under `body`.
-   * Superseded by `ranges` (DIG-96): only walkthroughs stored before area prompt a6 have it.
-   */
-  hunks: HunkRef[];
-  /**
-   * DIG-96 (area prompt a6 on): the exact lines this step explains, in reading order; at least
+   * DIG-96/98 (area prompt a6 on): the exact lines this step explains, in reading order; at least
    * one. No patch line is in two steps' ranges. The UI shows only these lines (plus up to three
-   * dimmed context lines) under `body`. Becomes required, and `hunks` goes, in the DIG-96 build.
+   * dimmed context lines) under `body`. A walkthrough stored before prompt a6 does not exist under
+   * the current `AREA_PROMPT_VERSION` and is never read back (see `explainArea`), so this is
+   * always present.
    */
-  ranges?: LineRange[];
+  ranges: LineRange[];
   /** DIG-96: line-anchored notes, each inside one of this step's `ranges`. */
-  callouts?: StepCallout[];
+  callouts: StepCallout[];
   /** True only for the (at most one) step that groups mechanical changes: renames, formatting, moves. */
   mechanical: boolean;
 }

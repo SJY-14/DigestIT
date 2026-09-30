@@ -4,13 +4,16 @@ import { openDb } from '@digestit/core';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AreaProgressEvent, AreaWalkthrough, DigestL2Content, DigestL2Item, ExplainLanguage, L0Content, L1Content } from '@digestit/core';
+import type {
+  AreaProgressEvent, AreaWalkthrough, DigestL2Content, DigestL2Item, ExplainLanguage, L0Content, L1Content, LineRange, StepCallout,
+} from '@digestit/core';
 import { splitHunks } from '@digestit/core/hunks';
 import {
   AREA_INSTRUCTIONS, AREA_PROMPT_VERSION, DIGEST_PROMPT_VERSION, OTHER_CHANGES, RepoNotAllowedError, StubProvider, areaHunks,
   buildAreaPrompt, checkAreaWalkthrough, checkDigestLevels, createProvider, explainArea, prepareAreaInput, prepareDigestInput, startJob,
 } from './index.js';
 import type { AreaInput, AreaResult, AreaStreamChunk, ExplanationProvider, ProviderFile } from './index.js';
+import { LIMITS } from './validate.js';
 import { truncateSentences } from './style.js';
 
 function seedArea(
@@ -63,6 +66,10 @@ function checkGolden(name: string, value: unknown): void {
   expect(value).toEqual(JSON.parse(readFileSync(golden(name), 'utf8')));
 }
 
+// Line ranges below (docs/l3-step-snippets.md) are numbered the way the prompt shows them (the
+// `N+`/`N `/`N-` prefixes), computed by hand from this patch's two hunks:
+// hunk 1 (@@ -1,3 +1,4 @@): new lines 1-4 (1=context, 2=added, 3-4=context).
+// hunk 2 (@@ -20,2 +21,3 @@): new lines 21-23 (21=context, 22=added, 23=context).
 const APP_PATCH = [
   '@@ -1,3 +1,4 @@',
   ' import React from "react";',
@@ -81,19 +88,27 @@ const FILES: ProviderFile[] = [
   { path: 'apps/web/src/Settings.tsx', status: 'A', additions: 2, deletions: 0, patch: '@@ -0,0 +1,2 @@\n+export function Settings() {\n+}\n', filteredReason: null },
 ];
 
+const range = (path: string, side: 'old' | 'new', start: number, end = start): LineRange => ({ path, side, start, end });
+const callout = (path: string, side: 'old' | 'new', line: number, note: string): StepCallout => ({ path, side, start: line, end: line, note });
+
 const validReply: AreaWalkthrough = {
   overview: 'A new Settings screen now renders behind a /settings route registered from App. The screen is an empty shell for now, so the route can land before the options do.',
   steps: [
     {
       title: 'An empty Settings screen',
       body: 'Settings.tsx adds a Settings component that renders nothing yet. Before, the app had no place for preferences at all; starting with an empty shell keeps this change small and lets the route land first.',
-      hunks: [{ path: 'apps/web/src/Settings.tsx', hunk: 1 }],
+      ranges: [range('apps/web/src/Settings.tsx', 'new', 1, 2)],
+      callouts: [callout('apps/web/src/Settings.tsx', 'new', 1, 'defines the empty component')],
       mechanical: false,
     },
     {
       title: 'Route /settings to the screen',
       body: 'App now imports Settings and registers a /settings route next to the home route. Before, every path fell through to Main; a dedicated route makes the screen linkable from anywhere.',
-      hunks: [{ path: 'apps/web/src/App.tsx', hunk: 1 }, { path: 'apps/web/src/App.tsx', hunk: 2 }],
+      ranges: [range('apps/web/src/App.tsx', 'new', 2), range('apps/web/src/App.tsx', 'new', 22)],
+      callouts: [
+        callout('apps/web/src/App.tsx', 'new', 2, 'imports the new screen'),
+        callout('apps/web/src/App.tsx', 'new', 22, 'registers the /settings route'),
+      ],
       mechanical: false,
     },
   ],
@@ -106,13 +121,18 @@ const KO_REPLY: AreaWalkthrough = {
     {
       title: '비어 있는 Settings 화면',
       body: 'Settings.tsx에 아직 아무것도 그리지 않는 Settings 컴포넌트를 추가합니다. 이전에는 환경설정을 둘 곳이 없었고, 빈 껍데기로 시작해 변경을 작게 유지했습니다.',
-      hunks: [{ path: 'apps/web/src/Settings.tsx', hunk: 1 }],
+      ranges: [range('apps/web/src/Settings.tsx', 'new', 1, 2)],
+      callouts: [callout('apps/web/src/Settings.tsx', 'new', 1, '빈 컴포넌트 정의')],
       mechanical: false,
     },
     {
       title: '/settings 경로 연결',
       body: 'App이 Settings를 import하고 홈 경로 옆에 /settings 라우트를 등록합니다. 이전에는 모든 경로가 Main으로 갔고, 전용 경로 덕분에 어디서든 이 화면으로 링크할 수 있습니다.',
-      hunks: [{ path: 'apps/web/src/App.tsx', hunk: 1 }, { path: 'apps/web/src/App.tsx', hunk: 2 }],
+      ranges: [range('apps/web/src/App.tsx', 'new', 2), range('apps/web/src/App.tsx', 'new', 22)],
+      callouts: [
+        callout('apps/web/src/App.tsx', 'new', 2, 'Settings를 import함'),
+        callout('apps/web/src/App.tsx', 'new', 22, '/settings 라우트 등록'),
+      ],
       mechanical: false,
     },
   ],
@@ -147,12 +167,29 @@ const baseInput: AreaInput = {
   language: 'en',
 };
 
-const step = (hunks: { path: string; hunk: number }[], patch: Partial<AreaWalkthrough['steps'][number]> = {}) => ({
-  title: 'Route the settings screen', body: 'App registers a /settings route so the screen is linkable. Before, there was no way in.', hunks, mechanical: false, ...patch,
+/** A step with no relation to `validReply`'s content, used to test range/callout handling in isolation. */
+const step = (
+  ranges: LineRange[], callouts: StepCallout[], patch: Partial<AreaWalkthrough['steps'][number]> = {},
+): AreaWalkthrough['steps'][number] => ({
+  title: 'Route the settings screen', body: 'App registers a /settings route so the screen is linkable. Before, there was no way in.',
+  ranges, callouts, mechanical: false, ...patch,
 });
-const ALL_HUNKS = [
-  { path: 'apps/web/src/App.tsx', hunk: 1 }, { path: 'apps/web/src/App.tsx', hunk: 2 }, { path: 'apps/web/src/Settings.tsx', hunk: 1 },
+
+const ALL_RANGES: LineRange[] = [
+  range('apps/web/src/Settings.tsx', 'new', 1, 2),
+  range('apps/web/src/App.tsx', 'new', 2),
+  range('apps/web/src/App.tsx', 'new', 22),
 ];
+const ALL_CALLOUTS: StepCallout[] = [
+  callout('apps/web/src/Settings.tsx', 'new', 1, 'defines the empty component'),
+  callout('apps/web/src/App.tsx', 'new', 2, 'imports the new screen'),
+  callout('apps/web/src/App.tsx', 'new', 22, 'registers the /settings route'),
+];
+
+/** A one-hunk file of `n` added lines after one context line, for the range-size rules (rule 3). */
+function addedLinesPatch(n: number): string {
+  return `@@ -1,1 +1,${n + 1} @@\n a\n${Array.from({ length: n }, (_, i) => `+line${i}`).join('\n')}\n`;
+}
 
 describe('buildAreaPrompt', () => {
   it('renders the digest summary, area context, and only this area\'s files as quoted data', () => {
@@ -181,10 +218,24 @@ describe('buildAreaPrompt', () => {
     expect(p).toContain('hunk 2  @@ -20,2 +21,3 @@\n21    <Route path="/" />\n22+   <Route path="/settings" element={<Settings />} />');
     expect(p).toContain('--- apps/web/src/Settings.tsx [A] +2 -0, 1 hunk\nhunk 1  @@ -0,0 +1,2 @@');
     expect(p).toContain('Hunk list (cover every one):\n- apps/web/src/App.tsx: hunk 1, hunk 2\n- apps/web/src/Settings.tsx: hunk 1\n</change>');
-    expect(p).toContain('{"overview":string,"steps":[{"title":string,"body":string,"hunks":[{"path":string,"hunk":number}],"mechanical":boolean}],"check":string[]}');
+    expect(p).toContain(
+      '{"overview":string,"steps":[{"title":string,"body":string,'
+      + '"ranges":[{"path":string,"side":"old"|"new","start":number,"end":number}],'
+      + '"callouts":[{"path":string,"side":"old"|"new","start":number,"end":number,"note":string}],'
+      + '"mechanical":boolean}],"check":string[]}',
+    );
     expect(p).toContain('what this code does now, what it did before, and why it was changed this way');
     expect(p).toContain('2-4 short sentences, never more (at most 70 words in total)');
     expect(p).toContain('true for at most one step that groups purely mechanical edits');
+  });
+
+  it('states every range/callout limit exactly as LIMITS and checkAreaWalkthrough count it', () => {
+    const p = buildAreaPrompt(baseInput);
+    expect(p).toContain(`at most ${LIMITS.walkRangeMaxChanged} changed lines`);
+    expect(p).toContain(`more than ${LIMITS.walkFileChangedMax} changed lines`);
+    expect(p).toContain(`1-${LIMITS.walkCalloutsMax} per step`);
+    expect(p).toContain(`at most ${LIMITS.walkCalloutNoteWords} words`);
+    expect(p).toContain(`at most ${LIMITS.walkCalloutNoteCharsKo} characters`);
   });
 
   it('numbers hunks the way splitHunks does on the stored patch, even with header-like content lines', () => {
@@ -282,52 +333,243 @@ describe('checkAreaWalkthrough', () => {
     expect(checkAreaWalkthrough({ overview: 'x', steps: 'no', check: [] }, FILES)).toBeNull();
   });
 
-  it('drops a reference to a path outside this area, and to a hunk number the file does not have', () => {
+  it('drops a range naming a path outside the area, and one with no lines on that side', () => {
     const reply = {
       ...validReply,
-      steps: [step([...ALL_HUNKS, { path: 'not/in/area.ts', hunk: 1 }, { path: 'apps/web/src/App.tsx', hunk: 3 }, { path: 'apps/web/src/App.tsx', hunk: 1 }])],
+      steps: [{
+        ...validReply.steps[1]!,
+        ranges: [...ALL_RANGES, range('not/in/area.ts', 'new', 1), range('apps/web/src/App.tsx', 'new', 999)],
+        callouts: ALL_CALLOUTS,
+      }],
     };
     const r = checkAreaWalkthrough(reply, FILES)!;
     expect(r.violations).toEqual([
-      'step 1: "not/in/area.ts" is not a file with hunks in this area',
-      'step 1: apps/web/src/App.tsx has no hunk 3 (it has hunk 1, 2)',
+      'step 1: range 4 "not/in/area.ts" is not a file with hunks in this area',
+      'step 1: range 5 apps/web/src/App.tsx new 999-999 has no lines on the new side',
     ]);
     expect(r.content.steps).toHaveLength(1);
-    expect(r.content.steps[0]!.hunks).toEqual(ALL_HUNKS);
+    expect(r.content.steps[0]!.ranges).toEqual(ALL_RANGES);
+    expect(r.content.steps[0]!.callouts).toEqual(ALL_CALLOUTS);
   });
 
-  it('drops a step with no valid hunk and a malformed reference', () => {
-    const reply = { ...validReply, steps: [...validReply.steps, step([{ path: 'apps/web/src/App.tsx', hunk: 0 }]), step([{ path: 'x' } as never])] };
+  it('drops a step whose only range is malformed or out of bounds', () => {
+    const reply = {
+      ...validReply,
+      steps: [
+        ...validReply.steps,
+        step([range('apps/web/src/App.tsx', 'new', 0)], [], { title: 'Bad start' }),
+        step([{ path: 'x' } as never], [], { title: 'Bad shape' }),
+      ],
+    };
     const r = checkAreaWalkthrough(reply, FILES)!;
-    expect(r.violations).toContain('step 3: references no valid hunk');
-    expect(r.violations.some((v) => v.startsWith('step 4: hunk reference 1 is malformed'))).toBe(true);
+    expect(r.violations.some((v) => v.startsWith('step 3: range 1 apps/web/src/App.tsx new 0-0 is malformed'))).toBe(true);
+    expect(r.violations).toContain('step 3: references no valid range');
+    expect(r.violations.some((v) => v.startsWith('step 4: range 1 is malformed'))).toBe(true);
+    expect(r.violations).toContain('step 4: references no valid range');
     expect(r.content.steps).toHaveLength(2);
+  });
+
+  it('rejects a range that crosses hunks', () => {
+    const reply = { ...validReply, steps: [step([range('apps/web/src/App.tsx', 'new', 1, 21)], [])] };
+    const r = checkAreaWalkthrough(reply, FILES)!;
+    expect(r.violations.some((v) => v.includes('crosses hunks: split it into one range per hunk'))).toBe(true);
+  });
+
+  it('rejects a single range with more than 40 changed lines', () => {
+    const patch = addedLinesPatch(45);
+    const files: ProviderFile[] = [{ path: 'big.ts', status: 'M', additions: 45, deletions: 0, patch, filteredReason: null }];
+    const reply = {
+      overview: validReply.overview,
+      steps: [{
+        title: 'Add many generated lines',
+        body: 'This adds forty-five generated lines to big.ts for the test. Before, the file had none of them; now it holds all forty-five.',
+        ranges: [range('big.ts', 'new', 2, 46)],
+        callouts: [callout('big.ts', 'new', 2, 'first added line')],
+        mechanical: false,
+      }],
+      check: ['Check nothing else broke.'],
+    };
+    const r = checkAreaWalkthrough(reply, files)!;
+    expect(r.violations).toEqual(expect.arrayContaining([expect.stringContaining('covers 45 changed lines: split it at the step boundaries')]));
+  });
+
+  it('rejects a range that covers every changed line of a file with more than 30, even at 35 (under the 40 cap)', () => {
+    const patch = addedLinesPatch(35);
+    const files: ProviderFile[] = [{ path: 'big.ts', status: 'M', additions: 35, deletions: 0, patch, filteredReason: null }];
+    const reply = {
+      overview: validReply.overview,
+      steps: [{
+        title: 'Add many generated lines',
+        body: 'This adds thirty-five generated lines to big.ts for the test. Before, the file had none of them; now it holds all of them.',
+        ranges: [range('big.ts', 'new', 2, 36)],
+        callouts: [callout('big.ts', 'new', 2, 'first added line')],
+        mechanical: false,
+      }],
+      check: ['Check nothing else broke.'],
+    };
+    const r = checkAreaWalkthrough(reply, files)!;
+    expect(r.violations).toEqual(expect.arrayContaining([expect.stringContaining('covers 35 changed lines: split it at the step boundaries')]));
+  });
+
+  it('rejects two ranges of the same step that overlap', () => {
+    const dupe = {
+      ...validReply.steps[1]!,
+      ranges: [range('apps/web/src/App.tsx', 'new', 2), range('apps/web/src/App.tsx', 'new', 2)],
+      callouts: [callout('apps/web/src/App.tsx', 'new', 2, 'imports the new screen')],
+    };
+    const r = checkAreaWalkthrough({ ...validReply, steps: [validReply.steps[0]!, dupe] }, FILES)!;
+    expect(r.violations).toEqual(expect.arrayContaining([
+      expect.stringContaining('step 2: range 2 (apps/web/src/App.tsx new 2-2) overlaps another range in the same step'),
+    ]));
+    expect(r.content.steps[1]!.ranges).toEqual([range('apps/web/src/App.tsx', 'new', 2)]);
+  });
+
+  it('rejects two ranges of different steps that overlap, naming both steps and the lines', () => {
+    const other = { ...validReply.steps[0]!, ranges: [range('apps/web/src/App.tsx', 'new', 2)], callouts: [callout('apps/web/src/App.tsx', 'new', 2, 'dup')] };
+    const r = checkAreaWalkthrough({ ...validReply, steps: [other, validReply.steps[1]!] }, FILES)!;
+    expect(r.violations).toEqual(expect.arrayContaining([
+      "step 2: range 1 (apps/web/src/App.tsx new 2-2) overlaps step 1's range (apps/web/src/App.tsx new 2-2)",
+    ]));
+  });
+
+  it('catches an overlap that only rangeSpan\'s replacement-half pull-in reveals (not a raw-number overlap)', () => {
+    // -old A / -old B / +new A / +new B: a `new` range starting on the first added line pulls in
+    // both preceding deletions, so it clashes with a step that already claims those old lines,
+    // even though "new 1-1" and "old 1-2" never overlap as raw numbers.
+    const patch = '@@ -1,2 +1,2 @@\n-old A\n-old B\n+new A\n+new B\n';
+    const files: ProviderFile[] = [{ path: 'x.ts', status: 'M', additions: 2, deletions: 2, patch, filteredReason: null }];
+    const reply = {
+      overview: validReply.overview,
+      steps: [
+        {
+          title: 'Remove the old behaviour', body: 'This removes the two old lines that used to run here. They controlled the previous behaviour end to end.',
+          ranges: [range('x.ts', 'old', 1, 2)], callouts: [callout('x.ts', 'old', 1, 'the old lines')], mechanical: false,
+        },
+        {
+          title: 'Add the new behaviour', body: 'This adds the two new lines that replace them. The new lines take over the same job with different logic.',
+          ranges: [range('x.ts', 'new', 1, 1)], callouts: [callout('x.ts', 'new', 1, 'the new line')], mechanical: false,
+        },
+      ],
+      check: ['Check the replacement is complete.'],
+    };
+    const r = checkAreaWalkthrough(reply, files)!;
+    expect(r.violations).toEqual(expect.arrayContaining([
+      "step 2: range 1 (x.ts new 1-1) overlaps step 1's range (x.ts old 1-2)",
+      'step 2: references no valid range',
+    ]));
+    expect(r.content.steps).toHaveLength(1);
+    expect(r.content.steps[0]!.title).toBe('Remove the old behaviour');
+  });
+
+  it('rejects a callout outside its own step\'s ranges', () => {
+    const reply = {
+      ...validReply,
+      steps: [validReply.steps[0]!, { ...validReply.steps[1]!, callouts: [...validReply.steps[1]!.callouts, callout('apps/web/src/Settings.tsx', 'new', 1, 'wrong file')] }],
+    };
+    const r = checkAreaWalkthrough(reply, FILES)!;
+    expect(r.violations).toEqual(expect.arrayContaining([
+      expect.stringContaining("is not inside one of step 2's own ranges"),
+    ]));
+    expect(r.content.steps[1]!.callouts).toEqual(validReply.steps[1]!.callouts);
+  });
+
+  it('rejects two callouts of the same step that overlap', () => {
+    const reply = {
+      ...validReply,
+      steps: [validReply.steps[0]!, { ...validReply.steps[1]!, callouts: [...validReply.steps[1]!.callouts, callout('apps/web/src/App.tsx', 'new', 2, 'dup')] }],
+    };
+    const r = checkAreaWalkthrough(reply, FILES)!;
+    expect(r.violations).toEqual(expect.arrayContaining([
+      expect.stringContaining('overlaps another callout in step 2'),
+    ]));
+    expect(r.content.steps[1]!.callouts).toEqual(validReply.steps[1]!.callouts);
+  });
+
+  it('rejects a too-long callout note: English words, Korean characters', () => {
+    const longNote = Array(15).fill('word').join(' ');
+    const en = {
+      ...validReply,
+      steps: [validReply.steps[0]!, { ...validReply.steps[1]!, callouts: [{ ...validReply.steps[1]!.callouts[0]!, note: longNote }, validReply.steps[1]!.callouts[1]!] }],
+    };
+    expect(checkAreaWalkthrough(en, FILES)?.violations).toEqual(expect.arrayContaining([
+      expect.stringMatching(/callout 1 note: 15 words, limit 12/),
+    ]));
+
+    const koLong = '가나다라마바사아자차'.repeat(4);
+    const ko = {
+      ...KO_REPLY,
+      steps: [KO_REPLY.steps[0]!, { ...KO_REPLY.steps[1]!, callouts: [{ ...KO_REPLY.steps[1]!.callouts[0]!, note: koLong }, KO_REPLY.steps[1]!.callouts[1]!] }],
+    };
+    expect(checkAreaWalkthrough(ko, FILES, 'ko')?.violations).toEqual(expect.arrayContaining([
+      expect.stringMatching(/callout 1 note: 40 characters, limit 25/),
+    ]));
+  });
+
+  it('needs at least one callout on a non-mechanical step', () => {
+    const reply = { ...validReply, steps: [validReply.steps[0]!, { ...validReply.steps[1]!, callouts: [] }] };
+    const r = checkAreaWalkthrough(reply, FILES)!;
+    expect(r.violations).toContain('step 2: needs at least one callout');
+  });
+
+  it('caps callouts at 4 per step', () => {
+    const patch = addedLinesPatch(10);
+    const files: ProviderFile[] = [{ path: 'many.ts', status: 'M', additions: 10, deletions: 0, patch, filteredReason: null }];
+    const callouts = Array.from({ length: 5 }, (_, i) => callout('many.ts', 'new', i + 2, `note ${i}`));
+    const reply = {
+      overview: validReply.overview,
+      steps: [{
+        title: 'Add ten generated lines',
+        body: 'This adds ten generated lines to many.ts for the test. Before, the file had none of them; now it has all ten.',
+        ranges: [range('many.ts', 'new', 2, 11)], callouts, mechanical: false,
+      }],
+      check: ['Check nothing else broke.'],
+    };
+    const r = checkAreaWalkthrough(reply, files)!;
+    expect(r.violations).toContain('step 1: 5 callouts, limit 4');
+    expect(r.content.steps[0]!.callouts).toHaveLength(4);
   });
 
   it('flags uncovered hunks and appends them to a generated "Other changes" step, in patch order', () => {
     const reply = { ...validReply, steps: [validReply.steps[0]!] };
     const r = checkAreaWalkthrough(reply, FILES)!;
-    expect(r.violations).toEqual(['hunks not covered by any step: apps/web/src/App.tsx hunk 1, 2']);
+    expect(r.violations).toEqual(["hunks not covered by any step's range: apps/web/src/App.tsx hunk 1, 2"]);
     expect(r.content.steps).toHaveLength(2);
     expect(r.content.steps[1]).toEqual({
-      ...OTHER_CHANGES.en, hunks: [{ path: 'apps/web/src/App.tsx', hunk: 1 }, { path: 'apps/web/src/App.tsx', hunk: 2 }], mechanical: false,
+      title: OTHER_CHANGES.en.title,
+      body: OTHER_CHANGES.en.body,
+      ranges: [range('apps/web/src/App.tsx', 'new', 1, 4), range('apps/web/src/App.tsx', 'new', 21, 23)],
+      callouts: [
+        callout('apps/web/src/App.tsx', 'new', 1, OTHER_CHANGES.en.calloutNote),
+        callout('apps/web/src/App.tsx', 'new', 21, OTHER_CHANGES.en.calloutNote),
+      ],
+      mechanical: false,
     });
-    const covered = new Set(r.content.steps.flatMap((s) => s.hunks.map((h) => `${h.path}#${h.hunk}`)));
-    expect(covered).toEqual(new Set(ALL_HUNKS.map((h) => `${h.path}#${h.hunk}`)));
   });
 
-  it('writes the generated step in the explanation language', () => {
+  it('writes the generated step\'s title, body and callout note in the explanation language', () => {
     const r = checkAreaWalkthrough({ ...KO_REPLY, steps: [KO_REPLY.steps[1]!] }, FILES, 'ko')!;
     expect(r.content.steps[1]!.title).toBe('기타 변경');
+    expect(r.content.steps[1]!.body).toBe(OTHER_CHANGES.ko.body);
+    expect(r.content.steps[1]!.callouts[0]!.note).toBe(OTHER_CHANGES.ko.calloutNote);
   });
 
-  it('allows one mechanical step and flags a second', () => {
-    const one = { ...validReply, steps: [validReply.steps[0]!, { ...validReply.steps[1]!, mechanical: true }] };
-    expect(checkAreaWalkthrough(one, FILES)?.violations).toEqual([]);
+  it('allows a mechanical step already last, and repositions one that is not', () => {
+    const lastOk = { ...validReply, steps: [validReply.steps[0]!, { ...validReply.steps[1]!, mechanical: true }] };
+    expect(checkAreaWalkthrough(lastOk, FILES)?.violations).toEqual([]);
+
+    const firstBad = { ...validReply, steps: [{ ...validReply.steps[0]!, mechanical: true }, validReply.steps[1]!] };
+    const r = checkAreaWalkthrough(firstBad, FILES)!;
+    expect(r.violations).toContain('step 1: the mechanical step must be last');
+    expect(r.content.steps.map((s) => s.title)).toEqual([validReply.steps[1]!.title, validReply.steps[0]!.title]);
+    expect(r.content.steps.map((s) => s.mechanical)).toEqual([false, true]);
+  });
+
+  it('flags more than one mechanical step and keeps only the first, moved to the end', () => {
     const two = { ...validReply, steps: validReply.steps.map((s) => ({ ...s, mechanical: true })) };
     const r = checkAreaWalkthrough(two, FILES)!;
-    expect(r.violations).toEqual(['step 2: only one step may be mechanical']);
-    expect(r.content.steps.map((s) => s.mechanical)).toEqual([true, false]);
+    expect(r.violations).toContain('more than one step is mechanical');
+    expect(r.content.steps.map((s) => s.mechanical)).toEqual([false, true]);
+    expect(r.content.steps[1]!.title).toBe(validReply.steps[0]!.title);
   });
 
   it('flags a missing mechanical flag and treats it as false', () => {
@@ -517,23 +759,26 @@ describe('explainArea', () => {
     const r = await explainArea(db, id, 'settings-ui', p, { budget: 40 });
     expect(r).toMatchObject({ outcome: 'ok', calls: 2 });
     expect(p.inputs[0]!.retryFeedback).toBeUndefined();
-    expect(p.inputs[1]!.retryFeedback).toEqual(['hunks not covered by any step: apps/web/src/App.tsx hunk 1, 2']);
-    expect(buildAreaPrompt(p.inputs[1]!)).toContain('rejected for these reasons; fix them and answer again:\n- hunks not covered by any step');
+    expect(p.inputs[1]!.retryFeedback).toEqual(["hunks not covered by any step's range: apps/web/src/App.tsx hunk 1, 2"]);
+    expect(buildAreaPrompt(p.inputs[1]!)).toContain("rejected for these reasons; fix them and answer again:\n- hunks not covered by any step's range");
     expect(callRows(db)).toEqual([{ reason: 'area', outcome: 'ok' }, { reason: 'area', outcome: 'ok' }]);
   });
 
   it('after the retry, stores the repaired walkthrough as truncated: bad refs dropped, every hunk covered', async () => {
     const db = openDb(':memory:');
     const id = seedArea(db, FILES, { id: 'settings-ui', paths: FILES.map((f) => f.path) });
-    const bad = { ...validReply, steps: [{ ...validReply.steps[0]!, hunks: [{ path: 'apps/web/src/Settings.tsx', hunk: 1 }, { path: 'nope.ts', hunk: 1 }] }] };
+    const bad = {
+      ...validReply,
+      steps: [{ ...validReply.steps[0]!, ranges: [range('apps/web/src/Settings.tsx', 'new', 1, 2), range('nope.ts', 'new', 1)] }],
+    };
     const p = new Scripted([bad]);
     const r = await explainArea(db, id, 'settings-ui', p, { budget: 40 });
     expect(r).toMatchObject({ outcome: 'truncated', calls: 2 });
     expect(rows(db)[0]!.status).toBe('truncated');
     const stored = JSON.parse(rows(db)[0]!.content) as AreaWalkthrough;
     expect(stored.steps.map((s) => s.title)).toEqual(['An empty Settings screen', 'Other changes']);
-    expect(stored.steps[0]!.hunks).toEqual([{ path: 'apps/web/src/Settings.tsx', hunk: 1 }]);
-    expect(stored.steps[1]!.hunks).toEqual([{ path: 'apps/web/src/App.tsx', hunk: 1 }, { path: 'apps/web/src/App.tsx', hunk: 2 }]);
+    expect(stored.steps[0]!.ranges).toEqual([range('apps/web/src/Settings.tsx', 'new', 1, 2)]);
+    expect(stored.steps[1]!.ranges).toEqual([range('apps/web/src/App.tsx', 'new', 1, 4), range('apps/web/src/App.tsx', 'new', 21, 23)]);
   });
 
   it('stores error and logs an error call when the provider keeps failing', async () => {
@@ -650,13 +895,18 @@ describe('explainArea AI-tell retry (DIG-65)', () => {
 });
 
 describe('StubProvider.explainArea', () => {
-  it.each(['en', 'ko'] as const)('covers every hunk with one step per file, with no filler (%s, golden)', async (language) => {
+  it.each(['en', 'ko'] as const)('covers every hunk with one step per hunk, with no filler (%s, golden)', async (language) => {
     const db = openDb(':memory:');
     const id = seedArea(db, FILES, { id: 'settings-ui', paths: FILES.map((f) => f.path) });
     const r = await explainArea(db, id, 'settings-ui', new StubProvider(), { budget: 40, language });
     expect(r.outcome).toBe('ok');
     const content = JSON.parse(rows(db)[0]!.content) as AreaWalkthrough;
-    expect(content.steps.map((s) => s.hunks)).toEqual([ALL_HUNKS.slice(0, 2), ALL_HUNKS.slice(2)]);
+    expect(content.steps.map((s) => s.ranges)).toEqual([
+      [range('apps/web/src/App.tsx', 'new', 2)],
+      [range('apps/web/src/App.tsx', 'new', 22)],
+      [range('apps/web/src/Settings.tsx', 'new', 1, 2)],
+    ]);
+    expect(checkAreaWalkthrough(content, FILES, language)?.violations).toEqual([]);
     expect(JSON.stringify(content)).not.toMatch(/\(s\)|may have changed|Changed here|Changes in/);
     checkGolden(`area-walkthrough.stub.${language}.json`, content);
 
@@ -664,7 +914,7 @@ describe('StubProvider.explainArea', () => {
     expect(r2).toMatchObject({ outcome: 'cached', calls: 0 });
   });
 
-  it('groups files past the step cap into one last step', async () => {
+  it('groups hunks past the step cap into one last step', async () => {
     const many: ProviderFile[] = Array.from({ length: 15 }, (_, i) => ({
       path: `src/f${String(i).padStart(2, '0')}.ts`, status: 'M' as const, additions: 1, deletions: 0, patch: '@@ -1 +1,2 @@\n a\n+b\n', filteredReason: null,
     }));
@@ -672,13 +922,25 @@ describe('StubProvider.explainArea', () => {
     const checked = checkAreaWalkthrough(r.content, many)!;
     expect(checked.violations).toEqual([]);
     expect(checked.content.steps).toHaveLength(12);
-    expect(checked.content.steps[11]!.hunks).toHaveLength(4);
+    expect(checked.content.steps[11]!.ranges).toHaveLength(4);
+  });
+
+  it('splits a big hunk into ranges of at most 40 changed lines each', async () => {
+    const patch = addedLinesPatch(45);
+    const files: ProviderFile[] = [{ path: 'big.ts', status: 'M', additions: 45, deletions: 0, patch, filteredReason: null }];
+    const r = await new StubProvider().explainArea({ ...baseInput, files });
+    const checked = checkAreaWalkthrough(r.content, files)!;
+    expect(checked.violations).toEqual([]);
+    expect(checked.content.steps).toHaveLength(1);
+    expect(checked.content.steps[0]!.ranges.length).toBeGreaterThan(1);
+    expect(checked.content.steps[0]!.callouts).toHaveLength(1);
   });
 });
 
-// Model output over a realistic multi-file change (test/fixtures/walkthrough-snapback.json):
-// `*.claude.<lang>.json` come from test/real-walkthrough.mjs; `*.sample.<lang>.json` were produced
-// by replaying the exact same prompts through a Claude session (provider `claude-subagent-replay`).
+// Model output over a realistic multi-file change (test/fixtures/walkthrough-snapback.json), captured
+// before area prompt a6 (DIG-98): its `steps` use the retired `hunks` shape, not `ranges`/`callouts`, so
+// it can no longer be replayed through `checkAreaWalkthrough`. Kept only for the digest-level golden
+// and as a text corpus for `lint-report.test.ts` (which reads only overview/title/body/check).
 describe('walkthrough-snapback goldens', () => {
   const fixture = JSON.parse(readFileSync(join(here, '../test/fixtures/walkthrough-snapback.json'), 'utf8')) as RawChangeLike;
   const goldens = readdirSync(join(here, '../test/golden')).filter((f) => /^walkthrough-snapback\.[a-z]+\.(en|ko)\.json$/.test(f));
@@ -687,21 +949,10 @@ describe('walkthrough-snapback goldens', () => {
     expect(goldens).toEqual(expect.arrayContaining(['walkthrough-snapback.sample.en.json', 'walkthrough-snapback.sample.ko.json']));
   });
 
-  it.each(goldens)('%s passes the validators and covers every hunk of every area', (name) => {
+  it.each(goldens)('%s passes the digest-level validators', (name) => {
     const g = JSON.parse(readFileSync(golden(name), 'utf8')) as SnapbackGolden;
     const digestFiles = prepareDigestInput(fixture, undefined, g.language).input.files;
     expect(checkDigestLevels({ l0: g.digest.l0, l1: g.digest.l1, l2: g.digest.l2 }, digestFiles, g.language)?.violations).toEqual([]);
-    const allHunks = fixture.files.flatMap((f) => splitHunks(f.patch).map((h) => `${f.path}#${h.index}`));
-    const covered = new Set<string>();
-    for (const a of g.areas) {
-      const item = g.digest.l2.items.find((it) => it.id === a.id)!;
-      const { input } = prepareAreaInput(fixture, { l0: g.digest.l0.text, l1Bullets: g.digest.l1.bullets, item }, undefined, g.language);
-      const r = checkAreaWalkthrough(a.walkthrough, input.files, g.language)!;
-      expect(r.violations).toEqual([]);
-      expect(a.walkthrough.steps.filter((s) => s.mechanical).length).toBeLessThanOrEqual(1);
-      for (const s of a.walkthrough.steps) for (const h of s.hunks) covered.add(`${h.path}#${h.hunk}`);
-    }
-    expect(allHunks.filter((h) => !covered.has(h))).toEqual([]);
     if (g.language === 'ko') expect(g.areas[0]!.walkthrough.overview).toMatch(/[가-힣]/);
   });
 });

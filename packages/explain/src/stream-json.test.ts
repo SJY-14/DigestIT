@@ -156,8 +156,16 @@ describe('ClaudeCodeProvider over stream-json', () => {
     const full = {
       overview: 'It refactors the parser.',
       steps: [
-        { title: 'Step one', body: 'Body one.', hunks: [{ path: 'a.ts', hunk: 1 }], mechanical: false },
-        { title: 'Step two', body: 'Body two.', hunks: [{ path: 'a.ts', hunk: 2 }], mechanical: false },
+        {
+          title: 'Step one', body: 'Body one.', mechanical: false,
+          ranges: [{ path: 'a.ts', side: 'new', start: 1, end: 1 }],
+          callouts: [{ path: 'a.ts', side: 'new', start: 1, end: 1, note: 'first line' }],
+        },
+        {
+          title: 'Step two', body: 'Body two.', mechanical: false,
+          ranges: [{ path: 'a.ts', side: 'new', start: 2, end: 2 }],
+          callouts: [{ path: 'a.ts', side: 'new', start: 2, end: 2, note: 'second line' }],
+        },
       ],
       check: ['Check it.'],
     };
