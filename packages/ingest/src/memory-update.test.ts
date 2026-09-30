@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
 import type { AreaMemory } from '@digestit/core';
 import { findProject, initProject, type ProjectRow } from './project.js';
-import { listMemoryItems } from './memory.js';
+import { createBatch, listMemoryItems, markHidden } from './memory.js';
 import { updateProjectMemory } from './memory-update.js';
 
 let root: string;
@@ -97,6 +97,21 @@ describe('updateProjectMemory', () => {
     const result = await updateProjectMemory(db, home, project, 'manual', () => new Date('2026-10-01T00:00:00.000Z'));
     expect(result.areasStale).toBe(1);
     expect(listMemoryItems(db, project.id, { kind: 'area' }).find((a) => a.key === 'lib')!.status).toBe('stale');
+  });
+
+  it('a user-hidden area is never revived by a later incremental update, even after its files change', async () => {
+    write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\n`);
+    const init = await initProject(db, home, proj);
+    const project = findProject(db, String(init.repoId)) as ProjectRow;
+    await updateProjectMemory(db, home, project, 'init', () => new Date('2026-09-30T00:00:00.000Z'));
+    const src = listMemoryItems(db, project.id, { kind: 'area' }).find((a) => a.key === 'src')!;
+    const hideBatch = createBatch(db, project.id, 'user', null, () => new Date('2026-09-30T01:00:00.000Z'));
+    markHidden(db, hideBatch, src.id, () => new Date('2026-09-30T01:00:00.000Z'));
+
+    write('src/index.ts', `export function add(a: number, b: number) { return a + b; }\nexport function sub() {}\n`);
+    const result = await updateProjectMemory(db, home, project, 'manual', () => new Date('2026-10-01T00:00:00.000Z'));
+    expect(result.areasChanged).toBe(0); // the extractor skipped the hidden area entirely
+    expect(listMemoryItems(db, project.id, { kind: 'area' }).find((a) => a.key === 'src')!.status).toBe('hidden');
   });
 
   it('a denylisted file never surfaces in an extracted area\'s doc, exports or provenance', async () => {
