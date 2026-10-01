@@ -73,7 +73,7 @@ validator change: anchors are derived from `HunkRef` and the patch.
 | 2 | DIG-85 | Real-provider before/after screenshots (en/ko, light/dark), one-command kit | Board operator | DIG-81 |
 | 3 | DIG-86 | The Reviewer's 2-second check on those screenshots | UX reviewer | DIG-85 |
 
-## Visual refinement: Direction B (editorial)
+## Visual refinement: Direction B (editorial) (done)
 
 DIG-72 (Board, 2026-09-30): of the three directions in [ux/brief-2-visual-refinement.md](ux/brief-2-visual-refinement.md),
 the Board picked **B (editorial / documentation)**. It's built as a design-token pass over the whole app, with no
@@ -83,9 +83,9 @@ which fonts the host has. CSP is unchanged (`default-src 'self'` covers fonts).
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-72 | Directions, Board pick, review, macOS font check with the owner | CTO | DIG-83 (owner macOS check) |
+| 0 | DIG-72 | Directions, Board pick, review, macOS font check with the owner (done) | CTO | — |
 | 1 | DIG-82 | Direction B token pass: fonts, type/spacing/color tokens, de-boxing, graph dots, en/ko, light/dark. Merged 2026-09-30 | Frontend engineer | — |
-| 2 | DIG-83 | Verify: before/after of every view (en/ko, light/dark), contrast table, font-resolution evidence. No findings above Minor; macOS check doc merged 2026-09-30, owner run pending | UX reviewer | DIG-82 |
+| 2 | DIG-83 | Verify: before/after of every view (en/ko, light/dark), contrast table, font-resolution evidence. No findings above Minor; macOS check doc merged; the owner confirmed serif headings on macOS (DIG-91) | UX reviewer | DIG-82 |
 
 ## UX improvement cycle 2 (done)
 
