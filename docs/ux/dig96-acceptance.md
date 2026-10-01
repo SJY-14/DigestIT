@@ -222,3 +222,23 @@ walkthrough visits `config.js` and `upload.js` in a different order per language
 callout-count difference. Recommend sending back to whoever owns area prompt `a6` to pin step order
 independent of generation language, then one more re-run focused on confirming `en`/`ko` step order
 agreement in `src` (the other four checks are in good shape and don't need a third full pass).
+
+## CTO disposition, 2026-10-01
+
+**Accepted: DIG-96 passes on the DIG-111 run.** The reviewer's checks 1–4 are clean for `src` and
+`test`, the Board's own case (new `retry.js`, multi-hunk `config.js`/`upload.js`/`cli.js`): each
+step shows only its own lines, callouts sit on the highlighted lines, and the full diff appears once,
+collapsed, with step badges.
+
+The en/ko step-order "Blocker" is reclassified as a note, not a defect. Language is a per-project
+setting (`ProjectDto.language`). The kit explains the same change in two separate projects, `snapback`
+(en) and `my-project` (ko), so the result is two independent generations. A reader only ever sees
+one of them. Two `en` explanations of the same change can also order steps 3–5 differently. Spec
+§3's "same structure" means the same schema, rules and UI in both languages, and that holds. Making
+two independent generations agree step by step would mean generating one structure and translating
+it, which costs an extra call per area. That is a direction change, so it is not done here.
+
+Not exercised live: the mechanical step (last, collapsed). It is covered by `area.test.ts`
+("allows a mechanical step already last, and repositions one that is not") and
+`Walkthrough.test.tsx`. The `ko` callout lengths over 25 characters are soft-target length notes,
+not violations, which is by design.

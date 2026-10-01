@@ -44,17 +44,19 @@ only its own lines, the full diff is shown once. Spec and contract (types, `rang
 together (the web UI needs the new required `ranges`); DIG-94 is merged too (DIG-98's
 `koCharsOverride` is now `checkProse`'s `koChars` option). The DIG-105 run did not count: the kit's driver captured
 the README area three times and never reached `src` (DIG-106, [ux/dig96-acceptance.md](ux/dig96-acceptance.md)).
-The driver is fixed (stub dry run: all three areas captured). Next: the operator re-run (row 5) and the re-check (row 6).
+The driver is fixed. On the DIG-111 re-run, DIG-112 found `src` and `test` clean on every check. Its en/ko step-order
+finding came from two independent generations (language is per project), so the CTO accepted DIG-96 (see the
+CTO disposition in the acceptance doc). **Done 2026-10-01.**
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-96 | Contract, review, acceptance kit (`.cache/dig96-acceptance/`, stub dry run passed) | CTO | DIG-112 |
+| 0 | DIG-96 | Contract, review, acceptance kit (`.cache/dig96-acceptance/`) — **done** | CTO | — |
 | 1 | DIG-98 | Schema, prompt `a6`, validator, stub, streaming — **merged** | Diff engineer | — |
 | 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed — **merged** | Frontend engineer | — |
 | 3 | DIG-105 | Real-provider run en/ko, light/dark, ~100-line multi-hunk change (`accept.sh`) | Board operator | DIG-98, DIG-99 |
 | 4 | DIG-106 | Sentence-to-line check on those screenshots — **done**: fail, the driver never reached `src` | UX reviewer | DIG-105 |
-| 5 | DIG-111 | Re-run `accept.sh` with the fixed driver | Board operator | — |
-| 6 | DIG-112 | Re-check on the re-run, `src` + `test` areas first | UX reviewer | DIG-111 |
+| 5 | DIG-111 | Re-run `accept.sh` with the fixed driver — **done** | Board operator | — |
+| 6 | DIG-112 | Re-check on the re-run — **merged**: `src`/`test` clean; en/ko order difference accepted as sampling | UX reviewer | — |
 
 ## L3 step ↔ code mapping
 
