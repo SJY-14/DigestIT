@@ -282,6 +282,8 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
    "System" (no attribute) leaves the blocks above in charge. Keep these two blocks in sync with
    the :root blocks above when a token changes. */
 :root[data-theme="light"] {
+  /* Native controls (select popups, inputs, checkboxes) follow color-scheme, not our tokens. */
+  color-scheme: light;
   --bg: #fbfaf7; --bg-inset: #f3f1ea; --fg: #20211d; --muted: #65645a; --border: #e4e1d6;
   --border-muted: #ece9de; --control-border: #8a8577; --hover: #f3f1ea; --selected: #f1ece1;
   --accent: #9a5b32; --accent-solid: #9a5b32; --focus: #9a5b32; --shadow: 0 8px 24px rgba(32, 33, 29, 0.12);
@@ -295,6 +297,7 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
   --heat-0: var(--bg-inset); --heat-1: #8fb0e0; --heat-2: #6293db; --heat-3: #3a72cc; --heat-4: #173e85;
 }
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #1b1a17; --bg-inset: #221f1a; --fg: #eae6da; --muted: #a39d8c; --border: #3a362c;
   --border-muted: #2c2921; --control-border: #7a7466; --hover: #24211c; --selected: #2a2620;
   --accent: #d99a6c; --accent-solid: #a0603a; --focus: #d99a6c; --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);

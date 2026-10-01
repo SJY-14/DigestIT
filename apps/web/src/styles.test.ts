@@ -103,4 +103,9 @@ describe('styles: data-theme overrides stay in sync with prefers-color-scheme (D
       expect(token(dataDark, key), key).toBe(token(m2Dark, key));
     }
   });
+
+  it('pins color-scheme per explicit choice, so native controls follow it instead of the OS', () => {
+    expect(dataLight).toMatch(/color-scheme\s*:\s*light\s*;/);
+    expect(dataDark).toMatch(/color-scheme\s*:\s*dark\s*;/);
+  });
 });
