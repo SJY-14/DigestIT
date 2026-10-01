@@ -38,6 +38,17 @@ one budget unit. Design and contract: [explain-speed.md](explain-speed.md).
 | 4 | DIG-77 | Real-provider timing and quality acceptance (en and ko) | Board operator | DIG-74, DIG-75, DIG-76 |
 | 5 | DIG-84 | Bug: Explain button stays "Explaining…" after a server-run Explain (live stream misses in-process writes). Merged 2026-09-30 | Diff engineer | — |
 
+## Theme toggle
+
+DIG-113 (Board, 2026-10-01): a System/Light/Dark choice in the header, mirrored in Settings, saved per browser and
+applied before first paint by `/theme-init.js` (no inline script). An explicit choice overrides `prefers-color-scheme`
+through `:root[data-theme]` tokens and `color-scheme`.
+
+| # | Key | Issue | Owner | Depends on |
+|---|---|---|---|---|
+| 1 | DIG-113 | Toggle, persistence, no-flash bootstrap, tests (merged 2026-10-01) | Frontend engineer | — |
+| 2 | DIG-115 | Screenshot check: every view × OS light/dark × System/Light/Dark, keyboard, blocked storage | UX Reviewer | — |
+
 ## L3 step snippets and line callouts
 
 DIG-96 (Board, 2026-09-30, critical): "Explain code" still repeats the whole diff under every step, because steps point
