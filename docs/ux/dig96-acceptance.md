@@ -102,3 +102,123 @@ Checked against `*-steps.md` + the step/L3/full-diff/tall screenshots:
 
 Reassigning to the CTO with this verdict; recommend bouncing back to whoever owns the acceptance
 kit (`drive.mjs`) for the harness fix and a re-run before DIG-96 is closed.
+
+## Re-run (DIG-111), 2026-10-01
+
+Reviewed: operator real-provider re-run `.cache/dig96-acceptance/shots-claude-code/` (DIG-111, same
+snapback `change1` diff, same harness fixed for DIG-106's finding). Confirmed first that the
+harness bug is actually fixed: `explain-calls.log` now shows separate `walkthrough:project-root`,
+`walkthrough:src`, `walkthrough:test` calls, each `*-l3.log` logs a distinct `areaN <id> <name>`
+(`area1 project-root`, `area2 src`, `area3 test`) with different file counts and summaries, and the
+three `*-full-diff.png` files have different md5s. **`src` and `test` are genuinely captured this
+time** — this is the first evidence DIG-96 has produced for the Board's actual case.
+
+**Verdict: FAIL — new structural bug in the Board's own scenario, `src` (multi-hunk).** The one
+area the Board explicitly flagged (new `retry.js` + multi-hunk `config.js`/`upload.js`/`cli.js`)
+reorders steps between `en` and `ko`, violating spec §3 ("same structure for en and ko"). This is
+worse than the DIG-106 README finding: not a cosmetic line-range nit, it's a different walk order
+through the same files, in exactly the scenario this acceptance is supposed to validate.
+
+### Blocker — `src` area walks the files in a different order in en vs ko
+
+Compare `light-en-area2-steps.md` and `light-ko-area2-steps.md` (same digest, same diff, same run):
+
+| step | en | ko |
+|---|---|---|
+| 1 | `retry.js` 1–13 (HttpError/isTransient) | `retry.js` 1–13 (same) |
+| 2 | `retry.js` 15–24 (withRetry backoff) | `retry.js` 15–24 (same) |
+| 3 | **`config.js`** 1–14 (retries validation) | **`upload.js`** 1–12 (uploadFile retry wrap) |
+| 4 | **`upload.js`** 1–12 (uploadFile retry wrap) | **`upload.js`** 14–25 (uploadAll failures) |
+| 5 | **`upload.js`** 14–25 (uploadAll failures) | **`config.js`** 1–14 (retries validation) |
+| 6 | `cli.js` 2–32 (wiring) | `cli.js` 2–32 (same) |
+
+Steps 1, 2 and 6 agree; steps 3–5 cover the same three ranges in both languages but in a different
+order — `ko` does both `upload.js` parts before `config.js`, `en` does `config.js` before either
+`upload.js` part. A reader using the step list as a map of "what changed, in what order" gets a
+different map depending on language, for the identical diff. Screenshots: `light-en-area2-L3.png`
+(sidebar order) vs `light-ko-area2-L3.png`; confirmed visually in `dark-ko-area2-step3.png` (sidebar
+shows "3 uploadFile에 재시도 적용" where the en sidebar's step 3 is "Validate and default the retries
+setting").
+
+The step that moves (`config.js`, en step 3 / ko step 5) also gains content in `ko`: the body goes
+from 3 sentences to 4, and callouts go from 2 (`light-en-area2-steps.md`: lines 9, 10) to 3
+(`light-ko-area2-steps.md`: lines 4, 9, 10–12) — an extra callout on the added `retries: 3,` default
+that `en` doesn't call out at all. So this isn't just reordering noise from a nondeterministic
+sampler; the model produced a materially different walkthrough for the same change depending on
+target language.
+
+This is a prompt/model-determinism issue (area prompt `a6` doesn't constrain step order to match
+file order or some other stable key across languages), not a UI bug — the renderer shows whatever
+steps it's given correctly in both languages. Fix direction: pin the step order to something
+stable and language-independent (e.g. process ranges in file-then-line order, or re-derive `ko`
+structure from the already-accepted `en` steps' ranges and only translate `body`/`callouts`/`title`)
+so `en` and `ko` are guaranteed to agree without relying on the model to walk the diff identically
+twice.
+
+### Minor — a few `ko` callouts in `src` run a little over the character target
+
+`explain-calls.log`: `job 7 walkthrough:src` logs three callout notes over the 25-character `ko`
+target before the step-order issue above even applies — `step 1 callout 2: 26 chars`, `step 3
+callout 3: 29 chars`, `step 6 callout 2: 29 chars` (targets, not necessarily the hard validator
+limit in spec §2 rule 5; the run still produced these callouts, so if 25 chars is meant to be a hard
+cutoff it isn't being enforced as one). Visually harmless at 1440px (`dark-ko-area2-step3.png`,
+`light-ko-area2-step6.png` — callouts wrap cleanly, no overflow), but worth engineering confirming
+which number is authoritative.
+
+### What passes, for `src` and `test` (the areas DIG-106 couldn't reach), en+ko, light+dark
+
+Checked against `*-steps.md`, `*-l3.log`, and the step/L3/full-diff/tall screenshots, per-area:
+
+1. **Sentence → line**, `src` (6 steps) and `test` (3 steps): every sentence in every step resolves
+   to a line inside that step's snippet. Not every sentence has its own callout chip (e.g. `src`
+   step 1's first sentence, "HttpError carries the HTTP status," has no dedicated callout — it's
+   covered by the visible class body, lines 3–8), but the spec only requires resolvability, not a
+   1:1 callout-per-sentence (§5: "point at the line it talks about"; §2 rule 6 caps callouts at 4
+   per step and doesn't require one per sentence). Verified by hand for all 6 `src` steps and all 3
+   `test` steps against `light-en-area2-steps.md` / `light-en-area3-steps.md`. Screenshots:
+   `light-en-area2-step1.png` (retry.js), `light-en-area2-step6.png` (cli.js, the multi-hunk
+   mechanical-looking step).
+2. **Own lines only.** `*-l3.log` for all 4 theme/lang combos: `area2: no changed line under two
+   steps (dupes 0; context-line repeats 3)`, `area3: ... (dupes 0; context-line repeats 0)`. The
+   nonzero context-line-repeat count for `area2` is expected and allowed (spec §4: only changed
+   lines are exclusive; dimmed context lines may recur) — confirmed in `drive.mjs:124`, it's logged,
+   not a failure.
+3. **Callouts.** `has callouts on highlighted lines` and `every range resolves` PASS for all 9
+   non-mechanical steps (6 in `src`, 3 in `test`) across all 4 combos. Visually legible in both
+   themes (`dark-ko-area2-step3.png`, `light-en-area2-step1.png`); no gutter/text collisions.
+4. **Full diff once, mechanical step last and collapsed.** `exactly one full-diff section` and
+   `full diff collapsed by default` PASS for `src` and `test` in all 4 combos, and
+   `light-en-area2-full-diff.png` shows every one of `cli.js`'s and `config.js`'s lines badged with
+   the right step number (`6` / `3`). **Still not exercised**: `mechanical step is last (index -1 of
+   N)` for every single area in this run too (`project-root`, `src`, `test` — none has a step
+   flagged `mechanical`). `src`'s `cli.js` hunk does contain one pure import-line change
+   (`-import { fail }` / `+import { fail, info }`) but it's folded into step 6 alongside substantive
+   logic that uses `info`, which is a defensible call, not a bug — but it means the synthetic
+   `change1` scenario still contains no pure rename/formatting-only hunk, so DIG-96's "mechanical
+   step" acceptance item has now gone two runs (DIG-105 and DIG-111) without a single real exercise.
+   Recommend adding a trivial rename or pure import-reorder hunk to the synthetic change for the
+   next acceptance pass, or accept this item as separately covered by `hunks.ranges.test.ts` and
+   drop it from the manual acceptance checklist.
+5. **en vs ko structure.** `test` area: step count, order and callout counts match exactly between
+   `en` and `ko` (3/3/3 callouts in both). Sentence counts differ slightly in one step (`en` step 1:
+   2 sentences, `ko` step 1: 3 sentences, the extra one restating "previously the return value
+   wasn't checked") — same minor flavor as the DIG-106 README finding, not blocking. `src` area: see
+   Blocker above — this is the one that matters.
+
+### README (`project-root`) re-check
+
+Briefly re-checked `area1` (`light-en-area1-steps.md` / `light-ko-area1-steps.md`): 2 steps, same
+line ranges (5; 6–9) in both languages this time. **The DIG-106 en/ko line-range difference does
+not recur** — `ko` no longer pulls in an extra blank line 6 under its own callout; both languages
+now cover exactly lines 6–9 for step 2. Still minor: `en` splits step 2's callouts 3 ways (lines 7,
+8, 9) while `ko` groups two of them (7–8, then 9) — same count of information, different grouping,
+cosmetic only.
+
+### Verdict against the Board's ask
+
+**FAIL.** The harness fix worked — `src` and `test` are captured, and items 1–3 are clean for both.
+But item 5 (same structure, en vs ko) fails in exactly the area the Board asked about: the `src`
+walkthrough visits `config.js` and `upload.js` in a different order per language, with a knock-on
+callout-count difference. Recommend sending back to whoever owns area prompt `a6` to pin step order
+independent of generation language, then one more re-run focused on confirming `en`/`ko` step order
+agreement in `src` (the other four checks are in good shape and don't need a third full pass).
