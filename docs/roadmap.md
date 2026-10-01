@@ -42,15 +42,19 @@ at whole hunks and a new file is one hunk. Steps now carry exact line ranges and
 only its own lines, the full diff is shown once. Spec and contract (types, `rangeSpan` in core) merged to `main`:
 [l3-step-snippets.md](l3-step-snippets.md). Supersedes the hunk anchors of DIG-71 below. DIG-98 and DIG-99 merged
 together (the web UI needs the new required `ranges`); DIG-94 is merged too (DIG-98's
-`koCharsOverride` is now `checkProse`'s `koChars` option). Next: the real-provider acceptance run (row 3).
+`koCharsOverride` is now `checkProse`'s `koChars` option). The DIG-105 run did not count: the kit's driver captured
+the README area three times and never reached `src` (DIG-106, [ux/dig96-acceptance.md](ux/dig96-acceptance.md)).
+The driver is fixed (stub dry run: all three areas captured). Next: the operator re-run (row 5) and the re-check (row 6).
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-96 | Contract, review, acceptance kit (`.cache/dig96-acceptance/`, stub dry run passed) | CTO | DIG-106 |
+| 0 | DIG-96 | Contract, review, acceptance kit (`.cache/dig96-acceptance/`, stub dry run passed) | CTO | DIG-112 |
 | 1 | DIG-98 | Schema, prompt `a6`, validator, stub, streaming — **merged** | Diff engineer | — |
 | 2 | DIG-99 | Step snippets, callouts, full diff once, mechanical step collapsed — **merged** | Frontend engineer | — |
 | 3 | DIG-105 | Real-provider run en/ko, light/dark, ~100-line multi-hunk change (`accept.sh`) | Board operator | DIG-98, DIG-99 |
-| 4 | DIG-106 | Sentence-to-line check on those screenshots, `docs/ux/dig96-acceptance.md` | UX reviewer | DIG-105 |
+| 4 | DIG-106 | Sentence-to-line check on those screenshots — **done**: fail, the driver never reached `src` | UX reviewer | DIG-105 |
+| 5 | DIG-111 | Re-run `accept.sh` with the fixed driver | Board operator | — |
+| 6 | DIG-112 | Re-check on the re-run, `src` + `test` areas first | UX reviewer | DIG-111 |
 
 ## L3 step ↔ code mapping
 
