@@ -5,8 +5,7 @@ followed the project for weeks would. Today each Explain gets one project contex
 LLM call, `docs/direction-v2.md` §3), rebuilt only on structural change, and nothing carries over
 from one digest to the next. This milestone adds a **project memory**: small, sourced facts about a
 project, updated in the background, of which each prompt gets a relevant slice. The contract is
-`packages/core/src/memory.ts`. Open decisions D1–D3 (§7) go to the Board; the build starts on the
-recommended options, and D1–D3 change only defaults and caps.
+`packages/core/src/memory.ts`. The Board approved D1–D3 (§7) as recommended on 2026-10-01.
 
 ## 1. What is stored
 
@@ -109,7 +108,7 @@ The same digests are explained with memory off and on (same model, same prompts 
 - **Automatic:** first-try validator pass rate not lower, 0 AI-tell hits, the share of diff
   identifiers that are known terms and are used verbatim, and L0 time no more than 15 % slower.
 
-## 7. Open decisions for the Board
+## 7. Board decisions (approved as recommended, 2026-10-01)
 
 - **D1, background LLM default:** deterministic memory on everywhere, background summaries off per
   project until the user opts in (rec.). The alternative is summaries on for new projects.

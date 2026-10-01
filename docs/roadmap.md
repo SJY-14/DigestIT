@@ -6,13 +6,13 @@ DIG-97 (Board, 2026-09-30): DigestIT keeps sourced facts about each project (are
 work across digests, user notes), updates them in the background and gives each prompt a small,
 relevant slice. Deterministic extraction first; background LLM summaries are opt-in per project and
 have their own small daily share. Design: [milestone-4-memory.md](milestone-4-memory.md), contract
-`packages/core/src/memory.ts`. D1–D3 (summaries default, budget share, what is stored) are with the
-Board; the build starts on the recommended options. Memory retrieval stays on (D1) while round 2 runs:
+`packages/core/src/memory.ts`. The Board approved D1–D3 as recommended (2026-10-01): summaries off per
+project until opt-in, 4 memory jobs/day inside the 40 with a reserve of 10, areas/terms/threads/notes only. Memory retrieval stays on (D1) while round 2 runs:
 round 1 read as parity, not harm, and found no fabricated history.
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-97 | Design, contract, Board decisions D1–D3, review, acceptance | CTO | DIG-100–103 |
+| 0 | DIG-97 | Design, contract, Board decisions D1–D3 (approved), review, acceptance | CTO | DIG-114 |
 | 1 | DIG-100 | Store, migration, rollback, export/clear, deterministic extraction, threads, `digest memory` CLI (merged) | Diff engineer | — |
 | 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task (merged; prompts s2/at2/a7) | Summarization engineer | — |
 | 3 | DIG-103 | `MemoryWorker` triggers, budget share, retrieval wired into Explain, memory API (merged) | Diff engineer | — |
