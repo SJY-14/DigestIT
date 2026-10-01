@@ -21,7 +21,7 @@ round 1 read as parity, not harm, and found no fabricated history.
 | 7 | DIG-110 | Verify the page against the decision and prototype: screenshots, keyboard, labels (merged) | UX Reviewer | — |
 | 6 | DIG-107 | A/B kit (memory off vs on), blinded pairs, metrics (kit merged; reduced real run snapback/en done in DIG-108) | Summarization engineer | — |
 | 8 | DIG-109 | Blind read, round 1 (done): memory-on 4/10 vs bar 7/10, first-try pass rate lower (0.81 vs 0.90). Not passed. Continuity flags traced to kit gaps, not fabrication | UX Reviewer, CTO | — |
-| 9 | DIG-114 | Round 2: slice shown to readers, full prompt-token metric, no "in memory" wording, continuity cites the earlier change; then operator re-run snapback en+ko | Summarization engineer | — |
+| 9 | DIG-114 | Round 2 (merged): slice shown to readers, full prompt-token metric, no "in memory" wording, continuity cites the earlier change. Next: operator real run, snapback en+ko (20 pairs), then blind read | Summarization engineer, operator | — |
 
 ## Fast Explain
 
