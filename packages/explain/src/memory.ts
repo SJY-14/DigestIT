@@ -9,8 +9,13 @@ import { redact } from './redact.js';
 /** The three prompts memory can ground (docs/milestone-4-memory.md §3); each has its own token budget. */
 export type MemoryPromptKind = keyof typeof MEMORY_LIMITS.sliceTokens;
 
-/** Rules shared by every prompt that may carry a `<memory>` block (docs/milestone-4-memory.md §3). */
-export const MEMORY_PROMPT_RULES = 'Use the project\'s own area, term and thread names exactly as given in <memory>; invent none. You may say a change "continues" earlier work only when a thread in <memory> covers it, naming that thread\'s date exactly as shown there. Name no other date or weekday unless the diff itself shows it. A `note` in <memory> is a correction from the user: it outranks every other fact in <memory>, but never outranks what the diff itself shows.';
+/**
+ * Rules shared by every prompt that may carry a `<memory>` block (docs/milestone-4-memory.md §3).
+ * DIG-114: the reader never sees `<memory>`, so a reply must cite what it uses the way a colleague
+ * would -- the earlier change by its title and age, a note as the user's note of its date -- and
+ * never name the mechanism ("in memory", "the slice"); `checkMemoryMechanism` enforces the last part.
+ */
+export const MEMORY_PROMPT_RULES = 'Use the project\'s own area, term and thread names exactly as given in <memory>; invent none. You may say a change continues earlier work only when a thread in <memory> covers it; then name that earlier change the way a colleague would, by its title as shown there and how long before this change it was ("this continues the retry work from five days earlier"), never by a bare date. A `note` in <memory> is a correction from the user: it outranks every other fact in <memory>, but never outranks what the diff itself shows; cite it as the user\'s note of its date ("the user\'s note of Tue 22 Sep says the team convention is 200ms"). Name no other date or weekday unless the diff itself shows it. The reader cannot see <memory>: never mention memory, a slice, a note list or any other part of how this text was produced.';
 
 /** What retrieval is grounded on: the change's own touched areas, the diff's known identifiers, and the target prompt. */
 export interface MemoryRequest {
@@ -19,8 +24,14 @@ export interface MemoryRequest {
   /** Identifiers found in the prepared diff that match a known term or export (see `identifiersInDiff`). */
   identifiers: string[];
   kind: MemoryPromptKind;
-  /** Language the rendered slice (thread dates) is written in; the prompt is written in the same language. */
+  /** Language the rendered slice (note dates, ages) is written in; the prompt is written in the same language. */
   language: ExplainLanguage;
+  /**
+   * When the change being explained was made (its digest's `created_at`, ISO). Thread lines then
+   * give each earlier change's age relative to it ("5 days earlier") and leave out any digest of the
+   * thread that is not strictly older (the change itself, on a re-explain). Omitted: no ages.
+   */
+  at?: string;
 }
 
 const key = (kind: string, k: string): string => `${kind}\u0000${k}`;
@@ -54,6 +65,32 @@ export function formatMemoryDate(iso: string, language: ExplainLanguage): string
 
 const joinNames = (names: readonly string[]): string => (names.length === 0 ? 'none' : names.join(', '));
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long before `toIso` the change at `fromIso` was, counted in whole days: "earlier the same
+ * day", "the day before", "5 days earlier", "3 weeks earlier", "2 months earlier" (en) or the ko
+ * equivalent. Relative to the change being explained, not to today, so a stored explanation stays
+ * true however late it is read.
+ */
+export function relativeAge(fromIso: string, toIso: string, language: ExplainLanguage): string {
+  const days = Math.max(0, Math.floor((new Date(toIso).getTime() - new Date(fromIso).getTime()) / DAY_MS));
+  const weeks = Math.round(days / 7);
+  const months = Math.round(days / 30);
+  if (language === 'ko') {
+    if (days === 0) return '같은 날 앞서';
+    if (days === 1) return '하루 전';
+    if (days < 14) return `${days}일 전`;
+    if (days < 60) return `${weeks}주 전`;
+    return `${months}개월 전`;
+  }
+  if (days === 0) return 'earlier the same day';
+  if (days === 1) return 'the day before';
+  if (days < 14) return `${days} days earlier`;
+  if (days < 60) return `${weeks} weeks earlier`;
+  return `${months} months earlier`;
+}
+
 /** An area rendered as only its relationships (docs/milestone-4-memory.md §3: "with their uses/usedBy names only"). */
 function renderAreaLinks(path: string, c: AreaMemory): string {
   return `- ${path} (area): uses ${joinNames(c.uses)}; used by ${joinNames(c.usedBy)}`;
@@ -72,26 +109,51 @@ function renderAreaFull(path: string, c: AreaMemory): string {
   return `- ${path} (area, pinned): ${parts.join('; ')}`;
 }
 
-function renderTerm(c: TermMemory, override: string | null): string {
-  const meaning = override ?? (c.meaning ? redact(c.meaning) : null);
+/** "note from the user, Tue 22 Sep" -- the provenance a reply cites a note by (DIG-114). */
+function noteLabel(note: MemoryItem, language: ExplainLanguage): string {
+  return `note from the user, ${formatMemoryDate(note.updatedAt, language)}`;
+}
+
+/** A selected item whose own text a user note replaces: the item's name, then the note, labelled
+ * as the user's, so the model can cite it as a note rather than as a bare fact. */
+function renderOverride(label: string, note: MemoryItem, language: ExplainLanguage): string {
+  return `- ${label} — ${noteLabel(note, language)}: ${redact((note.content as NoteMemory).text)}`;
+}
+
+function renderTerm(c: TermMemory): string {
+  const meaning = c.meaning ? redact(c.meaning) : null;
   return meaning ? `- ${c.term} (term): ${meaning}` : `- ${c.term} (term)`;
 }
 
-function latestDigest(c: ThreadMemory): ThreadDigestRef | null {
-  if (c.digests.length === 0) return null;
-  return c.digests.reduce((latest, d) => (d.at > latest.at ? d : latest), c.digests[0]!);
+/** The thread's digests a reply may cite as earlier work: all of them, or only the ones strictly
+ * older than the change being explained when `at` is known. Oldest first. */
+function priorDigests(c: ThreadMemory, at: string | undefined): ThreadDigestRef[] {
+  const prior = at === undefined ? [...c.digests] : c.digests.filter((d) => d.at < at);
+  return prior.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.seq - b.seq));
 }
 
-function renderThread(c: ThreadMemory, override: string | null, language: ExplainLanguage): string {
-  const latest = latestDigest(c);
-  const body = override ?? (c.summary ? redact(c.summary) : latest?.l0 ?? c.title);
-  const dateNote = latest ? ` (continues ${formatMemoryDate(latest.at, language)})` : '';
-  return `- ${c.title}${dateNote} (thread): ${body}`;
+/**
+ * A thread as the earlier changes a reader can find on the timeline (DIG-114): its title (the first
+ * change's L0), the latest earlier change's L0, and how long before this change each was. No dates:
+ * "thread of Thu 17 Sep" named nothing the reader could look up.
+ */
+function renderThread(c: ThreadMemory, prior: readonly ThreadDigestRef[], language: ExplainLanguage, at: string | undefined): string {
+  const first = prior[0]!;
+  const latest = prior[prior.length - 1]!;
+  const age = (d: ThreadDigestRef): string | null => (at === undefined ? null : relativeAge(d.at, at, language));
+  const changes = prior.length === 1
+    ? [`1 earlier change`, age(first)]
+    : [`${prior.length} earlier changes`, age(first) && `first ${age(first)}`, `latest "${latest.l0}"${age(latest) ? ` ${age(latest)}` : ''}`];
+  const meta = changes.filter((p): p is string => p !== null).join('; ');
+  const summary = c.summary ? redact(c.summary) : null;
+  return `- ${c.title} (thread; ${meta})${summary && summary !== c.title ? `: ${summary}` : ''}`;
 }
 
-function renderNote(c: NoteMemory): string {
-  const text = redact(c.text);
-  return c.target ? `- ${c.target.key} (note): ${text}` : `- (note): ${text}`;
+/** A note on its own (category 1): the target it is about, then the note, labelled as the user's. */
+function renderNote(note: MemoryItem, language: ExplainLanguage): string {
+  const c = note.content as NoteMemory;
+  const about = c.target ? ` on ${c.target.key}` : '';
+  return `- ${noteLabel(note, language)}${about}: ${redact(c.text)}`;
 }
 
 /**
@@ -109,19 +171,29 @@ interface Candidate {
   /** Extra items whose current version was consulted to build this line (e.g. the area a note targets). */
   alsoUses: MemoryItem[];
   text: string;
+  /**
+   * Whether this line ties the slice to this specific change (a note, a pinned item, a term the
+   * diff uses, a thread sharing one): an area's `uses`/`usedBy` line on its own is structure the
+   * project context already gives, so a slice of only those is not sent at all (DIG-114).
+   */
+  specific: boolean;
 }
 
 /**
  * Picks the slice of `items` to ground one prompt: user notes on touched areas, pinned items,
- * touched areas (relationships only), terms the diff mentions, open threads on touched areas, then
- * neighbouring areas (docs/milestone-4-memory.md §3). Never `stale`/`hidden`. A user note whose
- * `target` is a selected item replaces that item's own text. Deterministic and pure: ties within a
- * category break on `key`, ascending. Items are added in that order while they fit in `budget`
- * (estimated tokens); one that does not fit is skipped whole (never partially rendered) and counted
- * in `droppedForBudget`, and a shorter, later item may still fit after it.
+ * touched areas (relationships only), terms the diff mentions, open threads on touched areas that
+ * share a term with the diff, then neighbouring areas (docs/milestone-4-memory.md §3). Never
+ * `stale`/`hidden`. A user note whose `target` is a selected item replaces that item's own text,
+ * labelled as the user's note. Deterministic and pure: ties within a category break on `key`,
+ * ascending. Items are added in that order while they fit in `budget` (estimated tokens); one that
+ * does not fit is skipped whole (never partially rendered) and counted in `droppedForBudget`, and a
+ * shorter, later item may still fit after it. A slice whose kept lines are all area relationships
+ * (nothing specific to this change, see `Candidate.specific`) comes back empty, so no `<memory>`
+ * block is sent (DIG-114).
  */
 export function selectMemory(items: readonly MemoryItem[], request: MemoryRequest, budget: number): MemorySlice {
-  const active = inLanguage(items.filter((it) => it.status === 'active'), request.language);
+  const { language, at } = request;
+  const active = inLanguage(items.filter((it) => it.status === 'active'), language);
   const touched = new Set(request.touchedAreas);
   const identifiers = new Set(request.identifiers);
   const byTargetKey = new Map<string, MemoryItem & { content: NoteMemory }>();
@@ -133,13 +205,19 @@ export function selectMemory(items: readonly MemoryItem[], request: MemoryReques
 
   const selectedKeys = new Set<string>();
   const candidates: Candidate[] = [];
-  const take = (it: MemoryItem, text: string, alsoUses: MemoryItem[] = []): void => {
+  const take = (it: MemoryItem, text: string, specific: boolean, alsoUses: MemoryItem[] = []): void => {
     const k = key(it.kind, it.key);
     if (selectedKeys.has(k)) return;
     selectedKeys.add(k);
-    candidates.push({ item: it, alsoUses, text });
+    candidates.push({ item: it, alsoUses, text, specific });
   };
   const bySortedKey = (list: MemoryItem[]): MemoryItem[] => [...list].sort((a, b) => cmp(a.key, b.key));
+  /** `render()` unless a user note targets the item, in which case the note's text stands in for it. */
+  const takeWithOverride = (it: MemoryItem, label: string, render: () => string, specific: boolean): void => {
+    const override = byTargetKey.get(key(it.kind, it.key));
+    if (override) take(it, renderOverride(label, override, language), true, [override]);
+    else take(it, render(), specific);
+  };
 
   // 1. User notes on touched areas: the note's own text stands in for the area it targets, so the
   // area is left out of category 3 below (its key is already marked selected via `notedAreas`).
@@ -150,44 +228,48 @@ export function selectMemory(items: readonly MemoryItem[], request: MemoryReques
   );
   for (const n of bySortedKey(areaNotes)) {
     notedAreas.add((n.content as NoteMemory).target!.key);
-    take(n, renderNote(n.content as NoteMemory));
+    take(n, renderNote(n, language), true);
   }
 
   // 2. Pinned items of any kind.
   const pinned = active.filter((it) => it.pinned && it.kind !== 'note');
   for (const it of bySortedKey(pinned)) {
-    const override = byTargetKey.get(key(it.kind, it.key));
-    const overrideText = override ? redact((override.content as NoteMemory).text) : null;
-    if (it.kind === 'area') take(it, overrideText ?? renderAreaFull(it.key, it.content as AreaMemory), override ? [override] : []);
-    else if (it.kind === 'term') take(it, renderTerm(it.content as TermMemory, overrideText), override ? [override] : []);
-    else if (it.kind === 'thread') take(it, renderThread(it.content as ThreadMemory, overrideText, request.language), override ? [override] : []);
+    if (it.kind === 'area') takeWithOverride(it, `${it.key} (area, pinned)`, () => renderAreaFull(it.key, it.content as AreaMemory), true);
+    else if (it.kind === 'term') takeWithOverride(it, `${(it.content as TermMemory).term} (term)`, () => renderTerm(it.content as TermMemory), true);
+    else if (it.kind === 'thread') {
+      const prior = priorDigests(it.content as ThreadMemory, at);
+      if (prior.length === 0) continue; // nothing earlier than this change to point at
+      takeWithOverride(it, `${(it.content as ThreadMemory).title} (thread)`, () => renderThread(it.content as ThreadMemory, prior, language, at), true);
+    }
   }
 
   // 3. Touched areas (relationships only), excluding ones already covered by a note in category 1.
   const touchedAreaItems = active.filter((it) => it.kind === 'area' && touched.has(it.key));
   for (const it of bySortedKey(touchedAreaItems)) {
     if (notedAreas.has(it.key)) continue;
-    take(it, renderAreaLinks(it.key, it.content as AreaMemory));
+    take(it, renderAreaLinks(it.key, it.content as AreaMemory), false);
   }
 
   // 4. Terms found in the diff.
   const diffTerms = active.filter((it) => it.kind === 'term' && identifiers.has((it.content as TermMemory).term));
   for (const it of bySortedKey(diffTerms)) {
-    const override = byTargetKey.get(key(it.kind, it.key));
-    take(it, renderTerm(it.content as TermMemory, override ? redact((override.content as NoteMemory).text) : null), override ? [override] : []);
+    takeWithOverride(it, `${(it.content as TermMemory).term} (term)`, () => renderTerm(it.content as TermMemory), true);
   }
 
-  // 5. Open threads on touched areas.
-  const openThreads = active.filter(
-    (it) => it.kind === 'thread' && (it.content as ThreadMemory).state === 'open' && (it.content as ThreadMemory).areas.some((a) => touched.has(a)),
-  );
+  // 5. Open threads on touched areas with earlier changes to point at. A thread that has terms must
+  // share one with the diff (DIG-114): in a project whose code sits in one or two folders, area
+  // overlap alone ties every change to whatever thread is open there. A thread with no terms yet
+  // keeps the area-overlap rule, which is all there is to go on.
+  const openThreads = active.filter((it) => {
+    if (it.kind !== 'thread') return false;
+    const c = it.content as ThreadMemory;
+    if (c.state !== 'open' || !c.areas.some((a) => touched.has(a))) return false;
+    return c.terms.length === 0 || c.terms.some((t) => identifiers.has(t));
+  });
   for (const it of bySortedKey(openThreads)) {
-    const override = byTargetKey.get(key(it.kind, it.key));
-    take(
-      it,
-      renderThread(it.content as ThreadMemory, override ? redact((override.content as NoteMemory).text) : null, request.language),
-      override ? [override] : [],
-    );
+    const prior = priorDigests(it.content as ThreadMemory, at);
+    if (prior.length === 0) continue;
+    takeWithOverride(it, `${(it.content as ThreadMemory).title} (thread)`, () => renderThread(it.content as ThreadMemory, prior, language, at), true);
   }
 
   // 6. Neighbouring areas: connected to a touched area via `uses`/`usedBy`, but not touched themselves.
@@ -198,16 +280,10 @@ export function selectMemory(items: readonly MemoryItem[], request: MemoryReques
   }
   const neighbours = active.filter((it) => it.kind === 'area' && neighbourKeys.has(it.key) && !touched.has(it.key));
   for (const it of bySortedKey(neighbours)) {
-    const override = byTargetKey.get(key(it.kind, it.key));
-    take(
-      it,
-      override ? redact((override.content as NoteMemory).text) : renderAreaLinks(it.key, it.content as AreaMemory),
-      override ? [override] : [],
-    );
+    takeWithOverride(it, `${it.key} (area)`, () => renderAreaLinks(it.key, it.content as AreaMemory), false);
   }
 
-  const lines: string[] = [];
-  const used = new Map<number, number>();
+  const kept: Candidate[] = [];
   let tokens = 0;
   let dropped = 0;
   for (const c of candidates) {
@@ -217,14 +293,18 @@ export function selectMemory(items: readonly MemoryItem[], request: MemoryReques
       continue;
     }
     tokens += lineTokens;
-    lines.push(c.text);
+    kept.push(c);
+  }
+  if (!kept.some((c) => c.specific)) return { items: [], text: '', tokens: 0, droppedForBudget: dropped };
+
+  const used = new Map<number, number>();
+  for (const c of kept) {
     used.set(c.item.id, c.item.version);
     for (const extra of c.alsoUses) used.set(extra.id, extra.version);
   }
-
   return {
     items: [...used.entries()].map(([id, version]) => ({ id, version })),
-    text: lines.join('\n'),
+    text: kept.map((c) => c.text).join('\n'),
     tokens,
     droppedForBudget: dropped,
   };
@@ -293,3 +373,66 @@ function inSources(haystack: string, phrase: string): boolean {
 }
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// ---- naming the mechanism (DIG-114) ----
+
+const MEM_EN = "(?:the\\s+|this\\s+)?(?:project(?:'s)?\\s+)?memory";
+/**
+ * Phrases that cite `<memory>` itself instead of what it holds: "memory says", "according to
+ * memory", "the convention in memory", "noted in memory", "project memory", "memory block".
+ * Deliberately not a bare "in memory": "results are cached in memory" is ordinary talk about code.
+ */
+const MECHANISM_RE_EN = new RegExp(
+  [
+    `\\b${MEM_EN}\\s+(?:says|said|shows|showed|notes|noted|states|stated|records|recorded|lists|listed|mentions|mentioned|indicates|suggests|holds|contains|has)\\b`,
+    `\\baccording\\s+to\\s+${MEM_EN}\\b`,
+    `\\bper\\s+${MEM_EN}\\b`,
+    `\\b(?:conventions?|notes?|threads?|terms?|items?|entr(?:y|ies)|records?|facts?|rules?|corrections?|history|context)\\s+(?:in|from)\\s+${MEM_EN}\\b`,
+    `\\b(?:listed|noted|recorded|mentioned|given|shown|described|documented|stated|captured|remembered|found)\\s+(?:in|from)\\s+${MEM_EN}\\b`,
+    "\\bproject(?:'s)?\\s+memory\\b",
+    '\\bmemory\\s+(?:block|slice|items?|entr(?:y|ies))\\b',
+    '<\\/?memory>',
+  ].join('|'),
+  'gi',
+);
+/** The ko equivalents ("메모리에 따르면", "메모리에 있는 규칙", "규칙은 메모리에"), again never a bare
+ * "메모리에 저장" (storing data in memory is what code does). */
+const MECHANISM_RE_KO = new RegExp(
+  [
+    '메모리\\s*에\\s*따르면',
+    '메모리\\s*(?:에|에서|상)\\s*(?:의\\s*)?(?:있는|나온|나와\\s*있는|기록된|적힌|적혀\\s*있는|언급된|명시된|남긴|남아\\s*있는|정의된|말하는|가져온|확인한|확인된)',
+    '메모리\\s*상(?:의)?\\s',
+    '(?:규칙|관례|컨벤션|노트|메모|스레드|용어|기록|정정)\\s*(?:은|는|이|가|도)?\\s*메모리\\s*(?:에|에서|상)',
+    '프로젝트\\s*메모리',
+    '메모리\\s*(?:블록|슬라이스|항목)',
+  ].join('|'),
+  'g',
+);
+
+/**
+ * Flags output text that names the memory mechanism instead of citing its source the way a
+ * colleague would (DIG-114: "The 200ms convention in memory is not applied here."). The reader
+ * never sees `<memory>`, so "in memory" points at nothing; the fix is "the user's note of <date>
+ * says ..." or the earlier change by name. A phrase that also appears in `sources` (see
+ * `memoryDateSources`) is the diff's own wording -- DigestIT explaining its own memory code, say --
+ * and is not flagged. A ko reply is checked against both the ko and the en phrases.
+ */
+export function checkMemoryMechanism(texts: readonly string[], sources: string, language: ExplainLanguage): string[] {
+  const patterns = language === 'ko' ? [MECHANISM_RE_KO, MECHANISM_RE_EN] : [MECHANISM_RE_EN];
+  const haystack = norm(sources);
+  const v: string[] = [];
+  const seen = new Set<string>();
+  for (const text of texts) {
+    for (const re of patterns) {
+      for (const m of text.matchAll(re)) {
+        const found = m[0].trim();
+        const n = norm(found);
+        if (seen.has(n)) continue;
+        seen.add(n);
+        if (inSources(haystack, n)) continue;
+        v.push(`names the memory mechanism ("${found}"); cite the source the way a colleague would: the user's note of its date, or the earlier change by its title`);
+      }
+    }
+  }
+  return v;
+}

@@ -9,7 +9,7 @@ import {
 } from '@digestit/core/hunks';
 import { areaHunks, promptHunks, renderHunks } from './difflines.js';
 import { DIGEST_PROMPT_VERSION } from './digest.js';
-import { MEMORY_PROMPT_RULES, checkMemoryDateClaims, memoryDateSources } from './memory.js';
+import { MEMORY_PROMPT_RULES, checkMemoryDateClaims, checkMemoryMechanism, memoryDateSources } from './memory.js';
 import type { AreaInput, AreaStreamChunk, ExplanationProvider, ProviderFile } from './provider.js';
 import { RepoNotAllowedError } from './config.js';
 import type { JobRef } from './jobs.js';
@@ -20,8 +20,8 @@ import { redact } from './redact.js';
 import { DEFAULT_LANGUAGE, VOICE, callReasons, checkProse, languageInstruction, softCount } from './style.js';
 import { LIMITS, sentenceCount, truncateSentences } from './validate.js';
 
-/** Bump whenever the instructions or the rendering below change. `a1` was the why/design/risks/notes shape; `a2` allowed a 120-word body paragraph; `a4` (DIG-65) added the AI-tell style rules; `a5` (DIG-70) asked for backticks around code identifiers/flags/paths; `a6` (DIG-96/98) replaced whole-hunk `hunks` with exact `ranges` and line-anchored `callouts` (docs/l3-step-snippets.md). A row stored under an older version is never read back (`explainArea` reads only the current version), so older walkthroughs simply show as not generated. `a7` (DIG-101) added the `<memory>` block and its rules. */
-export const AREA_PROMPT_VERSION = 'a7';
+/** Bump whenever the instructions or the rendering below change. `a1` was the why/design/risks/notes shape; `a2` allowed a 120-word body paragraph; `a4` (DIG-65) added the AI-tell style rules; `a5` (DIG-70) asked for backticks around code identifiers/flags/paths; `a6` (DIG-96/98) replaced whole-hunk `hunks` with exact `ranges` and line-anchored `callouts` (docs/l3-step-snippets.md). A row stored under an older version is never read back (`explainArea` reads only the current version), so older walkthroughs simply show as not generated. `a7` (DIG-101) added the `<memory>` block and its rules. `a8` (DIG-114): the memory rules ask to cite the earlier change by title and age and a note as the user's, and never to name the mechanism. */
+export const AREA_PROMPT_VERSION = 'a8';
 
 /**
  * Larger than `DEFAULT_PREPARE_OPTIONS.tokenBudget`: a digest call splits that
@@ -390,6 +390,7 @@ export function checkAreaWalkthrough(
   if (dateSources !== undefined) {
     const stepTexts = steps.flatMap((s) => [s.title, s.body, ...s.callouts.map((c) => c.note)]);
     v.push(...checkMemoryDateClaims([overview, ...stepTexts, ...check], dateSources, language));
+    v.push(...checkMemoryMechanism([overview, ...stepTexts, ...check], dateSources, language));
   }
 
   return { content: { overview, steps, check }, violations: v, styleWarnings: sw, lengthNotes: ln };
