@@ -22,6 +22,11 @@
 //   pnpm -r build && node packages/ingest/test/memory-ab-kit.mjs --real
 // Results are written under .cache/DIG-107-acceptance/ (gitignored); override with --out <dir>.
 // `--scenario snapback|history` and `--languages en,ko` narrow a run (mainly for fast iteration).
+//
+// DIG-114 (round 2): each pair file ends with the project memory the on arm was sent for that digest
+// (memory-ab-render.mjs), so the reader can tell a supported continuity claim from an invented one;
+// `promptTokens*` count the whole prompt (cache tokens included, `explain_call.prompt_tokens`); and
+// `violations` per arm break the validator's findings down by rule, to explain first-try gaps.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,6 +41,9 @@ import {
   listMemoryItems, listProjects, updateProjectMemory, upsertMemoryItem,
 } from '@digestit/ingest';
 import { SNAPBACK_INIT, SNAPBACK_STORY } from './fixtures/memory-ab-story.mjs';
+import {
+  READER_SHEET, loadDigestMemory, mergeViolationCounts, promptTokenTotal, renderPair, violationCounts,
+} from './memory-ab-render.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const LANGUAGES = ['en', 'ko'];
@@ -236,9 +244,11 @@ async function runPipeline(scenarioName, arm, language, projectDir, init, steps,
       if (memoryOn) await updateProjectMemory(db, home, project, 'after-explain', now);
 
       const content = loadDigestContent(db, r.digestId);
+      const createdAt = db.prepare('SELECT created_at AS at FROM digest WHERE change_unit_id = ?').get(r.digestId).at;
       digests.push({
-        step, changeUnitId: r.digestId, report: r.report, walkthroughOutcome, files, knownTermsSnapshot, areaId,
+        step, changeUnitId: r.digestId, report: r.report, walkthroughOutcome, files, knownTermsSnapshot, areaId, createdAt,
         ...content, walkthrough: loadWalkthrough(db, r.digestId, areaId),
+        memory: loadDigestMemory(db, r.digestId),
       });
     }
   } finally {
@@ -274,7 +284,7 @@ function pipelineMetrics(pipeline) {
   }
   const lint = lintDb(db);
   const dateViolations = db.prepare("SELECT count(*) AS n FROM explain_call WHERE violations LIKE '%date/weekday%'").get().n;
-  const tokenRow = db.prepare('SELECT COALESCE(SUM(input_tokens), 0) AS n FROM explain_call').get();
+  const promptTokens = promptTokenTotal(db);
   const callCount = db.prepare('SELECT count(*) AS n FROM explain_call').get().n;
   // Sanity check that the arms really differ: the on arm writes a memory_use row per part that got a
   // non-empty slice, the off arm must write none.
@@ -288,8 +298,11 @@ function pipelineMetrics(pipeline) {
     firstTryPassRate: attempted === 0 ? null : firstTry / attempted,
     aiTellHits: lint.counts.total,
     dateCheckViolations: dateViolations,
-    promptTokensTotal: tokenRow.n,
-    promptTokensPerDigest: digests.length === 0 ? null : tokenRow.n / digests.length,
+    promptTokensTotal: promptTokens,
+    promptTokensPerDigest: digests.length === 0 ? null : promptTokens / digests.length,
+    // digests whose on-arm prompts carried a <memory> block at all (an empty slice sends none)
+    digestsWithMemory: digests.filter((d) => d.memory.length > 0).length,
+    violations: violationCounts(db),
     l0TimeMsP50: percentile(durations, 50),
     // raw inputs for the per-arm rollup in main(), which pools these rather than averaging rates
     attemptedParts: attempted,
@@ -334,51 +347,6 @@ function termCoverage(onPipeline, offPipeline) {
 // ---------------------------------------------------------------------------
 // blinded pairs
 // ---------------------------------------------------------------------------
-
-function renderWalkthrough(w) {
-  if (!w) return '_(no walkthrough for this digest)_\n';
-  const steps = w.steps.map((s, i) => `${i + 1}. **${s.title}** — ${s.body}`).join('\n');
-  const check = w.check.map((c) => `- ${c}`).join('\n');
-  return `${w.overview}\n\n${steps}\n\n**Check:**\n${check}\n`;
-}
-
-function renderVersion(d) {
-  if (!d.l0 || !d.l1 || !d.l2) return '_(no stored explanation for this digest)_\n';
-  const l1 = d.l1.bullets.map((b) => `- ${b}`).join('\n');
-  const l2 = d.l2.items.map((it) => `### ${it.title} (\`${it.paths.join('`, `')}\`)\n\n${it.effect}\n\n${it.how}\n\n${it.why}\n`).join('\n');
-  return [
-    `**L0.** ${d.l0.text}`, '', '**L1.**', l1, '', '**L2.**', '', l2, '**Walkthrough** (\`' + (d.areaId ?? 'n/a') + '\`)', '',
-    renderWalkthrough(d.walkthrough),
-  ].join('\n');
-}
-
-function renderPair(title, versionA, versionB) {
-  return [
-    `# ${title}`, '', '## Version A', '', renderVersion(versionA), '', '## Version B', '', renderVersion(versionB), '',
-  ].join('\n');
-}
-
-const READER_SHEET = `# DIG-107 memory A/B blind read
-
-For each pair (one markdown file per digest and language), read Version A and Version B without
-looking at \`key.json\`, then answer:
-
-1. **Continuity** — does one version connect this change to earlier work in a way that reads as
-   informed, not guessed? (If a version claims continuity the project's own history does not
-   support, note it below instead of crediting it.)
-2. **The project's own names** — does one version use the project's own area/file/identifier names
-   more precisely, instead of generic phrasing?
-3. **Specificity** — does one version say something more concrete about this specific change,
-   rather than something that could apply to almost any change?
-4. **Correctness** — is either version wrong about what the diff actually does?
-
-For each pair, record: which version you preferred overall (A, B or tie), and, if either version
-made a continuity claim (worked on before, continues, follow-up, etc.) that the digest's own diff
-does not support on its own, name the file and quote the claim.
-
-Pass bar (docs/milestone-4-memory.md §6): memory wins at least 7 of 10 pairs per language, with no
-continuity claim that is not supported.
-`;
 
 function shuffleAB(memoryOnDigest, memoryOffDigest) {
   const onIsA = Math.random() < 0.5;
@@ -450,7 +418,9 @@ async function main() {
         const digestKey = `${scenarioName}-${language}-${String(i + 1).padStart(2, '0')}`;
         const shuffled = shuffleAB(onDigest, offDigest);
         key[digestKey] = { A: shuffled.A, B: shuffled.B, message: onDigest.step.message ?? onDigest.step.kind };
-        const md = renderPair(`${digestKey}: ${onDigest.step.message ?? ''}`, shuffled.versionA, shuffled.versionB);
+        const md = renderPair(
+          `${digestKey}: ${onDigest.step.message ?? ''}`, shuffled.versionA, shuffled.versionB, onDigest.memory, onDigest.createdAt,
+        );
         writeFileSync(join(pairsDir, `${digestKey}.md`), md);
       }
     }
@@ -471,6 +441,8 @@ async function main() {
       promptTokensTotal: rows.reduce((n, r) => n + r.promptTokensTotal, 0),
       promptTokensPerDigest: digestCount === 0 ? null : rows.reduce((n, r) => n + r.promptTokensTotal, 0) / digestCount,
       l0TimeMsP50: percentile([...l0Durations[arm]].sort((a, b) => a - b), 50),
+      digestsWithMemory: rows.reduce((n, r) => n + r.digestsWithMemory, 0),
+      violations: mergeViolationCounts(rows.map((r) => r.violations)),
     };
   }
 
@@ -488,8 +460,11 @@ async function main() {
   for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
 
   console.log(`\nwrote ${out}/metrics.json, key.json, reader-sheet.md and ${Object.keys(key).length} blinded pair(s) under ${pairsDir}/`);
-  console.log(`memory on:  ${JSON.stringify(metrics.byArm.on)}`);
-  console.log(`memory off: ${JSON.stringify(metrics.byArm.off)}`);
+  for (const arm of ARMS) {
+    const { violations, ...rest } = metrics.byArm[arm];
+    console.log(`memory ${arm}: ${JSON.stringify(rest)}`);
+    console.log(`  validator findings: ${violations.callsWithViolations} call(s), by part ${JSON.stringify(violations.byPart)}`);
+  }
 }
 
 await main();

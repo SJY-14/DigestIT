@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { ClaudeCodeProvider, explainCwd, type SpawnFn } from './claude-code.js';
+import { ClaudeCodeProvider, explainCwd, promptTokensOf, type SpawnFn, type StreamUsage } from './claude-code.js';
 import type { AreaInput, AreaStreamChunk, MemorySummarizeAreasInput, MemorySummarizeThreadInput } from './provider.js';
 
 const areaInput: AreaInput = {
@@ -40,7 +40,7 @@ function fakeStreamSpawn(opts: { lines?: string[]; code?: number; hang?: boolean
 const initLine = () => JSON.stringify({ type: 'system', subtype: 'init' });
 const deltaLine = (text: string) =>
   JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } });
-const resultLine = (result: string, usage = { input_tokens: 10, output_tokens: 5 }) =>
+const resultLine = (result: string, usage: StreamUsage = { input_tokens: 10, output_tokens: 5 }) =>
   JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result, usage });
 const errorResultLine = (subtype = 'error_during_execution') => JSON.stringify({ type: 'result', subtype, is_error: true });
 
@@ -57,8 +57,18 @@ describe('ClaudeCodeProvider over stream-json', () => {
     expect(r.timing!.genMs).toBeGreaterThanOrEqual(0);
     expect(r.timing!.inputTokens).toBe(10);
     expect(r.timing!.outputTokens).toBe(5);
+    expect(r.timing!.promptTokens).toBe(10);
     expect(s.calls[0].args).toContain('stream-json');
     expect(s.calls[0].args).toContain('--include-partial-messages');
+  });
+
+  it('records the whole prompt size, cached tokens included, next to the uncached input count (DIG-114)', async () => {
+    const usage = { input_tokens: 7, cache_creation_input_tokens: 1_200, cache_read_input_tokens: 9_800, output_tokens: 300 };
+    const s = fakeStreamSpawn({ lines: [initLine(), resultLine(JSON.stringify(walkthrough), usage)] });
+    const r = await new ClaudeCodeProvider({ spawnFn: s.fn }).explainArea(areaInput);
+    expect(r.timing!.inputTokens).toBe(7);
+    expect(r.timing!.promptTokens).toBe(11_007);
+    expect(r.timing!.outputTokens).toBe(300);
   });
 
   it('still parses correctly when the init event is missing', async () => {
@@ -204,5 +214,21 @@ describe('ClaudeCodeProvider over stream-json', () => {
     } finally {
       rmSync(dataHome, { recursive: true, force: true });
     }
+  });
+});
+
+describe('promptTokensOf (DIG-114)', () => {
+  it('sums uncached input, cache writes and cache reads', () => {
+    expect(promptTokensOf({ input_tokens: 3, cache_creation_input_tokens: 40, cache_read_input_tokens: 500 })).toBe(543);
+  });
+
+  it('counts whichever fields are present', () => {
+    expect(promptTokensOf({ input_tokens: 12 })).toBe(12);
+    expect(promptTokensOf({ cache_read_input_tokens: 900, output_tokens: 5 })).toBe(900);
+  });
+
+  it('is null when the event reported no input count at all', () => {
+    expect(promptTokensOf(undefined)).toBeNull();
+    expect(promptTokensOf({ output_tokens: 5 })).toBeNull();
   });
 });

@@ -26,8 +26,10 @@ filtered by the denylist, `.gitignore`, project ignores and the size cap), with 
 TS/JS `export` and `import`, Python top-level `def`/`class` and imports, Go exported names, Rust
 `pub` items. Other languages get file names only. Relative and workspace imports resolve to areas.
 Doc text is capped at 400 characters and passed through `redact()` **before storage**. A thread is
-built from the digests' stored L0 and area lists: a new digest joins an open thread when it touches
-one of its areas and shares a term or at least half its areas. A thread closes after 14 days with
+built from the digests' stored L0, L2 and area lists: a new digest joins an open thread when it
+touches one of its areas and shares a term or at least half its areas. Area overlap only counts
+when the digest or the thread has no terms yet; when both have terms and share none, they are
+different work, even in the same folder (DIG-114). A thread closes after 14 days with
 no new digest.
 
 **Storage** (next migration, same SQLite DB in the data dir): `memory_item` (unique on repo, kind,
@@ -60,14 +62,22 @@ Without `digest serve`, only the CLI trigger runs.
 `selectMemory(items, request, budget)` is pure and deterministic. It uses the touched area keys and
 the identifiers found in the prepared diff (words matching known terms or exports). Order: user notes
 on touched areas, pinned items, touched areas (with their `uses`/`usedBy` names only), terms found
-in the diff, open threads on touched areas, then neighbouring areas. It stops at the budget (1,500
+in the diff, open threads on touched areas that share a term with the diff (a thread with no terms
+yet goes on area overlap), then neighbouring areas. It stops at the budget (1,500
 tokens for summary, 1,200 for an area, 800 for a walkthrough step) and records what it dropped. The
 slice goes into a `<memory>` block next to the existing `<project>` context. The context's
 `modules` list is left out when the slice has areas, so the total grounding grows by less than
-1,000 tokens. Dates are rendered in the slice ("Tue 29 Sep"), and the prompt may say "continues"
-only about a thread listed there, using that date. The validator flags any date or weekday that is
-not in the slice. The slice is part of each call's input hash, and its item versions go to
-`memory_use`. Old digests are not re-explained when memory changes.
+1,000 tokens. A slice whose lines are all area relationships (no note, pinned item, diff term or
+thread) is not sent: that structure is already in the project context, and an unrelated digest
+should read like it would without memory. The reader never sees the slice, so the prompt asks for
+citations a colleague would give (DIG-114): a thread is listed by its earlier changes' titles and
+their age relative to this change ("5 days earlier"), with no date, and the prompt may say
+"continues" only about a thread listed there, naming the earlier change; a user note is listed
+with its date and cited as "the user's note of Tue 22 Sep". The validator flags any date or weekday
+that is not in the slice or the diff, and any text that names the mechanism ("in memory", "memory
+says", "프로젝트 메모리") unless the diff itself uses the phrase. The slice is part of each call's
+input hash, and its item versions go to `memory_use`. Old digests are not re-explained when memory
+changes.
 
 ## 4. Budget
 
@@ -107,6 +117,11 @@ The same digests are explained with memory off and on (same model, same prompts 
   continuity claim that the slice does not support.
 - **Automatic:** first-try validator pass rate not lower, 0 AI-tell hits, the share of diff
   identifiers that are known terms and are used verbatim, and L0 time no more than 15 % slower.
+- **Kit** (`packages/ingest/test/memory-ab-kit.mjs`): each pair file ends with the project memory
+  the memory-on version was sent (notes with dates, threads with their earlier changes and dates,
+  term and area names), so the reader can check a continuity claim against it. Prompt tokens count
+  the whole prompt, cached tokens included (`explain_call.prompt_tokens`), and validator findings
+  are broken down by rule per arm.
 
 ## 7. Board decisions (approved as recommended, 2026-10-01)
 

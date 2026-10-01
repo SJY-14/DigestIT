@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AreaMemory, MemoryContent, MemoryItem, MemoryProvenance, NoteMemory, TermMemory, ThreadMemory } from '@digestit/core';
-import { checkMemoryDateClaims, formatMemoryDate, identifiersInDiff, memoryDateSources, selectMemory } from './memory.js';
+import {
+  checkMemoryDateClaims, checkMemoryMechanism, formatMemoryDate, identifiersInDiff, memoryDateSources, relativeAge, selectMemory,
+} from './memory.js';
 import type { ProviderFile } from './provider.js';
 
 const PROV: MemoryProvenance = { files: [], checkpointId: 1, digestIds: [], jobId: null };
@@ -50,6 +52,9 @@ function note(key: string, text: string, target: NoteMemory['target'] = null, it
 }
 
 const KIND = { kind: 'area', identifiers: [], touchedAreas: [], language: 'en' } as const;
+/** A term the diff uses: makes a slice specific to the change, so area lines alone are not all it has (DIG-114). */
+const ANCHOR = (): MemoryItem => term('anchorTerm');
+const ANCHORED = { ...KIND, identifiers: ['anchorTerm'] } as const;
 
 describe('selectMemory ordering', () => {
   it('orders user notes on touched areas, then pinned, then touched areas, then diff terms, then open threads, then neighbours', () => {
@@ -73,7 +78,7 @@ describe('selectMemory ordering', () => {
     // src/a is covered by the note (category 1) so it is not repeated in category 3.
     expect(lines[2]).toContain('fetchJson');
     expect(lines[3]).toContain('Retry work');
-    expect(lines[3]).toContain('(thread)');
+    expect(lines[3]).toContain('(thread;');
     expect(lines[4]).toContain('src/b');
     expect(lines).toHaveLength(5);
   });
@@ -83,8 +88,9 @@ describe('selectMemory ordering', () => {
       area('src/stale', {}, { status: 'stale' }),
       area('src/hidden', {}, { status: 'hidden' }),
       area('src/active', {}),
+      ANCHOR(),
     ];
-    const slice = selectMemory(items, { ...KIND, touchedAreas: ['src/stale', 'src/hidden', 'src/active'] }, 10_000);
+    const slice = selectMemory(items, { ...ANCHORED, touchedAreas: ['src/stale', 'src/hidden', 'src/active'] }, 10_000);
     expect(slice.text).not.toContain('stale');
     expect(slice.text).not.toContain('hidden');
     expect(slice.text).toContain('src/active');
@@ -100,7 +106,7 @@ describe('selectMemory ordering', () => {
     const touched = area('src/a', { uses: ['src/b'], usedBy: [] });
     const neighbour = area('src/b');
     const unrelated = area('src/z');
-    const slice = selectMemory([touched, neighbour, unrelated], { ...KIND, touchedAreas: ['src/a'] }, 10_000);
+    const slice = selectMemory([touched, neighbour, unrelated, ANCHOR()], { ...ANCHORED, touchedAreas: ['src/a'] }, 10_000);
     expect(slice.text).toContain('src/b');
     expect(slice.text).not.toContain('src/z');
   });
@@ -116,10 +122,114 @@ describe('selectMemory ordering', () => {
   });
 
   it('is deterministic: ties within a category break on key', () => {
-    const items = [area('src/b'), area('src/a'), area('src/c')];
-    const slice = selectMemory(items, { ...KIND, touchedAreas: ['src/a', 'src/b', 'src/c'] }, 10_000);
-    const order = slice.text.split('\n').map((l) => l.match(/src\/(\w)/)?.[1]);
+    const items = [area('src/b'), area('src/a'), area('src/c'), ANCHOR()];
+    const slice = selectMemory(items, { ...ANCHORED, touchedAreas: ['src/a', 'src/b', 'src/c'] }, 10_000);
+    const order = slice.text.split('\n').filter((l) => l.includes('(area)')).map((l) => l.match(/src\/(\w)/)?.[1]);
     expect(order).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('selectMemory: only what is specific to this change (DIG-114)', () => {
+  it('sends nothing when the slice would hold only area relationships', () => {
+    const items = [area('src', { usedBy: ['tests'] }), area('tests', { uses: ['src'] })];
+    const slice = selectMemory(items, { ...KIND, touchedAreas: ['src'] }, 10_000);
+    expect(slice).toEqual({ items: [], text: '', tokens: 0, droppedForBudget: 0 });
+  });
+
+  it('keeps the area lines once a term the diff uses is in the slice', () => {
+    const items = [area('src'), term('withRetry')];
+    const slice = selectMemory(items, { ...KIND, touchedAreas: ['src'], identifiers: ['withRetry'] }, 10_000);
+    expect(slice.text.split('\n')).toEqual(['- src (area): uses none; used by none', '- withRetry (term)']);
+  });
+
+  it('skips an open thread on a touched area that shares no term with the diff', () => {
+    const retry = thread('t-retry', {
+      title: 'Failed requests retry automatically', areas: ['src'], terms: ['withRetry', 'HttpError'],
+      digests: [{ digestId: 1, seq: 1, at: '2026-09-17T10:00:00.000Z', l0: 'Failed requests retry automatically.' }],
+    });
+    const cacheChange = selectMemory([area('src'), retry, term('cached')], {
+      ...KIND, touchedAreas: ['src'], identifiers: ['cached'], at: '2026-09-25T10:00:00.000Z',
+    }, 10_000);
+    expect(cacheChange.text).not.toContain('retry');
+    const retryChange = selectMemory([area('src'), retry, term('HttpError')], {
+      ...KIND, touchedAreas: ['src'], identifiers: ['HttpError'], at: '2026-09-25T10:00:00.000Z',
+    }, 10_000);
+    expect(retryChange.text).toContain('Failed requests retry automatically (thread;');
+  });
+
+  it('keeps a thread with no terms yet on area overlap alone', () => {
+    const t = thread('t1', {
+      title: 'README usage docs', areas: [''], terms: [],
+      digests: [{ digestId: 1, seq: 1, at: '2026-09-19T10:00:00.000Z', l0: 'README usage docs.' }],
+    });
+    const slice = selectMemory([t], { ...KIND, touchedAreas: [''], at: '2026-09-28T10:00:00.000Z' }, 10_000);
+    expect(slice.text).toContain('README usage docs (thread;');
+  });
+});
+
+describe('selectMemory: how earlier work and notes are shown (DIG-114)', () => {
+  const retryThread = (): MemoryItem => thread('t-retry', {
+    title: 'Failed requests now retry automatically.', areas: ['src'], terms: ['withRetry'],
+    digests: [
+      { digestId: 1, seq: 1, at: '2026-09-17T10:00:00.000Z', l0: 'Failed requests now retry automatically.' },
+      { digestId: 3, seq: 2, at: '2026-09-20T10:00:00.000Z', l0: 'Retries now back off and report HTTP errors.' },
+      { digestId: 4, seq: 3, at: '2026-09-21T10:00:00.000Z', l0: 'This change itself, already threaded.' },
+    ],
+  });
+
+  it('names the earlier changes by title and age relative to this change, with no date', () => {
+    const slice = selectMemory([retryThread()], {
+      ...KIND, touchedAreas: ['src'], identifiers: ['withRetry'], at: '2026-09-21T10:00:00.000Z',
+    }, 10_000);
+    expect(slice.text).toBe(
+      '- Failed requests now retry automatically. (thread; 2 earlier changes; first 4 days earlier; '
+      + 'latest "Retries now back off and report HTTP errors." the day before)',
+    );
+    expect(checkMemoryDateClaims([slice.text], '', 'en')).toEqual([]); // the slice itself names no date
+  });
+
+  it('leaves out the change being explained and skips a thread with nothing earlier', () => {
+    const t = thread('t1', {
+      title: 'Only this change', areas: ['src'],
+      digests: [{ digestId: 9, seq: 1, at: '2026-09-21T10:00:00.000Z', l0: 'Only this change' }],
+    });
+    const slice = selectMemory([t, term('anchorTerm')], { ...ANCHORED, touchedAreas: ['src'], at: '2026-09-21T10:00:00.000Z' }, 10_000);
+    expect(slice.text).not.toContain('Only this change');
+  });
+
+  it('labels a note that replaces a term\'s text as the user\'s note of its date', () => {
+    const t = term('withRetry', { meaning: 'Retries a call.' });
+    const n = note('n1', 'The backoff base is 200ms by team convention.', { kind: 'term', key: 'withRetry' }, {
+      updatedAt: '2026-09-22T09:00:00.000Z',
+    });
+    const slice = selectMemory([t, n], { ...KIND, identifiers: ['withRetry'] }, 10_000);
+    expect(slice.text).toBe('- withRetry (term) — note from the user, Tue 22 Sep: The backoff base is 200ms by team convention.');
+  });
+
+  it('labels a note on a touched area the same way, naming what it is about', () => {
+    const n = note('n1', 'This area is fragile.', { kind: 'area', key: 'src/a' }, { updatedAt: '2026-09-22T09:00:00.000Z' });
+    const slice = selectMemory([n], { ...KIND, touchedAreas: ['src/a'] }, 10_000);
+    expect(slice.text).toBe('- note from the user, Tue 22 Sep on src/a: This area is fragile.');
+  });
+});
+
+describe('relativeAge', () => {
+  const at = '2026-09-30T12:00:00.000Z';
+  it('counts calendar days back from the change being explained (en)', () => {
+    expect(relativeAge('2026-09-30T08:00:00.000Z', at, 'en')).toBe('earlier the same day');
+    expect(relativeAge('2026-09-29T08:00:00.000Z', at, 'en')).toBe('the day before');
+    // 5 days and 22 hours of elapsed time, but six calendar days apart
+    expect(relativeAge('2026-09-24T14:00:00.000Z', at, 'en')).toBe('6 days earlier');
+    expect(relativeAge('2026-09-25T12:00:00.000Z', at, 'en')).toBe('5 days earlier');
+    expect(relativeAge('2026-09-09T12:00:00.000Z', at, 'en')).toBe('3 weeks earlier');
+    expect(relativeAge('2026-07-30T12:00:00.000Z', at, 'en')).toBe('2 months earlier');
+  });
+
+  it('has ko equivalents', () => {
+    expect(relativeAge('2026-09-30T08:00:00.000Z', at, 'ko')).toBe('같은 날 앞서');
+    expect(relativeAge('2026-09-29T08:00:00.000Z', at, 'ko')).toBe('하루 전');
+    expect(relativeAge('2026-09-25T12:00:00.000Z', at, 'ko')).toBe('5일 전');
+    expect(relativeAge('2026-09-09T12:00:00.000Z', at, 'ko')).toBe('3주 전');
   });
 });
 
@@ -143,9 +253,9 @@ describe('selectMemory language', () => {
 
 describe('selectMemory budget', () => {
   it('stops adding once the budget is reached and counts the rest as dropped', () => {
-    const oneLineTokens = selectMemory([area('src/a')], { ...KIND, touchedAreas: ['src/a'] }, 10_000).tokens;
-    const items = [area('src/a'), area('src/b'), area('src/c')];
-    const slice = selectMemory(items, { ...KIND, touchedAreas: ['src/a', 'src/b', 'src/c'] }, oneLineTokens + 1);
+    const oneLineTokens = selectMemory([term('termA')], { ...KIND, identifiers: ['termA'] }, 10_000).tokens;
+    const items = [term('termA'), term('termB'), term('termC')];
+    const slice = selectMemory(items, { ...KIND, identifiers: ['termA', 'termB', 'termC'] }, oneLineTokens + 1);
     expect(slice.text.split('\n')).toHaveLength(1);
     expect(slice.droppedForBudget).toBe(2);
   });
@@ -243,5 +353,81 @@ describe('checkMemoryDateClaims', () => {
     expect(clean).toEqual([]);
     const dirty = checkMemoryDateClaims(['수요일부터 이어지는 작업입니다.'], '- 스레드: 화요일 계속', 'ko');
     expect(dirty).toHaveLength(1);
+  });
+});
+
+describe('checkMemoryMechanism (DIG-114)', () => {
+  it('flags the DIG-109 pair 04 wording and other ways of citing memory itself (en)', () => {
+    for (const text of [
+      'The 200ms convention in memory is not applied here.',
+      'Memory says the team uses 200ms.',
+      'According to project memory, the base is 200ms.',
+      'Per memory, this continues the retry work.',
+      'This matches the thread listed in memory.',
+      'The <memory> block notes a 200ms base.',
+    ]) {
+      expect(checkMemoryMechanism([text], '', 'en'), text).toHaveLength(1);
+    }
+    expect(checkMemoryMechanism(['The 200ms convention in memory is not applied here.'], '', 'en')[0])
+      .toMatch(/names the memory mechanism \("convention in memory"\), cite the source the way a colleague would/);
+    // `explain_call.violations` joins messages with "; ", so one message must not contain it.
+    expect(checkMemoryMechanism(['Memory says so.'], '', 'en')[0]).not.toContain('; ');
+  });
+
+  it('does not flag ordinary talk about code and memory (en)', () => {
+    for (const text of [
+      'Results are cached in memory, so a second call is free.',
+      'Keeps an in-memory map keyed by URL.',
+      'The cache grows without bound and may use a lot of memory.',
+      "The user's note of Tue 22 Sep says the team convention is 200ms.",
+      'The cache keeps records in memory until the next flush.',
+      'Keeps the undo history in memory.',
+      'Stale entries in memory are evicted after a minute.',
+      'If the key is found in memory, the request is skipped.',
+      'Each request is recorded in memory and flushed on exit.',
+      'Memory holds only the latest page now.',
+      'Memory has to stay under 50MB.',
+      'Heap memory shows a steady climb before this fix.',
+      'The context in memory is rebuilt on every call.',
+      'Evicts old memory entries when the cap is hit.',
+      'Frees the memory block on close.',
+      'Adds a cost per memory access.',
+    ]) {
+      expect(checkMemoryMechanism([text], '', 'en'), text).toEqual([]);
+    }
+  });
+
+  it('accepts a phrase the diff itself contains', () => {
+    const files: ProviderFile[] = [{ path: 'docs/memory.md', status: 'M', additions: 1, deletions: 0, patch: '+The memory slice is capped per prompt.\n', filteredReason: null }];
+    expect(checkMemoryMechanism(['Caps the memory slice per prompt.'], memoryDateSources('', files), 'en')).toEqual([]);
+    expect(checkMemoryMechanism(['Caps the memory slice per prompt.'], '', 'en')).toHaveLength(1);
+  });
+
+  it('flags the ko equivalents and English phrases in a ko reply', () => {
+    for (const text of [
+      '메모리에 따르면 팀 규칙은 200ms입니다.',
+      '메모리에 있는 200ms 규칙은 적용되지 않았습니다.',
+      '이 규칙은 메모리에 기록되어 있습니다.',
+      '프로젝트 메모리의 스레드를 이어갑니다.',
+      'The convention in memory says 200ms.',
+    ]) {
+      expect(checkMemoryMechanism([text], '', 'ko'), text).not.toEqual([]);
+    }
+  });
+
+  it('does not flag ordinary ko talk about memory', () => {
+    for (const text of [
+      '결과를 메모리에 저장해 두 번째 호출은 바로 반환합니다.',
+      '캐시가 계속 커져 메모리를 많이 쓸 수 있습니다.',
+      '9월 22일 (화)의 사용자 메모에 따르면 팀 규칙은 200ms입니다.',
+      '메모리에 있는 캐시 항목은 1분 뒤 지워집니다.',
+      '메모리 상의 데이터를 디스크로 옮깁니다.',
+      '기록은 메모리에 남고 종료 때 저장됩니다.',
+      '메모리에 기록된 요청을 종료 시 내보냅니다.',
+      '메모리상 캐시 크기를 제한합니다.',
+      '닫을 때 메모리 블록을 해제합니다.',
+    ]) {
+      expect(checkMemoryMechanism([text], '', 'ko'), text).toEqual([]);
+    }
   });
 });

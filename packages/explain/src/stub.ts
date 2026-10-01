@@ -3,8 +3,12 @@ import { changedCount, walkPatch, type PatchHunk, type PatchLine } from '@digest
 import { NO_CHANGE, LIMITS, truncateWords } from './validate.js';
 import { promptHunks } from './difflines.js';
 import { MEMORY_TASK_LIMITS } from './memory-tasks.js';
+import { buildAreaPrompt } from './area.js';
+import { buildContextPrompt } from './context.js';
+import { buildDigestAreaTextPrompt, buildDigestSummaryPrompt } from './digest.js';
+import { estimateTokens } from './prepare.js';
 import type {
-  AreaInput, AreaResult, AreaStreamChunk, BriefingFacts, BriefingResult, BriefingSentence, ContextInput, ContextResult,
+  AreaInput, AreaResult, AreaStreamChunk, BriefingFacts, CallTiming, BriefingResult, BriefingSentence, ContextInput, ContextResult,
   DigestAreaTextInput, DigestAreaTextResult, DigestInput, DigestResult, DigestSummaryInput, DigestSummaryResult,
   ExplanationInput, ExplanationProvider, MemoryAreaSummaryOut, MemorySummarizeAreasInput, MemorySummarizeAreasResult,
   MemorySummarizeThreadInput, MemorySummarizeThreadResult, ProviderFile, ProviderResult, RangeInput, RollupInput, RollupResult,
@@ -95,6 +99,17 @@ function hunkRanges(path: string, hunk: PatchHunk, fileChanged: number): LineRan
     const oldNos = lines.map((l) => l.oldNo).filter((no): no is number => no !== undefined);
     return { path, side: 'old' as const, start: Math.min(...oldNos), end: Math.max(...oldNos) };
   });
+}
+
+/**
+ * Stand-in timing for a stub call: no real latency, and token counts estimated from the very prompt
+ * the real provider would send (`estimateTokens`, ~4 chars a token), so a dry run's prompt-size
+ * metrics move with the prompt's real content (a `<memory>` block, a bigger diff) instead of
+ * reading as zero (DIG-114).
+ */
+function stubTiming(prompt: string, output: unknown): CallTiming {
+  const promptTokens = estimateTokens(prompt);
+  return { startupMs: 0, ttftMs: 0, genMs: 0, inputTokens: promptTokens, outputTokens: estimateTokens(JSON.stringify(output)), promptTokens };
 }
 
 /** Deterministic placeholder built from the commit message and diffstat. No network, no process. */
@@ -279,7 +294,7 @@ export class StubProvider implements ExplanationProvider {
   /** Split `summary` part (DIG-74): the same L0/L1 as `digest`, over the whole diff and the given area list. */
   async explainDigestSummary(input: DigestSummaryInput): Promise<DigestSummaryResult> {
     const r = await this.digest({ repoName: input.repoName, files: input.files, context: input.context, language: input.language });
-    return { provider: this.id, model: this.model, levels: r.levels };
+    return { provider: this.id, model: this.model, levels: r.levels, timing: stubTiming(buildDigestSummaryPrompt(input), r.levels) };
   }
 
   /** Split `area:<id>` part (DIG-74): title/effect/how/why for this area's own files only. */
@@ -290,22 +305,19 @@ export class StubProvider implements ExplanationProvider {
     const deletions = analysed.reduce((n, f) => n + f.deletions, 0);
     const names = list(analysed.map((f) => basename(f.path)), input.language, 2);
     const isTestsOrDocs = analysed.length > 0 && analysed.every((f) => /(^|\/)(tests?|docs?|__tests__)(\/|$)/i.test(f.path));
-    return {
-      provider: this.id,
-      model: this.model,
-      content: {
-        title: truncateWords(names || input.area.label, LIMITS.digestTitleWords),
-        effect: ko
-          ? (isTestsOrDocs ? '테스트나 문서만 바뀌어 사용자에게는 영향이 없습니다.' : '설명 없음: 스텁 제공자는 코드를 읽지 않습니다.')
-          : (isTestsOrDocs ? 'Only tests or docs; nothing changes for users.' : 'Not described: the stub provider does not read the code.'),
-        how: ko
-          ? `파일 ${analysed.length}개 수정: ${additions}줄 추가, ${deletions}줄 삭제.`
-          : `Edits ${count(analysed.length, 'file')}: ${count(additions, 'line')} added, ${deletions} removed.`,
-        why: ko
-          ? '스텁 제공자는 의도를 추론하지 않습니다. 이유를 보려면 실제 제공자로 설명하세요.'
-          : 'The stub provider does not infer intent; explain with a real provider to get the reason.',
-      },
+    const content = {
+      title: truncateWords(names || input.area.label, LIMITS.digestTitleWords),
+      effect: ko
+        ? (isTestsOrDocs ? '테스트나 문서만 바뀌어 사용자에게는 영향이 없습니다.' : '설명 없음: 스텁 제공자는 코드를 읽지 않습니다.')
+        : (isTestsOrDocs ? 'Only tests or docs; nothing changes for users.' : 'Not described: the stub provider does not read the code.'),
+      how: ko
+        ? `파일 ${analysed.length}개 수정: ${additions}줄 추가, ${deletions}줄 삭제.`
+        : `Edits ${count(analysed.length, 'file')}: ${count(additions, 'line')} added, ${deletions} removed.`,
+      why: ko
+        ? '스텁 제공자는 의도를 추론하지 않습니다. 이유를 보려면 실제 제공자로 설명하세요.'
+        : 'The stub provider does not infer intent; explain with a real provider to get the reason.',
     };
+    return { provider: this.id, model: this.model, content, timing: stubTiming(buildDigestAreaTextPrompt(input), content) };
   }
 
   /**
@@ -371,7 +383,7 @@ export class StubProvider implements ExplanationProvider {
       : [ko ? '분석할 수 있는 hunk가 없으니 파일을 직접 확인하세요.' : 'No hunk could be analysed; open the files directly.'];
     const content: AreaWalkthrough = { overview, steps, check };
     onProgress?.({ overview, steps, done: true });
-    return { provider: this.id, model: this.model, content };
+    return { provider: this.id, model: this.model, content, timing: stubTiming(buildAreaPrompt(input), content) };
   }
 
   /** Deterministic area summaries: relationships only, no inferred purpose. */

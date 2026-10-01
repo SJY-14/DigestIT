@@ -147,11 +147,11 @@ export class ExplainJobRunner {
     return !!this.db.prepare('SELECT 1 AS x FROM project_context WHERE repo_id = ? LIMIT 1').get(repoId);
   }
 
-  private loadDigest(changeUnitId: number): { repoId: number; areas: DigestAreaSkeleton[]; language: ProjectRow['language'] } | null {
-    const row = this.db.prepare('SELECT repo_id AS repoId, areas, language FROM digest WHERE change_unit_id = ?')
-      .get(changeUnitId) as { repoId: number; areas: string | null; language: ProjectRow['language'] } | undefined;
+  private loadDigest(changeUnitId: number): { repoId: number; areas: DigestAreaSkeleton[]; language: ProjectRow['language']; createdAt: string } | null {
+    const row = this.db.prepare('SELECT repo_id AS repoId, areas, language, created_at AS createdAt FROM digest WHERE change_unit_id = ?')
+      .get(changeUnitId) as { repoId: number; areas: string | null; language: ProjectRow['language']; createdAt: string } | undefined;
     if (!row || row.areas === null) return null;
-    return { repoId: row.repoId, areas: JSON.parse(row.areas) as DigestAreaSkeleton[], language: row.language };
+    return { repoId: row.repoId, areas: JSON.parse(row.areas) as DigestAreaSkeleton[], language: row.language, createdAt: row.createdAt };
   }
 
   /** One repo-wide read of active memory (docs/milestone-4-memory.md §3), shared by every part of
@@ -179,10 +179,10 @@ export class ExplainJobRunner {
    * read would cost a query for a marginal precision gain on which identifiers are "in the diff". */
   private memorySliceFor(
     ctx: { items: MemoryItem[]; knownTerms: string[] }, kind: MemoryPromptKind, touchedAreas: string[],
-    files: readonly ProviderFile[], language: ExplainLanguage,
+    files: readonly ProviderFile[], language: ExplainLanguage, at: string | undefined,
   ): MemorySlice {
     const identifiers = identifiersInDiff(files, ctx.knownTerms);
-    return selectMemory(ctx.items, { touchedAreas, identifiers, kind, language }, MEMORY_LIMITS.sliceTokens[kind]);
+    return selectMemory(ctx.items, { touchedAreas, identifiers, kind, language, at }, MEMORY_LIMITS.sliceTokens[kind]);
   }
 
   /** Logs `slice.items`/`droppedForBudget` against the part that used them (docs/milestone-4-memory.md
@@ -305,7 +305,10 @@ export class ExplainJobRunner {
       const diffFiles = toProviderFiles(loadChange(this.db, changeUnitId)?.files);
       // `selectMemory` matches memory area keys (paths), not the digest's area ids (slugs). The
       // summary is about every area of the digest, even on a retry that re-runs only some parts.
-      const digestAreas = this.loadDigest(changeUnitId)?.areas ?? [];
+      const loadedDigest = this.loadDigest(changeUnitId);
+      const digestAreas = loadedDigest?.areas ?? [];
+      // Thread ages in the slice are counted back from this digest's own time (DIG-114).
+      const digestAt = loadedDigest?.createdAt;
       const memoryKeyOf = (areaId: string): string[] => digestAreas.filter((a) => a.id === areaId).map(memoryAreaKey);
 
       const runPart = (key: PartKey, fn: () => Promise<PartOutcome | null>): Promise<void> => limiter.run(async () => {
@@ -334,7 +337,7 @@ export class ExplainJobRunner {
       const runs: Promise<void>[] = [];
       for (const key of keys) {
         if (key === 'summary') {
-          const slice = this.memorySliceFor(memoryCtx, 'summary', digestAreas.map(memoryAreaKey), diffFiles, language);
+          const slice = this.memorySliceFor(memoryCtx, 'summary', digestAreas.map(memoryAreaKey), diffFiles, language, digestAt);
           runs.push(runPart(key, async () => {
             const outcome = await explainDigestSummary(this.db, changeUnitId, provider, { job, context, language, force: opts.force, memory: slice });
             this.logMemoryUse(jobId, 'summary', changeUnitId, slice, outcome.calls);
@@ -344,7 +347,7 @@ export class ExplainJobRunner {
           runs.push(runPart(key, () => this.runContext(project, provider, job)));
         } else {
           const areaId = key.slice('area:'.length);
-          const slice = this.memorySliceFor(memoryCtx, 'area', memoryKeyOf(areaId), diffFiles, language);
+          const slice = this.memorySliceFor(memoryCtx, 'area', memoryKeyOf(areaId), diffFiles, language, digestAt);
           runs.push(runPart(key, async () => {
             const outcome = await explainDigestAreaText(this.db, changeUnitId, areaId, provider, { job, context, language, memory: slice });
             this.logMemoryUse(jobId, `area:${areaId}`, changeUnitId, slice, outcome.calls);
@@ -415,12 +418,13 @@ export class ExplainJobRunner {
     if (jobId === null) return { settled: null };
     this.areaInFlight.add(key);
     const context = latestContextText(this.db, project.id);
-    const language = this.loadDigest(digestId)?.language ?? project.language; // the digest's own language
+    const loadedDigest = this.loadDigest(digestId);
+    const language = loadedDigest?.language ?? project.language; // the digest's own language
     const job: JobRef = { jobId, budget: this.budget, now: this.now };
     const memoryCtx = this.loadMemoryContext(project.id);
     const diffFiles = toProviderFiles(loadChange(this.db, digestId)?.files);
-    const areaKeys = (this.loadDigest(digestId)?.areas ?? []).filter((a) => a.id === areaId).map(memoryAreaKey);
-    const slice = this.memorySliceFor(memoryCtx, 'walkthrough', areaKeys, diffFiles, language);
+    const areaKeys = (loadedDigest?.areas ?? []).filter((a) => a.id === areaId).map(memoryAreaKey);
+    const slice = this.memorySliceFor(memoryCtx, 'walkthrough', areaKeys, diffFiles, language, loadedDigest?.createdAt);
     const settled = (async (): Promise<PartOutcome> => {
       let outcome: PartOutcome;
       try {

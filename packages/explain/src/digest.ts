@@ -9,7 +9,7 @@ import type {
 import { RepoNotAllowedError } from './config.js';
 import type { JobRef } from './jobs.js';
 import { logJobCall } from './jobs.js';
-import { MEMORY_PROMPT_RULES, checkMemoryDateClaims, memoryDateSources } from './memory.js';
+import { MEMORY_PROMPT_RULES, checkMemoryDateClaims, checkMemoryMechanism, memoryDateSources } from './memory.js';
 import { loadChange, storeLevels } from './pipeline.js';
 import { DEFAULT_PREPARE_OPTIONS, prepareInput, type PrepareOptions, type RawChange } from './prepare.js';
 import { redact } from './redact.js';
@@ -212,10 +212,10 @@ export function checkDigestLevels(
 
 // ---- Split digest parts (DIG-74/75, docs/explain-speed.md §4) ----
 
-/** `s2` (DIG-101) added the `<memory>` block and its rules. `s3` (DIG-94): the l0 instruction gained a worked example and a self-check; word limits get a tolerance band and l0 is never cut. */
-export const DIGEST_SUMMARY_PROMPT_VERSION = 's3';
-/** `at2` (DIG-101) added the `<memory>` block and its rules. `at3` (DIG-94): word limits get a tolerance band and over-limit text is cut at a sentence boundary. */
-export const DIGEST_AREA_TEXT_PROMPT_VERSION = 'at3';
+/** `s2` (DIG-101) added the `<memory>` block and its rules. `s3` (DIG-94): the l0 instruction gained a worked example and a self-check; word limits get a tolerance band and l0 is never cut. `s4` (DIG-114): the memory rules ask to cite the earlier change by title and age and a note as the user's, and never to name the mechanism. */
+export const DIGEST_SUMMARY_PROMPT_VERSION = 's4';
+/** `at2` (DIG-101) added the `<memory>` block and its rules. `at3` (DIG-94): word limits get a tolerance band and over-limit text is cut at a sentence boundary. `at4` (DIG-114): memory rules as in `s4`. */
+export const DIGEST_AREA_TEXT_PROMPT_VERSION = 'at4';
 
 /** Lower than `DEFAULT_PREPARE_OPTIONS.tokenBudget`: the summary only needs enough to name the change. */
 export const DEFAULT_SUMMARY_PREPARE_OPTIONS: PrepareOptions = { ...DEFAULT_PREPARE_OPTIONS, tokenBudget: 12_000 };
@@ -344,7 +344,10 @@ export function checkSummaryLevels(raw: unknown, language: ExplainLanguage = DEF
     v.push(`l1: ${total} words, limit ${LIMITS.l1Words}`);
     bullets = fitBullets(bullets, tolerated(LIMITS.l1Words));
   } else if (total > LIMITS.l1Words) ln.push(`l1: ${total} words, target ${LIMITS.l1Words}`);
-  if (dateSources !== undefined) v.push(...checkMemoryDateClaims([l0, ...bullets], dateSources, language));
+  if (dateSources !== undefined) {
+    v.push(...checkMemoryDateClaims([l0, ...bullets], dateSources, language));
+    v.push(...checkMemoryMechanism([l0, ...bullets], dateSources, language));
+  }
 
   return { levels: { l0: { text: l0 }, l1: { userVisible, bullets } }, violations: v, styleWarnings: sw, lengthNotes: ln };
 }
@@ -372,7 +375,10 @@ export function checkAreaTextContent(raw: unknown, language: ExplainLanguage = D
   const how = checkProse(raw.how, 'how', LIMITS.digestAreaWords, language, v, sw, { lengthNotes: ln });
   const why = checkProse(raw.why, 'why', LIMITS.digestAreaWords, language, v, sw, { lengthNotes: ln });
   if (title === '') v.push('title is empty');
-  if (dateSources !== undefined) v.push(...checkMemoryDateClaims([title, effect, how, why], dateSources, language));
+  if (dateSources !== undefined) {
+    v.push(...checkMemoryDateClaims([title, effect, how, why], dateSources, language));
+    v.push(...checkMemoryMechanism([title, effect, how, why], dateSources, language));
+  }
   return { content: { title, effect, how, why }, violations: v, styleWarnings: sw, lengthNotes: ln };
 }
 

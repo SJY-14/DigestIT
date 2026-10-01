@@ -57,7 +57,21 @@ function loadDigestFacts(db: DatabaseSync, repoId: number, knownTerms: ReadonlyS
     if (l0Row) {
       try { l0 = (JSON.parse(l0Row.content) as { text: string }).text; } catch { /* unreadable row */ }
     }
-    const terms = [...knownTerms].filter((t) => new RegExp(`\\b${escapeRegExp(t)}\\b`, 'i').test(l0));
+    // L0 is business-level and should name no identifiers, so on its own it rarely yields a term;
+    // L2's "how" names the functions and modules changed (DIG-114).
+    const l2Row = db.prepare(
+      `SELECT content FROM explanation WHERE change_unit_id = ? AND level = 2 AND status IN ('ok', 'truncated')
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    ).get(r.id) as { content: string } | undefined;
+    let l2 = '';
+    if (l2Row) {
+      try {
+        const items = (JSON.parse(l2Row.content) as { items?: { title?: string; effect?: string; how?: string; why?: string }[] }).items ?? [];
+        l2 = items.flatMap((it) => [it.title, it.effect, it.how, it.why]).filter((x): x is string => typeof x === 'string').join(' ');
+      } catch { /* unreadable row */ }
+    }
+    const text = `${l0} ${l2}`;
+    const terms = [...knownTerms].filter((t) => new RegExp(`\\b${escapeRegExp(t)}\\b`, 'i').test(text));
     facts.push({ id: r.id, at: r.createdAt, language: r.language, areas, terms, l0 });
   }
   return facts;
@@ -78,6 +92,9 @@ const THREAD_IDLE_MS = MEMORY_LIMITS.threadIdleDays * 24 * 60 * 60 * 1000;
 /**
  * The join rule (docs/milestone-4-memory.md §1): a digest joins an open thread when it touches one
  * of the thread's areas, and either shares a term with it or overlaps at least half of its areas.
+ * DIG-114: area overlap only counts when the digest or the thread has no terms; when both have
+ * terms and share none, they are different work, even in the same folder (in a project whose code
+ * sits in one folder, area overlap alone put an unrelated cache change into the retry thread).
  * A thread with no new digest for `MEMORY_LIMITS.threadIdleDays` closes -- checked both between
  * consecutive digests (so a thread from months ago is not silently kept open by today's digest)
  * and, at the end, against `now` for whatever is still open.
@@ -101,8 +118,9 @@ export function buildThreads(facts: readonly DigestFacts[], now: Date): ThreadAc
     const match = open.find((t) => {
       const overlap = d.areas.filter((a) => t.areas.has(a));
       if (overlap.length === 0) return false;
-      const sharesTerm = d.terms.some((term) => t.terms.has(term));
-      return sharesTerm || overlap.length * 2 >= t.areas.size;
+      if (d.terms.some((term) => t.terms.has(term))) return true;
+      if (d.terms.length > 0 && t.terms.size > 0) return false;
+      return overlap.length * 2 >= t.areas.size;
     });
     const ref: ThreadDigestRef = { digestId: d.id, seq: (match?.digests.length ?? 0) + 1, at: d.at, l0: d.l0 };
     if (match) {

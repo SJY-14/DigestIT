@@ -218,6 +218,19 @@ describe('checkSummaryLevels (DIG-74 split)', () => {
     expect(checkSummaryLevels({ l0: { text: 'x' }, l1: {} })).toBeNull();
   });
 
+  it('flags an l1 bullet that cites memory itself once a memory slice was sent (DIG-114)', () => {
+    const l1 = { userVisible: true, bullets: ['Calls now retry, but the 200ms convention in memory is not applied here.'] };
+    const r = checkSummaryLevels({ l0: validReply.l0, l1 }, 'en', '- withRetry (term)')!;
+    expect(r.violations).toEqual([expect.stringContaining('names the memory mechanism ("convention in memory")')]);
+    // No slice sent: neither memory check runs, same as the date check.
+    expect(checkSummaryLevels({ l0: validReply.l0, l1 }, 'en')!.violations).toEqual([]);
+  });
+
+  it('flags an area text that cites memory itself (DIG-114)', () => {
+    const r = checkAreaTextContent({ title: 'Retry backoff', effect: 'Retries wait longer.', how: 'Doubles the delay per attempt.', why: 'Memory says the team uses 200ms.' }, 'en', '')!;
+    expect(r.violations).toEqual([expect.stringContaining('names the memory mechanism ("Memory says")')]);
+  });
+
   it('flags an l0 that mentions a file name', () => {
     const r = checkSummaryLevels({ l0: { text: 'Changes packages/core/src/db.ts.' }, l1: validReply.l1 });
     expect(r?.violations.some((v) => v.includes('file name'))).toBe(true);

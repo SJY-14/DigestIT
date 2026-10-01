@@ -71,14 +71,14 @@ describe('startJob/finishJob/budgetStatus', () => {
     const jobId = startJob(db, 'area', { changeUnitId: id }, 5)!;
     logJobCall(db, new Date(), 'area', {
       jobId, part: 'walkthrough:ui', changeUnitId: id, model: 'sonnet', effort: 'low',
-      timing: { startupMs: 100, ttftMs: 200, genMs: 300, inputTokens: 1000, outputTokens: 50 },
+      timing: { startupMs: 100, ttftMs: 200, genMs: 300, inputTokens: 1000, outputTokens: 50, promptTokens: 12_000 },
       durationMs: 600, outcome: 'ok',
     });
-    const row = db.prepare('SELECT job_id, part, model, effort, startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens FROM explain_call WHERE job_id = ?')
+    const row = db.prepare('SELECT job_id, part, model, effort, startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens, prompt_tokens FROM explain_call WHERE job_id = ?')
       .get(jobId) as Record<string, unknown>;
     expect(row).toEqual({
       job_id: jobId, part: 'walkthrough:ui', model: 'sonnet', effort: 'low',
-      startup_ms: 100, ttft_ms: 200, gen_ms: 300, input_tokens: 1000, output_tokens: 50,
+      startup_ms: 100, ttft_ms: 200, gen_ms: 300, input_tokens: 1000, output_tokens: 50, prompt_tokens: 12_000,
     });
   });
 

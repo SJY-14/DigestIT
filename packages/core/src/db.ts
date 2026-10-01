@@ -453,6 +453,12 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX explain_call_unit ON explain_call(change_unit_id, at);
   CREATE INDEX explain_call_job ON explain_call(job_id);
   `,
+  // DIG-114: the whole prompt's size per call (`input_tokens` + cache creation + cache reads). The
+  // CLI caches most of every prompt, so `input_tokens` alone is only the uncached remainder. Null on
+  // rows logged before this column existed and on rows with no usage report.
+  `
+  ALTER TABLE explain_call ADD COLUMN prompt_tokens INTEGER;
+  `,
 ];
 
 export function migrate(db: DatabaseSync): number {
