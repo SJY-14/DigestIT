@@ -47,7 +47,7 @@ through `:root[data-theme]` tokens and `color-scheme`.
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
 | 1 | DIG-113 | Toggle, persistence, no-flash bootstrap, tests (merged 2026-10-01) | Frontend engineer | — |
-| 2 | DIG-115 | Screenshot check: every view × OS light/dark × System/Light/Dark, keyboard, blocked storage | UX Reviewer | — |
+| 2 | DIG-115 | Screenshot check: every view × OS light/dark × System/Light/Dark, keyboard, blocked storage (passed 2026-10-01, no defects) | UX Reviewer | — |
 
 ## L3 step snippets and line callouts
 
