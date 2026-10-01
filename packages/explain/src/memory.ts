@@ -386,32 +386,38 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const MEM_EN = "(?:the\\s+|this\\s+)?(?:project(?:'s)?\\s+)?memory";
 /**
  * Phrases that cite `<memory>` itself instead of what it holds: "memory says", "according to
- * memory", "the convention in memory", "noted in memory", "project memory", "memory block".
- * Deliberately not a bare "in memory": "results are cached in memory" is ordinary talk about code.
+ * memory", "the convention in memory", "noted in memory", "project memory", "memory slice".
+ * Precision over recall: the check runs only when a slice was sent, so a false hit costs the
+ * memory-on side a retry the memory-off side never pays. Ordinary talk about code is left alone:
+ * not a bare "in memory" ("cached in memory"), no generic nouns or verbs before it ("records in
+ * memory", "found in memory"), no "memory holds/has/shows" (heap usage), no "memory block"
+ * (allocation). A missed leak is still caught by the reader.
  */
 const MECHANISM_RE_EN = new RegExp(
   [
-    `\\b${MEM_EN}\\s+(?:says|said|shows|showed|notes|noted|states|stated|records|recorded|lists|listed|mentions|mentioned|indicates|suggests|holds|contains|has)\\b`,
+    `\\b${MEM_EN}\\s+(?:says|said|notes|noted|states|stated|mentions|mentioned)\\b`,
     `\\baccording\\s+to\\s+${MEM_EN}\\b`,
-    `\\bper\\s+${MEM_EN}\\b`,
-    `\\b(?:conventions?|notes?|threads?|terms?|items?|entr(?:y|ies)|records?|facts?|rules?|corrections?|history|context)\\s+(?:in|from)\\s+${MEM_EN}\\b`,
-    `\\b(?:listed|noted|recorded|mentioned|given|shown|described|documented|stated|captured|remembered|found)\\s+(?:in|from)\\s+${MEM_EN}\\b`,
+    // "per memory, ..." but not "cost per memory access"
+    `\\bper\\s+${MEM_EN}\\b(?![ \\t]+[a-z])`,
+    `\\b(?:conventions?|notes?|threads?|rules?|corrections?)\\s+(?:in|from)\\s+${MEM_EN}\\b`,
+    `\\b(?:listed|noted|mentioned|given|described|documented|stated|remembered)\\s+(?:in|from)\\s+${MEM_EN}\\b`,
     "\\bproject(?:'s)?\\s+memory\\b",
-    '\\bmemory\\s+(?:block|slice|items?|entr(?:y|ies))\\b',
+    '\\bmemory\\s+(?:slice|items?)\\b',
     '<\\/?memory>',
   ].join('|'),
   'gi',
 );
-/** The ko equivalents ("메모리에 따르면", "메모리에 있는 규칙", "규칙은 메모리에"), again never a bare
- * "메모리에 저장" (storing data in memory is what code does). */
+/** The ko equivalents ("메모리에 따르면", "메모리에 있는 규칙", "규칙은 메모리에"). Same precision rule as
+ * en: never a bare "메모리에 저장/있는/기록된" or "메모리 상의" (data held in memory is what code does);
+ * those count only when they lead to a convention, note or thread. */
+const KO_MEMORY_NOUN = '(?:규칙|관례|컨벤션|노트|메모|스레드|정정)';
 const MECHANISM_RE_KO = new RegExp(
   [
     '메모리\\s*에\\s*따르면',
-    '메모리\\s*(?:에|에서|상)\\s*(?:의\\s*)?(?:있는|나온|나와\\s*있는|기록된|적힌|적혀\\s*있는|언급된|명시된|남긴|남아\\s*있는|정의된|말하는|가져온|확인한|확인된)',
-    '메모리\\s*상(?:의)?\\s',
-    '(?:규칙|관례|컨벤션|노트|메모|스레드|용어|기록|정정)\\s*(?:은|는|이|가|도)?\\s*메모리\\s*(?:에|에서|상)',
+    `메모리\\s*(?:에|에서|상)\\s*(?:의\\s*)?(?:있는|나온|나와\\s*있는|기록된|적힌|적혀\\s*있는|언급된|명시된|남긴|남아\\s*있는|정의된|말하는)\\s*(?:\\S+\\s+)?${KO_MEMORY_NOUN}`,
+    `${KO_MEMORY_NOUN}\\s*(?:은|는|이|가|도)?\\s*메모리\\s*(?:에|에서|상)`,
     '프로젝트\\s*메모리',
-    '메모리\\s*(?:블록|슬라이스|항목)',
+    '메모리\\s*(?:슬라이스|항목)',
   ].join('|'),
   'g',
 );

@@ -380,6 +380,18 @@ describe('checkMemoryMechanism (DIG-114)', () => {
       'Keeps an in-memory map keyed by URL.',
       'The cache grows without bound and may use a lot of memory.',
       "The user's note of Tue 22 Sep says the team convention is 200ms.",
+      'The cache keeps records in memory until the next flush.',
+      'Keeps the undo history in memory.',
+      'Stale entries in memory are evicted after a minute.',
+      'If the key is found in memory, the request is skipped.',
+      'Each request is recorded in memory and flushed on exit.',
+      'Memory holds only the latest page now.',
+      'Memory has to stay under 50MB.',
+      'Heap memory shows a steady climb before this fix.',
+      'The context in memory is rebuilt on every call.',
+      'Evicts old memory entries when the cap is hit.',
+      'Frees the memory block on close.',
+      'Adds a cost per memory access.',
     ]) {
       expect(checkMemoryMechanism([text], '', 'en'), text).toEqual([]);
     }
@@ -408,6 +420,12 @@ describe('checkMemoryMechanism (DIG-114)', () => {
       '결과를 메모리에 저장해 두 번째 호출은 바로 반환합니다.',
       '캐시가 계속 커져 메모리를 많이 쓸 수 있습니다.',
       '9월 22일 (화)의 사용자 메모에 따르면 팀 규칙은 200ms입니다.',
+      '메모리에 있는 캐시 항목은 1분 뒤 지워집니다.',
+      '메모리 상의 데이터를 디스크로 옮깁니다.',
+      '기록은 메모리에 남고 종료 때 저장됩니다.',
+      '메모리에 기록된 요청을 종료 시 내보냅니다.',
+      '메모리상 캐시 크기를 제한합니다.',
+      '닫을 때 메모리 블록을 해제합니다.',
     ]) {
       expect(checkMemoryMechanism([text], '', 'ko'), text).toEqual([]);
     }
