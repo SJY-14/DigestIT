@@ -215,9 +215,11 @@ describe('selectMemory: how earlier work and notes are shown (DIG-114)', () => {
 
 describe('relativeAge', () => {
   const at = '2026-09-30T12:00:00.000Z';
-  it('counts whole days back from the change being explained (en)', () => {
+  it('counts calendar days back from the change being explained (en)', () => {
     expect(relativeAge('2026-09-30T08:00:00.000Z', at, 'en')).toBe('earlier the same day');
     expect(relativeAge('2026-09-29T08:00:00.000Z', at, 'en')).toBe('the day before');
+    // 5 days and 22 hours of elapsed time, but six calendar days apart
+    expect(relativeAge('2026-09-24T14:00:00.000Z', at, 'en')).toBe('6 days earlier');
     expect(relativeAge('2026-09-25T12:00:00.000Z', at, 'en')).toBe('5 days earlier');
     expect(relativeAge('2026-09-09T12:00:00.000Z', at, 'en')).toBe('3 weeks earlier');
     expect(relativeAge('2026-07-30T12:00:00.000Z', at, 'en')).toBe('2 months earlier');
@@ -367,7 +369,9 @@ describe('checkMemoryMechanism (DIG-114)', () => {
       expect(checkMemoryMechanism([text], '', 'en'), text).toHaveLength(1);
     }
     expect(checkMemoryMechanism(['The 200ms convention in memory is not applied here.'], '', 'en')[0])
-      .toMatch(/names the memory mechanism \("convention in memory"\); cite the source the way a colleague would/);
+      .toMatch(/names the memory mechanism \("convention in memory"\), cite the source the way a colleague would/);
+    // `explain_call.violations` joins messages with "; ", so one message must not contain it.
+    expect(checkMemoryMechanism(['Memory says so.'], '', 'en')[0]).not.toContain('; ');
   });
 
   it('does not flag ordinary talk about code and memory (en)', () => {

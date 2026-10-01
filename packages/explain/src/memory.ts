@@ -67,14 +67,21 @@ const joinNames = (names: readonly string[]): string => (names.length === 0 ? 'n
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Midnight of `iso`'s calendar day in local time (the same clock `formatMemoryDate` shows), as UTC ms. */
+const calendarDay = (iso: string): number => {
+  const d = new Date(iso);
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+};
+
 /**
- * How long before `toIso` the change at `fromIso` was, counted in whole days: "earlier the same
- * day", "the day before", "5 days earlier", "3 weeks earlier", "2 months earlier" (en) or the ko
+ * How long before `toIso` the change at `fromIso` was, in calendar days: "earlier the same day",
+ * "the day before", "5 days earlier", "3 weeks earlier", "2 months earlier" (en) or the ko
  * equivalent. Relative to the change being explained, not to today, so a stored explanation stays
- * true however late it is read.
+ * true however late it is read. Calendar days, not elapsed 24h periods, so 17 Sep 18:00 to 23 Sep
+ * 09:00 reads "6 days earlier", matching the dates a reader sees on the timeline.
  */
 export function relativeAge(fromIso: string, toIso: string, language: ExplainLanguage): string {
-  const days = Math.max(0, Math.floor((new Date(toIso).getTime() - new Date(fromIso).getTime()) / DAY_MS));
+  const days = Math.max(0, Math.round((calendarDay(toIso) - calendarDay(fromIso)) / DAY_MS));
   const weeks = Math.round(days / 7);
   const months = Math.round(days / 30);
   if (language === 'ko') {
@@ -430,7 +437,7 @@ export function checkMemoryMechanism(texts: readonly string[], sources: string, 
         if (seen.has(n)) continue;
         seen.add(n);
         if (inSources(haystack, n)) continue;
-        v.push(`names the memory mechanism ("${found}"); cite the source the way a colleague would: the user's note of its date, or the earlier change by its title`);
+        v.push(`names the memory mechanism ("${found}"), cite the source the way a colleague would (the user's note of its date, or the earlier change by its title)`);
       }
     }
   }
