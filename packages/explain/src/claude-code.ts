@@ -185,7 +185,24 @@ interface StreamResultEvent {
   subtype: string;
   is_error: boolean;
   result?: string;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: StreamUsage;
+}
+
+/** The `result` event's token usage; the cache fields are absent when the CLI used no prompt cache. */
+export interface StreamUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
+/** The whole prompt's size: uncached input plus the tokens written to and read from the prompt
+ * cache (DIG-114). Null when the event carried no input count of any kind. */
+export function promptTokensOf(usage: StreamUsage | undefined): number | null {
+  if (!usage) return null;
+  const parts = [usage.input_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens]
+    .filter((n): n is number => typeof n === 'number');
+  return parts.length === 0 ? null : parts.reduce((a, b) => a + b, 0);
 }
 type StreamEvent = StreamInitEvent | StreamDeltaEvent | StreamResultEvent | { type: string };
 
@@ -464,6 +481,7 @@ export class ClaudeCodeProvider implements ExplanationProvider {
             genMs: resultAt - genFrom,
             inputTokens: e.usage?.input_tokens ?? null,
             outputTokens: e.usage?.output_tokens ?? null,
+            promptTokens: promptTokensOf(e.usage),
           };
           if (e.is_error || typeof e.result !== 'string') {
             done(() => reject(new Error(`claude returned an error result (${e.subtype})`)));

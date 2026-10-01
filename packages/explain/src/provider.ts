@@ -27,8 +27,15 @@ export interface CallTiming {
   ttftMs: number;
   /** First text delta to the `result` event. */
   genMs: number;
+  /** The API's own `usage.input_tokens`: only the uncached part of the prompt. */
   inputTokens: number | null;
   outputTokens: number | null;
+  /**
+   * The whole prompt's size (DIG-114): `input_tokens` plus `cache_creation_input_tokens` plus
+   * `cache_read_input_tokens`. The CLI caches most of every prompt, so `inputTokens` alone reads as
+   * a handful of tokens per call. Null when the CLI reported no usage at all.
+   */
+  promptTokens: number | null;
 }
 
 /** Outcome of one part of a split Explain (docs/explain-speed.md §4); shared by every part function. */

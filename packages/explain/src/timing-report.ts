@@ -18,6 +18,8 @@ export interface TimingPercentiles {
   genMs: TimingStat;
   inputTokens: Pick<TimingStat, 'p50'>;
   outputTokens: Pick<TimingStat, 'p50'>;
+  /** Whole prompt incl. cached tokens (DIG-114); 0 when no row in the group has it yet. */
+  promptTokens: Pick<TimingStat, 'p50'>;
 }
 
 function percentile(sorted: readonly number[], p: number): number {
@@ -35,6 +37,7 @@ interface Row {
   gen_ms: number | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  prompt_tokens: number | null;
 }
 
 /**
@@ -44,14 +47,14 @@ interface Row {
 export function timingReport(db: DatabaseSync, opts: { since?: Date } = {}): TimingPercentiles[] {
   const since = (opts.since ?? new Date(0)).toISOString();
   const rows = db.prepare(
-    `SELECT part, model, effort, startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens
+    `SELECT part, model, effort, startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens, prompt_tokens
        FROM explain_call WHERE part IS NOT NULL AND outcome = 'ok' AND at >= ?
        ORDER BY part, model, effort`,
   ).all(since) as unknown as Row[];
 
   interface Group {
     part: string; model: string | null; effort: string | null;
-    startup: number[]; ttft: number[]; gen: number[]; input: number[]; output: number[];
+    startup: number[]; ttft: number[]; gen: number[]; input: number[]; output: number[]; prompt: number[];
   }
   const groups = new Map<string, Group>();
   for (const r of rows) {
@@ -60,7 +63,7 @@ export function timingReport(db: DatabaseSync, opts: { since?: Date } = {}): Tim
     const key = `${r.part}\u0000${r.model ?? ''}\u0000${r.effort ?? ''}`;
     let g = groups.get(key);
     if (!g) {
-      g = { part: r.part, model: r.model, effort: r.effort, startup: [], ttft: [], gen: [], input: [], output: [] };
+      g = { part: r.part, model: r.model, effort: r.effort, startup: [], ttft: [], gen: [], input: [], output: [], prompt: [] };
       groups.set(key, g);
     }
     if (r.startup_ms !== null) g.startup.push(r.startup_ms);
@@ -68,10 +71,11 @@ export function timingReport(db: DatabaseSync, opts: { since?: Date } = {}): Tim
     if (r.gen_ms !== null) g.gen.push(r.gen_ms);
     if (r.input_tokens !== null) g.input.push(r.input_tokens);
     if (r.output_tokens !== null) g.output.push(r.output_tokens);
+    if (r.prompt_tokens !== null) g.prompt.push(r.prompt_tokens);
   }
 
   return [...groups.values()].map((g) => {
-    for (const arr of [g.startup, g.ttft, g.gen, g.input, g.output]) arr.sort((a, b) => a - b);
+    for (const arr of [g.startup, g.ttft, g.gen, g.input, g.output, g.prompt]) arr.sort((a, b) => a - b);
     return {
       part: g.part, model: g.model, effort: g.effort, count: g.startup.length,
       startupMs: { p50: percentile(g.startup, 50), p90: percentile(g.startup, 90), p99: percentile(g.startup, 99) },
@@ -79,6 +83,7 @@ export function timingReport(db: DatabaseSync, opts: { since?: Date } = {}): Tim
       genMs: { p50: percentile(g.gen, 50), p90: percentile(g.gen, 90), p99: percentile(g.gen, 99) },
       inputTokens: { p50: percentile(g.input, 50) },
       outputTokens: { p50: percentile(g.output, 50) },
+      promptTokens: { p50: percentile(g.prompt, 50) },
     };
   });
 }
@@ -91,7 +96,7 @@ export function formatTimingReport(rows: readonly TimingPercentiles[]): string {
       `startup p50/p90/p99=${r.startupMs.p50}/${r.startupMs.p90}/${r.startupMs.p99}ms  ` +
       `ttft p50/p90/p99=${r.ttftMs.p50}/${r.ttftMs.p90}/${r.ttftMs.p99}ms  ` +
       `gen p50/p90/p99=${r.genMs.p50}/${r.genMs.p90}/${r.genMs.p99}ms  ` +
-      `tokens in/out p50=${r.inputTokens.p50}/${r.outputTokens.p50}`,
+      `tokens prompt/in/out p50=${r.promptTokens.p50}/${r.inputTokens.p50}/${r.outputTokens.p50}`,
     )
     .join('\n');
 }

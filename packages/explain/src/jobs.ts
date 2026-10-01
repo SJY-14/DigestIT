@@ -111,13 +111,13 @@ export function logJobCall(
 ): void {
   db.prepare(
     `INSERT INTO explain_call
-       (at, change_unit_id, reason, duration_ms, outcome, job_id, part, model, effort, startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens, violations)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (at, change_unit_id, reason, duration_ms, outcome, job_id, part, model, effort, startup_ms, ttft_ms, gen_ms, input_tokens, output_tokens, prompt_tokens, violations)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     at.toISOString(), log.changeUnitId, reason, log.durationMs, log.outcome, log.jobId, log.part, log.model,
     log.effort ?? null,
     log.timing?.startupMs ?? null, log.timing?.ttftMs ?? null, log.timing?.genMs ?? null,
-    log.timing?.inputTokens ?? null, log.timing?.outputTokens ?? null,
+    log.timing?.inputTokens ?? null, log.timing?.outputTokens ?? null, log.timing?.promptTokens ?? null,
     log.violations ?? null,
   );
 }
