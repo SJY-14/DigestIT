@@ -10,6 +10,8 @@ import { MainV2 } from './MainV2.js';
 import { AllProjects } from './AllProjects.js';
 import { UnitPanel } from './Units.js';
 import { MemoryPage } from './Memory.js';
+import { ThemeToggle } from './ThemeToggle.js';
+import { useTheme } from './theme.js';
 import { fetchProjects } from './v2Api.js';
 
 // 'main' is the v2 home screen (DIG-40); 'insights' is the pre-v2 chart dashboard, demoted by UX
@@ -107,6 +109,10 @@ function useInsightsMetrics(active: boolean) {
 export function App() {
   const [page, setPage] = usePage();
   const projectCount = useProjectCount();
+  // DIG-113: one choice for the whole app, applied via theme.ts's data-theme attribute. Threaded
+  // down into MainV2 -> ProjectHeader so the Settings panel mirror stays in sync with this
+  // control, which (unlike Settings) is shown in the chrome on every page, including first run.
+  const [theme, setTheme] = useTheme();
   // UX cycle 2 P7: a row in the All-projects roster opens that project on its newest digest (or
   // first run, when `digestId` is null) — same target MainV2's own switcher lands on.
   const openProject = useCallback((projectId: number, digestId: number | null) => {
@@ -183,9 +189,10 @@ export function App() {
             </a>
           )}
         </nav>
+        <ThemeToggle theme={theme} onChange={setTheme} lang={lang} className="header-theme" />
       </header>
       {page === 'main' ? (
-        <MainV2 onLanguage={onLanguage} />
+        <MainV2 onLanguage={onLanguage} theme={theme} onTheme={setTheme} />
       ) : page === 'projects' ? (
         <AllProjects onOpenProject={openProject} lang={lang} />
       ) : page === 'memory' ? (

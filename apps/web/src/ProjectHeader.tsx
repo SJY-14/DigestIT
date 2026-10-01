@@ -6,9 +6,11 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import type { AboutDto, ExplainLanguage, ProjectDto, ProjectIgnoreDto, ProjectStatusDto } from '@digestit/core';
 import {
   apiErrorMessage, callsLeftLabel, contextSummary, EXPLAIN_LANGUAGE_LIST, explainButtonLabel, explainingLabel,
-  headerCopy, humanDateTime, ignoreCopy, LANGUAGE_NAMES, memoryCopy, notTrackedReasonLabel, trustCopy, type Lang,
+  headerCopy, humanDateTime, ignoreCopy, LANGUAGE_NAMES, memoryCopy, notTrackedReasonLabel, themeCopy, trustCopy, type Lang,
 } from './copy.js';
 import { relativeTime } from './format.js';
+import { ThemeToggle } from './ThemeToggle.js';
+import type { Theme } from './theme.js';
 import { addIgnorePatterns, ApiError, fetchMemory, fetchProjectIgnore, removeIgnorePattern } from './v2Api.js';
 import { ProjectPanel } from './ProjectPanel.js';
 
@@ -66,7 +68,8 @@ function ExplainButton({
 }
 
 function InfoPopover({
-  project, about, status, statusError, onRefreshContext, refreshingContext, onSetLanguage, settingLanguage, languageError, lang,
+  project, about, status, statusError, onRefreshContext, refreshingContext, onSetLanguage, settingLanguage, languageError,
+  theme, onTheme, lang,
 }: {
   project: ProjectDto;
   /** Global provider/model/read-only/legacy-data info (P5, `GET /api/about`); null while loading. */
@@ -78,11 +81,16 @@ function InfoPopover({
   onSetLanguage: (language: ExplainLanguage) => void;
   settingLanguage: boolean;
   languageError: string | null;
+  /** DIG-113: mirrors the global header's theme control (App.tsx), for discoverability from
+   * inside Settings. Same state, not a second independent choice. */
+  theme: Theme;
+  onTheme: (theme: Theme) => void;
   lang: Lang;
 }) {
   const T = headerCopy(lang);
   const TT = trustCopy(lang);
   const TI = ignoreCopy(lang);
+  const TH = themeCopy(lang);
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [open, setOpen] = useState(false);
   const [ignore, setIgnore] = useState<ProjectIgnoreDto | null>(null);
@@ -163,6 +171,10 @@ function InfoPopover({
     <details className="info-popover" ref={detailsRef} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
       <summary aria-label={T.settingsLabel} title={T.settingsLabel}>{T.settingsLabel}</summary>
       <div className="info-popover-panel" role="dialog" aria-label={T.settingsLabel}>
+        <label className="field theme-field">
+          <span>{TH.label}</span>
+          <ThemeToggle theme={theme} onChange={onTheme} lang={lang} />
+        </label>
         {status && (
           <div className="settings-row">
             <span>{T.budgetRowLabel}</span>
@@ -286,6 +298,10 @@ export interface ProjectHeaderProps {
   onSetLanguage: (language: ExplainLanguage) => void;
   settingLanguage: boolean;
   languageError: string | null;
+  /** DIG-113: defaults to 'system'/no-op for callers (mostly tests) that don't care about theme.
+   * MainV2 passes the App-level choice down, so this mirror stays in sync with the header control. */
+  theme?: Theme;
+  onTheme?: (theme: Theme) => void;
   /** The digest picker, shown between the project and the budget (absent before the first digest). */
   picker?: ReactNode;
   /** The UI chrome's language; defaults to English for callers (mostly tests) that don't care.
@@ -295,7 +311,8 @@ export interface ProjectHeaderProps {
 
 export function ProjectHeader({
   projects, currentProject, onSwitch, onRemove, about, status, statusError, explaining, onExplain,
-  onRefreshContext, refreshingContext, onSetLanguage, settingLanguage, languageError, picker, lang = 'en',
+  onRefreshContext, refreshingContext, onSetLanguage, settingLanguage, languageError,
+  theme = 'system', onTheme = () => undefined, picker, lang = 'en',
 }: ProjectHeaderProps) {
   const T = headerCopy(lang);
   const elapsedSeconds = useElapsedSeconds(explaining, status?.explainStartedAt ?? null);
@@ -324,6 +341,8 @@ export function ProjectHeader({
         onSetLanguage={onSetLanguage}
         settingLanguage={settingLanguage}
         languageError={languageError}
+        theme={theme}
+        onTheme={onTheme}
         lang={lang}
       />
       {status ? (

@@ -76,3 +76,31 @@ describe('styles: Direction B (DIG-82)', () => {
     expect(bodiesFor('body:lang(ko)').join(';')).toMatch(/word-break\s*:\s*keep-all/);
   });
 });
+
+describe('styles: data-theme overrides stay in sync with prefers-color-scheme (DIG-113)', () => {
+  const lightBase = /:root\s*\{([^}]*)\}/.exec(css)![1]!;
+  const darkMedia = /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([^}]*)\}/.exec(css)![1]!;
+  // All four bare `:root {` blocks in document order — the two inside @media(dark) included,
+  // since this pattern does not care what wraps them: [0] base light, [1] base dark (= darkMedia
+  // above), [2] M2 light, [3] M2 dark (= darkMediaBlocks[1] below).
+  const rootBlocks = [...css.matchAll(/:root\s*\{([^}]*)\}/g)].map((m) => m[1]!);
+  const darkMediaBlocks = [...css.matchAll(/@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([^}]*)\}/g)].map((m) => m[1]!);
+  const m2Light = rootBlocks[2]!;
+  const m2Dark = darkMediaBlocks[1]!;
+  const dataLight = /:root\[data-theme="light"\]\s*\{([^}]*)\}/.exec(css)![1]!;
+  const dataDark = /:root\[data-theme="dark"\]\s*\{([^}]*)\}/.exec(css)![1]!;
+
+  it('restates every core token (same value, higher-specificity selector)', () => {
+    for (const key of ['--bg', '--bg-inset', '--fg', '--muted', '--border', '--accent', '--accent-solid', '--lane-0', '--graph-changed', '--hunk-fg']) {
+      expect(token(dataLight, key), key).toBe(token(lightBase, key));
+      expect(token(dataDark, key), key).toBe(token(darkMedia, key));
+    }
+  });
+
+  it('restates every M2 dashboard token too', () => {
+    for (const key of ['--series-1', '--state-active', '--badge-unread', '--heat-1', '--heat-4']) {
+      expect(token(dataLight, key), key).toBe(token(m2Light, key));
+      expect(token(dataDark, key), key).toBe(token(m2Dark, key));
+    }
+  });
+});
