@@ -7,7 +7,8 @@ work across digests, user notes), updates them in the background and gives each 
 relevant slice. Deterministic extraction first; background LLM summaries are opt-in per project and
 have their own small daily share. Design: [milestone-4-memory.md](milestone-4-memory.md), contract
 `packages/core/src/memory.ts`. D1–D3 (summaries default, budget share, what is stored) are with the
-Board; the build starts on the recommended options.
+Board; the build starts on the recommended options. Memory retrieval stays on (D1) while round 2 runs:
+round 1 read as parity, not harm, and found no fabricated history.
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
@@ -18,7 +19,9 @@ Board; the build starts on the recommended options.
 | 4 | DIG-102 | "What DigestIT knows" design: brief, critique, decision (done: `docs/ux/decision-4-memory.md`) | UX Designer, UX Reviewer | — |
 | 5 | DIG-104 | The page and the per-digest "what DigestIT used" (merged) | Frontend engineer | — |
 | 7 | DIG-110 | Verify the page against the decision and prototype: screenshots, keyboard, labels (merged) | UX Reviewer | — |
-| 6 | DIG-107 | A/B kit (memory off vs on), blinded pairs, metrics (kit merged; operator real run and blind read (UX Reviewer, Board) pending) | Summarization engineer | — |
+| 6 | DIG-107 | A/B kit (memory off vs on), blinded pairs, metrics (kit merged; reduced real run snapback/en done in DIG-108) | Summarization engineer | — |
+| 8 | DIG-109 | Blind read, round 1 (done): memory-on 4/10 vs bar 7/10, first-try pass rate lower (0.81 vs 0.90). Not passed. Continuity flags traced to kit gaps, not fabrication | UX Reviewer, CTO | — |
+| 9 | DIG-114 | Round 2: slice shown to readers, full prompt-token metric, no "in memory" wording, continuity cites the earlier change; then operator re-run snapback en+ko | Summarization engineer | — |
 
 ## Fast Explain
 
