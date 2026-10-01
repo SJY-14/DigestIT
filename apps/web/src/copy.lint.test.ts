@@ -10,7 +10,7 @@ import {
   apiErrorMessage, callsLeftLabel, contextSummary, digestRowLabel, elapsedLabel, emptyCopy, explainButtonLabel, explainingLabel,
   explainOutcomeMessage, graphCopy, headerCopy, humanDateTime, ignoreCopy, LANGUAGE_NAMES, levelsCopy, lineDelta, memoryCopy,
   memoryKindLabel, memoryKindNoun, memorySourceBadge, memoryTriggerLabel, navCopy,
-  notTrackedReasonLabel, pickerCopy, plural, projectsCopy, readerCopy, resetsLabel, reviewedCopy, setupCopy, trustCopy,
+  notTrackedReasonLabel, pickerCopy, plural, projectsCopy, readerCopy, resetsLabel, reviewedCopy, setupCopy, themeCopy, trustCopy,
   walkthroughCopy, welcomeBackCopy, type Lang,
 } from './copy.js';
 import type { MemoryKind, MemorySource, MemoryTrigger } from '@digestit/core';
@@ -193,6 +193,7 @@ function collectAll(): Entry[] {
       statusError: (fn) => fn(SAMPLE.msg), languageError: (fn) => fn(SAMPLE.msg), resets: (fn) => fn(SAMPLE.when),
     });
     addTable(out, 'navCopy', lang, navCopy(lang), {});
+    addTable(out, 'themeCopy', lang, themeCopy(lang), {});
     addTable(out, 'ignoreCopy', lang, ignoreCopy(lang), {
       remove: (fn) => fn(SAMPLE.pattern), addError: (fn) => fn(SAMPLE.msg), removeError: (fn) => fn(SAMPLE.msg),
       notTrackedExamples: (fn) => fn(SAMPLE.examples), suggestionAdd: (fn) => fn(SAMPLE.pattern),

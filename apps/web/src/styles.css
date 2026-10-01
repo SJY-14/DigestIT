@@ -274,10 +274,60 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
     --heat-4: #a3cbff;
   }
 }
+
+/* data-theme="light"|"dark" (DIG-113): an explicit choice beats prefers-color-scheme regardless
+   of the OS setting. Restates the :root / @media(dark) values above rather than relying on
+   source order, because [data-theme] is what makes the override deterministic: the attribute
+   selector has higher specificity (0,2,0) than a bare :root, in or out of a media query (0,1,0).
+   "System" (no attribute) leaves the blocks above in charge. Keep these two blocks in sync with
+   the :root blocks above when a token changes. */
+:root[data-theme="light"] {
+  /* Native controls (select popups, inputs, checkboxes) follow color-scheme, not our tokens. */
+  color-scheme: light;
+  --bg: #fbfaf7; --bg-inset: #f3f1ea; --fg: #20211d; --muted: #65645a; --border: #e4e1d6;
+  --border-muted: #ece9de; --control-border: #8a8577; --hover: #f3f1ea; --selected: #f1ece1;
+  --accent: #9a5b32; --accent-solid: #9a5b32; --focus: #9a5b32; --shadow: 0 8px 24px rgba(32, 33, 29, 0.12);
+  --raised: #fbfaf7; --add: #3f6b3f; --del: #a23b3b; --add-bg: #e9f0e4; --del-bg: #f6e6e2;
+  --add-no: #e1ebda; --del-no: #f3e0db; --hunk-bg: #efe6d8; --hunk-fg: #7a5230;
+  --graph-changed: #3a3932; --graph-unchanged: #8a8577;
+  --lane-0: #0969da; --lane-1: #bf3989; --lane-2: #1a7f37; --lane-3: #8250df; --lane-4: #bc4c00;
+  --lane-5: #1b7c83; --lane-6: #9a6700; --lane-7: #cf222e;
+  --series-1: #2a78d6; --series-2: #eb6834; --state-active: #1a7f37; --state-handoff: #9a6700;
+  --state-merged: #8250df; --badge-unread: #0969da;
+  --heat-0: var(--bg-inset); --heat-1: #8fb0e0; --heat-2: #6293db; --heat-3: #3a72cc; --heat-4: #173e85;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1b1a17; --bg-inset: #221f1a; --fg: #eae6da; --muted: #a39d8c; --border: #3a362c;
+  --border-muted: #2c2921; --control-border: #7a7466; --hover: #24211c; --selected: #2a2620;
+  --accent: #d99a6c; --accent-solid: #a0603a; --focus: #d99a6c; --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --raised: #29251f; --add: #8fbf8f; --del: #e08a8a; --add-bg: rgba(143, 191, 143, 0.10);
+  --del-bg: rgba(224, 138, 138, 0.10); --add-no: rgba(143, 191, 143, 0.14); --del-no: rgba(224, 138, 138, 0.16);
+  --hunk-bg: rgba(217, 154, 108, 0.14); --hunk-fg: #e6b98c;
+  --graph-changed: #e2ddcf; --graph-unchanged: #7a7466;
+  --lane-0: #4493f8; --lane-1: #db61a2; --lane-2: #3fb950; --lane-3: #ab7df8; --lane-4: #f0883e;
+  --lane-5: #39c5cf; --lane-6: #d29922; --lane-7: #ff7b72;
+  --series-1: #3987e5; --series-2: #d95926; --state-active: #3fb950; --state-handoff: #d29922;
+  --state-merged: #ab7df8; --badge-unread: #4493f8;
+  --heat-0: var(--bg-inset); --heat-1: #1e4d8f; --heat-2: #2a68c2; --heat-3: #4f8fe0; --heat-4: #a3cbff;
+}
+
 .nav { display: flex; gap: 4px; margin-left: 4px; }
 .nav a { color: var(--muted); text-decoration: none; padding: 3px 6px; font-size: var(--text-ui); border-radius: 2px; }
 .nav a:hover { color: var(--fg); }
 .nav a[aria-current='page'] { color: var(--fg); font-weight: 600; }
+
+/* Theme control (DIG-113): a quiet select, same visual weight as the Settings trigger (muted
+   text, no border, hover fill). A fixed width (long enough for the widest option/language,
+   "시스템") keeps it from shifting the header as the choice changes. */
+.theme-select {
+  border: 0; background: none; color: var(--muted); padding: 3px 6px; border-radius: 3px; height: auto;
+  width: 84px; cursor: pointer;
+}
+.theme-select:hover { background: var(--hover); color: var(--fg); }
+/* In the header it is the last thing in the row; in the Settings panel's .theme-field it sits
+   next to a visible label instead, so it keeps the plain select look defined above. */
+.top .theme-select { margin-left: auto; }
 
 .digest { margin-bottom: 16px; }
 .viewbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
@@ -487,6 +537,8 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 .language-field { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .language-field select { font: inherit; padding: 3px 6px; border: 1px solid var(--control-border); border-radius: 3px; background: var(--bg); color: var(--fg); }
 .language-hint { font-size: 12px; }
+/* Theme row (DIG-113): mirrors the global header's quiet select, same shape as the language field. */
+.theme-field { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 /* "What DigestIT knows" link (DIG-104, decision-4-memory.md §2): always visible, placed after the
    language field and before the ignore-patterns section. */
 .mem-settings-link { margin: 0; font-size: var(--text-ui); }

@@ -26,6 +26,7 @@ import {
 } from './copy.js';
 import { relativeTime } from './format.js';
 import { getLastSeen, getReviewed, setLastSeen, setReviewed, type LastSeen } from './storage.js';
+import type { Theme } from './theme.js';
 import { useV2Url, type ReadingLevel, type V2Url } from './v2Url.js';
 
 // --- setup form (no project registered yet) -----------------------------------------------------
@@ -338,7 +339,15 @@ function useNarrow(breakpoint = 1000): boolean {
   return narrow;
 }
 
-export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) => void } = {}) {
+export function MainV2({
+  onLanguage, theme = 'system', onTheme = () => undefined,
+}: {
+  onLanguage?: (lang: ExplainLanguage) => void;
+  /** DIG-113: threaded from App.tsx so the Settings panel's theme row mirrors the header
+   * control. Optional with harmless defaults for callers (tests) that don't care about theme. */
+  theme?: Theme;
+  onTheme?: (theme: Theme) => void;
+} = {}) {
   const [projects, setProjects] = useState<ProjectDto[] | null>(null);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [projectsNotFound, setProjectsNotFound] = useState(false);
@@ -930,6 +939,8 @@ export function MainV2({ onLanguage }: { onLanguage?: (lang: ExplainLanguage) =>
           onSetLanguage={onSetLanguage}
           settingLanguage={settingLanguage}
           languageError={languageError}
+          theme={theme}
+          onTheme={onTheme}
           lang={lang}
           picker={digests.items.length > 0 && (
             <DigestPicker

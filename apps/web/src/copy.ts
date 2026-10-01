@@ -197,6 +197,28 @@ export function headerCopy(lang: Lang = 'en') {
   return lang === 'ko' ? HEADER_KO : HEADER_EN;
 }
 
+// --- Theme (DIG-113): the System/Light/Dark control, shown as a quiet select in the global
+// header (App.tsx, on every view) and mirrored as a labelled row in the per-project Settings
+// panel (ProjectHeader.tsx's InfoPopover). `ariaLabel` spells out all three choices, since the
+// global header's copy has no visible "Theme" text next to it.
+const THEME_EN = {
+  label: 'Theme',
+  system: 'System',
+  light: 'Light',
+  dark: 'Dark',
+  ariaLabel: 'Theme: system / light / dark',
+} as const;
+const THEME_KO = {
+  label: '테마',
+  system: '시스템',
+  light: '라이트',
+  dark: '다크',
+  ariaLabel: '테마: 시스템 / 라이트 / 다크',
+} as const;
+export function themeCopy(lang: Lang = 'en') {
+  return lang === 'ko' ? THEME_KO : THEME_EN;
+}
+
 // --- Top nav (DIG-60, cut to Home-only by UX cycle 2 decision-2.md IA decision): follows the
 // current project's language, so a Korean project never shows an English "DigestIT | Home" bar
 // (see App.tsx's `lang` state). Units/Timeline/Briefing and their History menu are gone; Insights

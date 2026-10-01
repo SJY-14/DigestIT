@@ -76,6 +76,8 @@ afterEach(() => {
   host.remove();
   vi.unstubAllGlobals();
   history.replaceState(null, '', '/');
+  localStorage.clear();
+  document.documentElement.removeAttribute('data-theme');
 });
 
 const render = async (el: ReactElement) => { await act(async () => root.render(el)); };
@@ -236,6 +238,44 @@ describe('App: All-projects nav + route (UX cycle 2 P7, decision-2.md §2)', () 
     const params = new URLSearchParams(location.search);
     expect(params.get('project')).toBe(String(fixtureProject2.id));
     expect(params.has('digest')).toBe(false);
+  });
+});
+
+describe('App: theme toggle (DIG-113)', () => {
+  const setSelect = async (select: HTMLSelectElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(select, value);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  };
+
+  it('is in the header on every page, defaults to System (no data-theme attribute), and persists a choice', async () => {
+    history.replaceState(null, '', '/');
+    await render(<App />);
+    await waitFor(() => host.querySelector('.setup-form') !== null);
+    const select = host.querySelector('.top .theme-select') as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    expect(select.getAttribute('aria-label')).toBe('Theme: system / light / dark');
+    expect(document.documentElement.getAttribute('data-theme')).toBeNull();
+
+    await setSelect(select, 'dark');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+    expect(localStorage.getItem('digestit.theme')).toBe('dark');
+
+    await setSelect(select, 'system');
+    expect(document.documentElement.getAttribute('data-theme')).toBeNull();
+    expect(localStorage.getItem('digestit.theme')).toBeNull();
+  });
+
+  it('shows the same control, already applied, on /insights and /projects', async () => {
+    localStorage.setItem('digestit.theme', 'light');
+    vi.stubGlobal('fetch', makeFetchMock([fixtureProject, fixtureProject2]));
+    history.replaceState(null, '', '/projects');
+    await render(<App />);
+    await waitFor(() => host.querySelectorAll('.proj-row').length === 2);
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    expect((host.querySelector('.top .theme-select') as HTMLSelectElement).value).toBe('light');
   });
 });
 

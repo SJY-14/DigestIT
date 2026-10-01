@@ -227,6 +227,21 @@ describe('ProjectHeader: info popover', () => {
     expect(link.textContent).toContain('Legacy insights (pre-v2 data)');
   });
 
+  it('mirrors the theme choice (DIG-113): shows the current value and calls onTheme on change', async () => {
+    const onTheme = vi.fn();
+    await render(<ProjectHeader {...baseProps({ theme: 'dark', onTheme })} />);
+    await click(host.querySelector('.info-popover > summary'));
+    const select = host.querySelector('.theme-field select') as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    expect(select.value).toBe('dark');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(select, 'light');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(onTheme).toHaveBeenCalledWith('light');
+  });
+
   it('calls onSetLanguage when the language select changes', async () => {
     const onSetLanguage = vi.fn();
     await render(<ProjectHeader {...baseProps({ onSetLanguage })} />);
