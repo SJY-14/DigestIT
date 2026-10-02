@@ -23,7 +23,7 @@ rounds 1 and 2 showed no harm to quality (round 2: 0 losses) and found no fabric
 | 8 | DIG-109 | Blind read, round 1 (done): memory-on 4/10 vs bar 7/10, first-try pass rate lower (0.81 vs 0.90). Not passed. Continuity flags traced to kit gaps, not fabrication | UX Reviewer, CTO | — |
 | 9 | DIG-114 | Round 2 (merged): slice shown to readers, full prompt-token metric, no "in memory" wording, continuity cites the earlier change. Real run en only (DIG-116) | Summarization engineer, operator | — |
 | 10 | DIG-117 | Blind read, round 2 (done): en 6 wins / 4 ties / 0 losses vs bar 7/10, no unsupported claims; first-try 0.74 vs 0.84. Not passed. The gap comes from the continuity sentence pushing the area `why` past its limit (hard rule 4 vs 0); the kit had mixed length notes into its rule table | UX Reviewer, CTO | — |
-| 11 | DIG-118 | Continuity fits the `why` limit, metrics split hard/style/notes, specific continuity, kit cleanup | Summarization engineer | — |
+| 11 | DIG-118 | Continuity fits the `why` limit, metrics split hard/style/notes + retry rules per part, specific continuity, kit cleanup (merged; prompts s5/at5/a9) | Summarization engineer | — |
 | 12 | DIG-119 | Operator real run, round 3: snapback en+ko (20 pairs) | Board operator | DIG-118 |
 | 13 | DIG-120 | Blind read, round 3. Board asked (on DIG-97) whether to score it on the pairs where memory is relevant | UX Reviewer, CTO | DIG-119 |
 
