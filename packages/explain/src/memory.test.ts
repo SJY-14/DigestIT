@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AreaMemory, MemoryContent, MemoryItem, MemoryProvenance, NoteMemory, TermMemory, ThreadMemory } from '@digestit/core';
 import {
-  checkMemoryDateClaims, checkMemoryMechanism, formatMemoryDate, identifiersInDiff, memoryDateSources, relativeAge, selectMemory,
+  MEMORY_PROMPT_RULES, checkMemoryDateClaims, checkMemoryMechanism, formatMemoryDate, identifiersInDiff, memoryDateSources,
+  relativeAge, selectMemory,
 } from './memory.js';
 import type { ProviderFile } from './provider.js';
 
@@ -429,5 +430,24 @@ describe('checkMemoryMechanism (DIG-114)', () => {
     ]) {
       expect(checkMemoryMechanism([text], '', 'ko'), text).toEqual([]);
     }
+  });
+});
+
+describe('MEMORY_PROMPT_RULES (DIG-118: a continuity mention fits the word limit)', () => {
+  it('gives the short clause form and says it replaces part of the field rather than adding to it', () => {
+    expect(MEMORY_PROMPT_RULES).toContain('continues <title> from <age>');
+    expect(MEMORY_PROMPT_RULES).toMatch(/counts against the word limit/);
+    expect(MEMORY_PROMPT_RULES).toMatch(/never add it on top as an extra sentence/);
+  });
+
+  it('rules out a vague continuity claim that does not name the earlier change and its age', () => {
+    expect(MEMORY_PROMPT_RULES).toContain('"earlier work"');
+    expect(MEMORY_PROMPT_RULES).toContain('"the previous days"');
+    expect(MEMORY_PROMPT_RULES).toMatch(/if you cannot name both, do not claim continuity at all/);
+  });
+
+  it('still asks for the thread\'s own title and age, never a bare date, as in DIG-114', () => {
+    expect(MEMORY_PROMPT_RULES).toContain('never a bare date');
+    expect(MEMORY_PROMPT_RULES).toContain("that thread's own title and age exactly as shown there");
   });
 });

@@ -27,6 +27,14 @@
 // (memory-ab-render.mjs), so the reader can tell a supported continuity claim from an invented one;
 // `promptTokens*` count the whole prompt (cache tokens included, `explain_call.prompt_tokens`); and
 // `violations` per arm break the validator's findings down by rule, to explain first-try gaps.
+//
+// DIG-118 (round 2 follow-up): `violations.byKind` further splits those findings into hard
+// violations and style warnings (DIG-94: both cause a retry) versus in-band length notes (never a
+// retry), so a lower first-try rate is traceable to a kind, not just a rule name (both "limit" and
+// "target" messages blank to the same rule string once their numbers are stripped). Each pipeline's
+// sqlite connection is closed as soon as its metrics are read, and `rmSync` below gets Node's own
+// retry, so a trailing WAL/SHM write under a memory-on `home` no longer races the final cleanup
+// into ENOTEMPTY.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -44,6 +52,7 @@ import { SNAPBACK_INIT, SNAPBACK_STORY } from './fixtures/memory-ab-story.mjs';
 import {
   READER_SHEET, loadDigestMemory, mergeViolationCounts, promptTokenTotal, renderPair, violationCounts,
 } from './memory-ab-render.mjs';
+import { closeDbs, removeScratchDirs } from './scratch-cleanup.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const LANGUAGES = ['en', 'ko'];
@@ -403,6 +412,11 @@ async function main() {
         const pipeline = await runPipeline(scenarioName, arm, language, projectDir, init, steps, provider, scratchDirs);
         pipelines[arm] = pipeline;
         const { l0DurationsMs, ...m } = pipelineMetrics(pipeline);
+        // Closes the WAL/SHM files a running sqlite connection keeps open under `home`, before the
+        // cleanup pass at the end removes that directory (DIG-118 item 4, see scratch-cleanup.mjs):
+        // nothing below this point reads `pipeline.db` again (the pair files already captured what
+        // they need in `digests`), so this is the earliest safe point, not just the latest.
+        closeDbs([pipeline.db]);
         l0Durations[arm].push(...l0DurationsMs);
         metrics.byScenarioLanguageArm.push({ scenario: scenarioName, language, arm, ...m });
         console.log(`  digests: ${m.digestCount}, first-try pass rate: ${m.firstTryPassRate === null ? 'n/a' : (m.firstTryPassRate * 100).toFixed(0) + '%'}, AI-tell hits: ${m.aiTellHits}, date-check violations: ${m.dateCheckViolations}`);
@@ -457,13 +471,16 @@ async function main() {
   writeFileSync(join(out, 'key.json'), JSON.stringify(key, null, 1) + '\n');
   writeFileSync(join(out, 'reader-sheet.md'), READER_SHEET);
 
-  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+  removeScratchDirs(scratchDirs);
 
   console.log(`\nwrote ${out}/metrics.json, key.json, reader-sheet.md and ${Object.keys(key).length} blinded pair(s) under ${pairsDir}/`);
   for (const arm of ARMS) {
     const { violations, ...rest } = metrics.byArm[arm];
     console.log(`memory ${arm}: ${JSON.stringify(rest)}`);
     console.log(`  validator findings: ${violations.callsWithViolations} call(s), by part ${JSON.stringify(violations.byPart)}`);
+    // DIG-118 item 2: hard violations and style warnings both cause a retry (DIG-94); length notes
+    // never do. Split so a lower first-try rate is traceable to its kind without opening the DB.
+    console.log(`  by kind: violation ${violations.byKind.violation.messages}, style ${violations.byKind.style.messages}, note ${violations.byKind.note.messages}, unknown ${violations.byKind.unknown.messages}`);
   }
 }
 

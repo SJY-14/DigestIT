@@ -149,8 +149,21 @@ interface CheckedProse {
 /** The `style_warnings` count stored with a result: AI tells plus in-band length notes (DIG-94). */
 export const softCount = (c: CheckedProse): number => c.styleWarnings.length + c.lengthNotes.length;
 
-/** Everything the validator found, for `explain_call.violations` (DIG-94); `undefined` when clean. */
+/**
+ * Everything the validator found, for `explain_call.violations` (DIG-94); `undefined` when clean.
+ * DIG-118: each message is tagged with its kind ("violation"/"style"/"note") so a reader of the
+ * stored string -- or the A/B kit's `violationCounts` -- can split hard violations (retry) and
+ * style warnings (retry) from in-band length notes (never a retry) without re-deriving the kind
+ * from the message text, which `styleWarnings` and the boilerplate half of `violations` cannot be
+ * told apart by otherwise. A row stored before this change has no tag; `violationCounts` reads an
+ * untagged message as kind `unknown` rather than guessing.
+ */
 export function callReasons(c: CheckedProse | null): string | undefined {
-  if (c === null) return 'provider output has an unusable shape';
-  return [...c.violations, ...c.styleWarnings, ...c.lengthNotes].join('; ') || undefined;
+  if (c === null) return 'violation: provider output has an unusable shape';
+  const tagged = [
+    ...c.violations.map((m) => `violation: ${m}`),
+    ...c.styleWarnings.map((m) => `style: ${m}`),
+    ...c.lengthNotes.map((m) => `note: ${m}`),
+  ];
+  return tagged.join('; ') || undefined;
 }

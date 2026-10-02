@@ -154,43 +154,77 @@ export function promptTokenTotal(db) {
 
 /** A violation message with its specifics blanked, so the same rule counts once however it fired:
  * quoted and parenthesised text becomes "…"/(…) and standalone numbers become N ("l1: 72 words,
- * limit 60" -> "l1: N words, limit N"; the "1" in a field name such as "l1" is kept). */
+ * limit 60" -> "l1: N words, limit N"; the "1" in a field name such as "l1" is kept). Takes the
+ * message with its DIG-118 kind tag already stripped (see `splitKindTag`). */
 export function violationRule(message) {
   return message.replace(/"[^"]*"/g, '"…"').replace(/\([^)]*\)/g, '(…)').replace(/\b\d+\b/g, 'N').trim();
 }
 
+const KINDS = ['violation', 'style', 'note', 'unknown'];
+
 /**
- * Per-arm validator findings (DIG-114 kit item 3), from `explain_call.violations` (DIG-94: hard
- * violations, style warnings and in-band length notes, joined with "; "): how many calls had any,
- * and counts per rule and per part kind, so a lower first-try rate can be traced to its rule.
+ * Splits one `explain_call.violations` message into its DIG-118 kind tag ("violation:"/"style:"/
+ * "note:", see `callReasons` in `@digestit/explain`) and the rest. A message logged before that
+ * change has no tag -- kind `unknown` rather than a guess, so an old row stays readable instead of
+ * silently miscounted as whichever kind its text happens to resemble.
+ */
+export function splitKindTag(raw) {
+  const m = /^(violation|style|note): /.exec(raw);
+  return m ? { kind: m[1], message: raw.slice(m[0].length) } : { kind: 'unknown', message: raw };
+}
+
+const emptyKindBucket = () => ({ messages: 0, byRule: {}, byPart: {} });
+const sortCounts = (counts) => Object.fromEntries(Object.entries(counts).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)));
+
+/**
+ * Per-arm validator findings (DIG-114 kit item 3; split by kind, DIG-118 item 2), from
+ * `explain_call.violations` (DIG-94: hard violations, style warnings and in-band length notes,
+ * joined with "; "): how many calls had any, and counts per rule and per part kind overall
+ * (`byRule`/`byPart`, kept for back-compat with round-2 reports) and per message kind (`byKind`),
+ * so a lower first-try rate can be traced to its rule *and* to whether it was a hard violation, a
+ * style warning (DIG-94: style warnings retry too) or a length note (never a retry, DIG-94).
  */
 export function violationCounts(db) {
   const rows = db.prepare("SELECT part, violations FROM explain_call WHERE violations IS NOT NULL AND violations <> ''").all();
   const byRule = {};
   const byPart = {};
+  const byKind = Object.fromEntries(KINDS.map((k) => [k, emptyKindBucket()]));
   let messages = 0;
   for (const r of rows) {
-    const kind = (r.part ?? 'unknown').replace(/:.*$/, '');
-    for (const m of r.violations.split('; ').filter(Boolean)) {
-      const rule = violationRule(m);
+    const partKind = (r.part ?? 'unknown').replace(/:.*$/, '');
+    for (const raw of r.violations.split('; ').filter(Boolean)) {
+      const { kind, message } = splitKindTag(raw);
+      const rule = violationRule(message);
       byRule[rule] = (byRule[rule] ?? 0) + 1;
-      byPart[kind] = (byPart[kind] ?? 0) + 1;
+      byPart[partKind] = (byPart[partKind] ?? 0) + 1;
+      const bucket = byKind[kind];
+      bucket.messages++;
+      bucket.byRule[rule] = (bucket.byRule[rule] ?? 0) + 1;
+      bucket.byPart[partKind] = (bucket.byPart[partKind] ?? 0) + 1;
       messages++;
     }
   }
-  const sortedByRule = Object.fromEntries(Object.entries(byRule).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)));
-  return { callsWithViolations: rows.length, messages, byPart, byRule: sortedByRule };
+  for (const kind of KINDS) byKind[kind].byRule = sortCounts(byKind[kind].byRule);
+  return { callsWithViolations: rows.length, messages, byPart, byRule: sortCounts(byRule), byKind };
 }
 
 /** Sums `violationCounts` results (one per pipeline) into one per-arm rollup. */
 export function mergeViolationCounts(list) {
-  const out = { callsWithViolations: 0, messages: 0, byPart: {}, byRule: {} };
+  const out = { callsWithViolations: 0, messages: 0, byPart: {}, byRule: {}, byKind: Object.fromEntries(KINDS.map((k) => [k, emptyKindBucket()])) };
   for (const v of list) {
     out.callsWithViolations += v.callsWithViolations;
     out.messages += v.messages;
     for (const [k, n] of Object.entries(v.byPart)) out.byPart[k] = (out.byPart[k] ?? 0) + n;
     for (const [k, n] of Object.entries(v.byRule)) out.byRule[k] = (out.byRule[k] ?? 0) + n;
+    for (const kind of KINDS) {
+      const bucket = out.byKind[kind];
+      const vBucket = v.byKind[kind];
+      bucket.messages += vBucket.messages;
+      for (const [k, n] of Object.entries(vBucket.byRule)) bucket.byRule[k] = (bucket.byRule[k] ?? 0) + n;
+      for (const [k, n] of Object.entries(vBucket.byPart)) bucket.byPart[k] = (bucket.byPart[k] ?? 0) + n;
+    }
   }
-  out.byRule = Object.fromEntries(Object.entries(out.byRule).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)));
+  out.byRule = sortCounts(out.byRule);
+  for (const kind of KINDS) out.byKind[kind].byRule = sortCounts(out.byKind[kind].byRule);
   return out;
 }

@@ -5,8 +5,8 @@ import type { NoteMemory, TermMemory, ThreadMemory } from '@digestit/core';
 import { logJobCall, startJob } from '@digestit/explain';
 import { createBatch, recordMemoryUse, upsertMemoryItem } from '../src/memory.js';
 import {
-  READER_SHEET, loadDigestMemory, mergeViolationCounts, promptTokenTotal, renderMemorySection, renderPair, violationCounts,
-  violationRule,
+  READER_SHEET, loadDigestMemory, mergeViolationCounts, promptTokenTotal, renderMemorySection, renderPair, splitKindTag,
+  violationCounts, violationRule,
 } from './memory-ab-render.mjs';
 
 const PROV = { files: [], checkpointId: null, digestIds: [], jobId: null };
@@ -124,23 +124,55 @@ describe('metrics (DIG-114)', () => {
     expect(promptTokenTotal(db)).toBe(9_400);
   });
 
-  it('counts validator findings per rule and per part kind', () => {
+  it('counts validator findings per rule and per part kind, tagged messages split by kind (DIG-118)', () => {
     const { db, jobId } = seedRetryStory();
     const base = { jobId, changeUnitId: 4, model: 'm', durationMs: 1, outcome: 'ok' as const };
-    logJobCall(db, new Date(), 'digest', { ...base, part: 'summary', violations: 'l1: 72 words, limit 60; mentions the date/weekday "Thu 17 Sep" which is not in the memory slice or the diff' });
-    logJobCall(db, new Date(), 'area', { ...base, part: 'walkthrough:src', violations: 'l1: 65 words, limit 60' });
+    // One call with one of each kind (a hard violation, a style warning and a length note), one
+    // call with a second hard violation under a different part, one clean call.
+    logJobCall(db, new Date(), 'digest', {
+      ...base, part: 'summary',
+      violations: 'violation: l1: 72 words, limit 60; style: why: reads like marketing copy; note: l0: 24 words, target 20',
+    });
+    logJobCall(db, new Date(), 'area', { ...base, part: 'walkthrough:src', violations: 'violation: l1: 65 words, limit 60' });
     logJobCall(db, new Date(), 'digest', { ...base, part: 'area:src' });
     const v = violationCounts(db);
     expect(v).toEqual({
       callsWithViolations: 2,
-      messages: 3,
-      byPart: { summary: 2, walkthrough: 1 },
+      messages: 4,
+      byPart: { summary: 3, walkthrough: 1 },
       byRule: {
         'l1: N words, limit N': 2,
-        'mentions the date/weekday "…" which is not in the memory slice or the diff': 1,
+        'why: reads like marketing copy': 1,
+        'l0: N words, target N': 1,
+      },
+      byKind: {
+        violation: { messages: 2, byRule: { 'l1: N words, limit N': 2 }, byPart: { summary: 1, walkthrough: 1 } },
+        style: { messages: 1, byRule: { 'why: reads like marketing copy': 1 }, byPart: { summary: 1 } },
+        note: { messages: 1, byRule: { 'l0: N words, target N': 1 }, byPart: { summary: 1 } },
+        unknown: { messages: 0, byRule: {}, byPart: {} },
       },
     });
-    expect(mergeViolationCounts([v, v]).byRule['l1: N words, limit N']).toBe(4);
+    const merged = mergeViolationCounts([v, v]);
+    expect(merged.byRule['l1: N words, limit N']).toBe(4);
+    expect(merged.byKind.violation.messages).toBe(4);
+    expect(merged.byKind.style.messages).toBe(2);
+    expect(merged.byKind.note.messages).toBe(2);
+  });
+
+  it('reads an untagged (pre-DIG-118) message as kind "unknown" instead of guessing', () => {
+    const { db, jobId } = seedRetryStory();
+    const base = { jobId, changeUnitId: 4, model: 'm', durationMs: 1, outcome: 'ok' as const };
+    logJobCall(db, new Date(), 'digest', { ...base, part: 'summary', violations: 'l1: 72 words, limit 60' });
+    const v = violationCounts(db);
+    expect(v.byKind.unknown).toEqual({ messages: 1, byRule: { 'l1: N words, limit N': 1 }, byPart: { summary: 1 } });
+    expect(v.byKind.violation.messages).toBe(0);
+  });
+
+  it('splits a tagged message into its kind and the original text, and passes an untagged one through as "unknown"', () => {
+    expect(splitKindTag('violation: l1: 72 words, limit 60')).toEqual({ kind: 'violation', message: 'l1: 72 words, limit 60' });
+    expect(splitKindTag('style: why: reads like marketing copy')).toEqual({ kind: 'style', message: 'why: reads like marketing copy' });
+    expect(splitKindTag('note: l0: 24 words, target 20')).toEqual({ kind: 'note', message: 'l0: 24 words, target 20' });
+    expect(splitKindTag('l1: 72 words, limit 60')).toEqual({ kind: 'unknown', message: 'l1: 72 words, limit 60' });
   });
 
   it('blanks quoted text, parenthesised details and numbers in a rule name', () => {
