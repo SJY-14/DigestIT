@@ -312,6 +312,8 @@ export const MIGRATIONS: readonly string[] = [
   // DIG-94: what the validator found for the attempt this row logged (semicolon-joined hard
   // violations, style warnings and length notes, or the unusable-shape message), null when clean or
   // the row logs a provider error instead -- so a doubled call is diagnosable from the log alone.
+  // DIG-118: each message is tagged "violation:"/"style:"/"note:" (see `callReasons`); a row from
+  // before that change has no tag.
   `
   ALTER TABLE explain_call ADD COLUMN violations TEXT;
   `,

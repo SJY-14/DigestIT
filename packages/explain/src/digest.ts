@@ -212,10 +212,10 @@ export function checkDigestLevels(
 
 // ---- Split digest parts (DIG-74/75, docs/explain-speed.md §4) ----
 
-/** `s2` (DIG-101) added the `<memory>` block and its rules. `s3` (DIG-94): the l0 instruction gained a worked example and a self-check; word limits get a tolerance band and l0 is never cut. `s4` (DIG-114): the memory rules ask to cite the earlier change by title and age and a note as the user's, and never to name the mechanism. */
-export const DIGEST_SUMMARY_PROMPT_VERSION = 's4';
-/** `at2` (DIG-101) added the `<memory>` block and its rules. `at3` (DIG-94): word limits get a tolerance band and over-limit text is cut at a sentence boundary. `at4` (DIG-114): memory rules as in `s4`. */
-export const DIGEST_AREA_TEXT_PROMPT_VERSION = 'at4';
+/** `s2` (DIG-101) added the `<memory>` block and its rules. `s3` (DIG-94): the l0 instruction gained a worked example and a self-check; word limits get a tolerance band and l0 is never cut. `s4` (DIG-114): the memory rules ask to cite the earlier change by title and age and a note as the user's, and never to name the mechanism. `s5` (DIG-118): a continuity mention is now a short clause that replaces part of the field instead of an added sentence, with vague continuity claims ruled out. */
+export const DIGEST_SUMMARY_PROMPT_VERSION = 's5';
+/** `at2` (DIG-101) added the `<memory>` block and its rules. `at3` (DIG-94): word limits get a tolerance band and over-limit text is cut at a sentence boundary. `at4` (DIG-114): memory rules as in `s4`. `at5` (DIG-118): memory rules as in `s5`. */
+export const DIGEST_AREA_TEXT_PROMPT_VERSION = 'at5';
 
 /** Lower than `DEFAULT_PREPARE_OPTIONS.tokenBudget`: the summary only needs enough to name the change. */
 export const DEFAULT_SUMMARY_PREPARE_OPTIONS: PrepareOptions = { ...DEFAULT_PREPARE_OPTIONS, tokenBudget: 12_000 };

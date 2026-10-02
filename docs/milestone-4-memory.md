@@ -73,11 +73,16 @@ should read like it would without memory. The reader never sees the slice, so th
 citations a colleague would give (DIG-114): a thread is listed by its earlier changes' titles and
 their age relative to this change ("5 days earlier"), with no date, and the prompt may say
 "continues" only about a thread listed there, naming the earlier change; a user note is listed
-with its date and cited as "the user's note of Tue 22 Sep". The validator flags any date or weekday
-that is not in the slice or the diff, and any text that names the mechanism ("in memory", "memory
-says", "프로젝트 메모리") unless the diff itself uses the phrase. The slice is part of each call's
-input hash, and its item versions go to `memory_use`. Old digests are not re-explained when memory
-changes.
+with its date and cited as "the user's note of Tue 22 Sep". A continuity mention is a short clause
+inside the sentence already being written -- "continues `<title>` from `<age>`" -- that replaces a
+less important detail rather than adding a sentence on top, so the field stays inside the word
+limit it already has; a claim that cannot name both the earlier change's title and its age is not
+made at all (DIG-118, after a round-2 read found the added sentence pushing `why` past its
+tolerance band, and a vague "the previous days" where the slice had a named, dated change). The
+validator flags any date or weekday that is not in the slice or the diff, and any text that names
+the mechanism ("in memory", "memory says", "프로젝트 메모리") unless the diff itself uses the
+phrase. The slice is part of each call's input hash, and its item versions go to `memory_use`. Old
+digests are not re-explained when memory changes.
 
 ## 4. Budget
 
@@ -121,7 +126,10 @@ The same digests are explained with memory off and on (same model, same prompts 
   the memory-on version was sent (notes with dates, threads with their earlier changes and dates,
   term and area names), so the reader can check a continuity claim against it. Prompt tokens count
   the whole prompt, cached tokens included (`explain_call.prompt_tokens`), and validator findings
-  are broken down by rule per arm.
+  are broken down by rule per arm, and further by kind (DIG-118): hard violations and style
+  warnings both cause a retry (DIG-94), an in-band length note never does, and `explain_call.
+  violations` tags each message ("violation:"/"style:"/"note:") so the split needs no guessing --
+  a row logged before that tagging reads as kind `unknown`.
 
 ## 7. Board decisions (approved as recommended, 2026-10-01)
 

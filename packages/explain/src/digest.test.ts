@@ -410,7 +410,7 @@ describe('explainDigestSummary (DIG-74 split)', () => {
     expect(db.prepare('SELECT style_warnings FROM explanation WHERE level = 0').get()).toEqual({ style_warnings: 1 });
     expect((JSON.parse(stored.content) as { text: string }).text).toBe(L0_EN_24);
     const calls = db.prepare('SELECT violations FROM explain_call WHERE job_id = ?').all(jobId);
-    expect(calls).toEqual([{ violations: 'l0: 24 words, target 20' }]);
+    expect(calls).toEqual([{ violations: 'note: l0: 24 words, target 20' }]);
   });
 
   it('never cuts an L0 past the band, even after the retry stays over, and logs why each attempt failed (DIG-94)', async () => {
