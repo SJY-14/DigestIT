@@ -173,8 +173,16 @@ export function splitKindTag(raw) {
   return m ? { kind: m[1], message: raw.slice(m[0].length) } : { kind: 'unknown', message: raw };
 }
 
+/** The kinds that cause a retry (DIG-94); a length note never does. */
+const RETRY_KINDS = ['violation', 'style'];
+
 const emptyKindBucket = () => ({ messages: 0, byRule: {}, byPart: {} });
 const sortCounts = (counts) => Object.fromEntries(Object.entries(counts).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)));
+const sortNested = (byPart) => Object.fromEntries(Object.keys(byPart).sort().map((p) => [p, sortCounts(byPart[p])]));
+const addCount = (byPart, part, rule, n) => {
+  byPart[part] ??= {};
+  byPart[part][rule] = (byPart[part][rule] ?? 0) + n;
+};
 
 /**
  * Per-arm validator findings (DIG-114 kit item 3; split by kind, DIG-118 item 2), from
@@ -183,12 +191,15 @@ const sortCounts = (counts) => Object.fromEntries(Object.entries(counts).sort((a
  * (`byRule`/`byPart`, kept for back-compat with round-2 reports) and per message kind (`byKind`),
  * so a lower first-try rate can be traced to its rule *and* to whether it was a hard violation, a
  * style warning (DIG-94: style warnings retry too) or a length note (never a retry, DIG-94).
+ * `retryRulesByPart` lists only the retry-causing rules (hard violations and style warnings) under
+ * each part kind, so a first-try gap reads straight off it.
  */
 export function violationCounts(db) {
   const rows = db.prepare("SELECT part, violations FROM explain_call WHERE violations IS NOT NULL AND violations <> ''").all();
   const byRule = {};
   const byPart = {};
   const byKind = Object.fromEntries(KINDS.map((k) => [k, emptyKindBucket()]));
+  const retryRulesByPart = {};
   let messages = 0;
   for (const r of rows) {
     const partKind = (r.part ?? 'unknown').replace(/:.*$/, '');
@@ -201,16 +212,20 @@ export function violationCounts(db) {
       bucket.messages++;
       bucket.byRule[rule] = (bucket.byRule[rule] ?? 0) + 1;
       bucket.byPart[partKind] = (bucket.byPart[partKind] ?? 0) + 1;
+      if (RETRY_KINDS.includes(kind)) addCount(retryRulesByPart, partKind, rule, 1);
       messages++;
     }
   }
   for (const kind of KINDS) byKind[kind].byRule = sortCounts(byKind[kind].byRule);
-  return { callsWithViolations: rows.length, messages, byPart, byRule: sortCounts(byRule), byKind };
+  return { callsWithViolations: rows.length, messages, byPart, byRule: sortCounts(byRule), byKind, retryRulesByPart: sortNested(retryRulesByPart) };
 }
 
 /** Sums `violationCounts` results (one per pipeline) into one per-arm rollup. */
 export function mergeViolationCounts(list) {
-  const out = { callsWithViolations: 0, messages: 0, byPart: {}, byRule: {}, byKind: Object.fromEntries(KINDS.map((k) => [k, emptyKindBucket()])) };
+  const out = {
+    callsWithViolations: 0, messages: 0, byPart: {}, byRule: {},
+    byKind: Object.fromEntries(KINDS.map((k) => [k, emptyKindBucket()])), retryRulesByPart: {},
+  };
   for (const v of list) {
     out.callsWithViolations += v.callsWithViolations;
     out.messages += v.messages;
@@ -223,8 +238,12 @@ export function mergeViolationCounts(list) {
       for (const [k, n] of Object.entries(vBucket.byRule)) bucket.byRule[k] = (bucket.byRule[k] ?? 0) + n;
       for (const [k, n] of Object.entries(vBucket.byPart)) bucket.byPart[k] = (bucket.byPart[k] ?? 0) + n;
     }
+    for (const [part, rules] of Object.entries(v.retryRulesByPart)) {
+      for (const [rule, n] of Object.entries(rules)) addCount(out.retryRulesByPart, part, rule, n);
+    }
   }
   out.byRule = sortCounts(out.byRule);
   for (const kind of KINDS) out.byKind[kind].byRule = sortCounts(out.byKind[kind].byRule);
+  out.retryRulesByPart = sortNested(out.retryRulesByPart);
   return out;
 }

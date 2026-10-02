@@ -8,7 +8,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { AreaMemory, ExplainLanguage, MemoryItem, MemoryTrigger, TermMemory, ThreadMemory } from '@digestit/core';
 import {
-  checkAreaSummaries, checkThreadSummary, logJobCall, MEMORY_TASK_LIMITS,
+  callReasons, checkAreaSummaries, checkThreadSummary, logJobCall, MEMORY_TASK_LIMITS,
   type ExplanationProvider, type JobRef, type MemoryAreaSummaryRequest, type MemorySummarizeAreasInput,
   type MemorySummarizeThreadInput,
 } from '@digestit/explain';
@@ -156,7 +156,7 @@ export async function runAreaSummaryBatch(
       logJobCall(db, at, 'memory', {
         jobId: job.jobId, part: 'memory', changeUnitId: null, model: res.model,
         durationMs: now().getTime() - at.getTime(), outcome: 'ok',
-        violations: checked ? [...checked.violations, ...checked.styleWarnings].join('; ') || undefined : 'provider output has an unusable shape',
+        violations: callReasons(checked && { ...checked, lengthNotes: [] }),
       });
       if (checked === null) {
         lastError = 'provider output has an unusable shape';
@@ -222,7 +222,7 @@ export async function runThreadSummaryBatch(
       logJobCall(db, at, 'memory', {
         jobId: job.jobId, part: 'memory', changeUnitId: null, model: res.model,
         durationMs: now().getTime() - at.getTime(), outcome: 'ok',
-        violations: checked ? [...checked.violations, ...checked.styleWarnings].join('; ') || undefined : 'provider output has an unusable shape',
+        violations: callReasons(checked && { ...checked, lengthNotes: [] }),
       });
       if (checked === null) {
         lastError = 'provider output has an unusable shape';

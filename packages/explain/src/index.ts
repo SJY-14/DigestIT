@@ -16,6 +16,8 @@ export * from './digest.js';
 export * from './area.js';
 export * from './jobs.js';
 export * from './tells.js';
+// DIG-118: the tagged `explain_call.violations` format, shared with the background memory tasks.
+export { callReasons } from './style.js';
 export * from './lint-report.js';
 export * from './jobs.js';
 export * from './timing-report.js';

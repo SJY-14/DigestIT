@@ -151,12 +151,17 @@ describe('metrics (DIG-114)', () => {
         note: { messages: 1, byRule: { 'l0: N words, target N': 1 }, byPart: { summary: 1 } },
         unknown: { messages: 0, byRule: {}, byPart: {} },
       },
+      retryRulesByPart: {
+        summary: { 'l1: N words, limit N': 1, 'why: reads like marketing copy': 1 },
+        walkthrough: { 'l1: N words, limit N': 1 },
+      },
     });
     const merged = mergeViolationCounts([v, v]);
     expect(merged.byRule['l1: N words, limit N']).toBe(4);
     expect(merged.byKind.violation.messages).toBe(4);
     expect(merged.byKind.style.messages).toBe(2);
     expect(merged.byKind.note.messages).toBe(2);
+    expect(merged.retryRulesByPart.summary).toEqual({ 'l1: N words, limit N': 2, 'why: reads like marketing copy': 2 });
   });
 
   it('reads an untagged (pre-DIG-118) message as kind "unknown" instead of guessing', () => {

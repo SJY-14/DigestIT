@@ -481,6 +481,7 @@ async function main() {
     // DIG-118 item 2: hard violations and style warnings both cause a retry (DIG-94); length notes
     // never do. Split so a lower first-try rate is traceable to its kind without opening the DB.
     console.log(`  by kind: violation ${violations.byKind.violation.messages}, style ${violations.byKind.style.messages}, note ${violations.byKind.note.messages}, unknown ${violations.byKind.unknown.messages}`);
+    console.log(`  retry-causing rules by part: ${JSON.stringify(violations.retryRulesByPart)}`);
   }
 }
 
