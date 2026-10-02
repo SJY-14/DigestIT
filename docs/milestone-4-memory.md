@@ -114,7 +114,7 @@ The same digests are explained with memory off and on (same model, same prompts 
   (retry work over three digests, a rename, a user correction) plus 5 digests of this repo's own
   history, en and ko. Readers pick the better one on continuity, the project's own names,
   specificity and correctness. **Pass:** memory wins at least 7 of 10 per language, with no
-  continuity claim that the slice does not support.
+  continuity claim that the slice does not support. A tie is not a win (DIG-117).
 - **Automatic:** first-try validator pass rate not lower, 0 AI-tell hits, the share of diff
   identifiers that are known terms and are used verbatim, and L0 time no more than 15 % slower.
 - **Kit** (`packages/ingest/test/memory-ab-kit.mjs`): each pair file ends with the project memory

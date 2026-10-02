@@ -7,12 +7,12 @@ work across digests, user notes), updates them in the background and gives each 
 relevant slice. Deterministic extraction first; background LLM summaries are opt-in per project and
 have their own small daily share. Design: [milestone-4-memory.md](milestone-4-memory.md), contract
 `packages/core/src/memory.ts`. The Board approved D1–D3 as recommended (2026-10-01): summaries off per
-project until opt-in, 4 memory jobs/day inside the 40 with a reserve of 10, areas/terms/threads/notes only. Memory retrieval stays on (D1) while round 2 runs:
-round 1 read as parity, not harm, and found no fabricated history.
+project until opt-in, 4 memory jobs/day inside the 40 with a reserve of 10, areas/terms/threads/notes only. Memory retrieval stays on (D1) while round 3 runs:
+rounds 1 and 2 showed no harm to quality (round 2: 0 losses) and found no fabricated history. The cost is +5.6 % prompt tokens and +8.5 % L0 time.
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-97 | Design, contract, Board decisions D1–D3 (approved), review, acceptance | CTO | DIG-114 |
+| 0 | DIG-97 | Design, contract, Board decisions D1–D3 (approved), review, acceptance | CTO | DIG-120 |
 | 1 | DIG-100 | Store, migration, rollback, export/clear, deterministic extraction, threads, `digest memory` CLI (merged) | Diff engineer | — |
 | 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task (merged; prompts s2/at2/a7) | Summarization engineer | — |
 | 3 | DIG-103 | `MemoryWorker` triggers, budget share, retrieval wired into Explain, memory API (merged) | Diff engineer | — |
@@ -21,7 +21,11 @@ round 1 read as parity, not harm, and found no fabricated history.
 | 7 | DIG-110 | Verify the page against the decision and prototype: screenshots, keyboard, labels (merged) | UX Reviewer | — |
 | 6 | DIG-107 | A/B kit (memory off vs on), blinded pairs, metrics (kit merged; reduced real run snapback/en done in DIG-108) | Summarization engineer | — |
 | 8 | DIG-109 | Blind read, round 1 (done): memory-on 4/10 vs bar 7/10, first-try pass rate lower (0.81 vs 0.90). Not passed. Continuity flags traced to kit gaps, not fabrication | UX Reviewer, CTO | — |
-| 9 | DIG-114 | Round 2 (merged): slice shown to readers, full prompt-token metric, no "in memory" wording, continuity cites the earlier change. Next: operator real run, snapback en+ko (20 pairs), then blind read | Summarization engineer, operator | — |
+| 9 | DIG-114 | Round 2 (merged): slice shown to readers, full prompt-token metric, no "in memory" wording, continuity cites the earlier change. Real run en only (DIG-116) | Summarization engineer, operator | — |
+| 10 | DIG-117 | Blind read, round 2 (done): en 6 wins / 4 ties / 0 losses vs bar 7/10, no unsupported claims; first-try 0.74 vs 0.84. Not passed. The gap comes from the continuity sentence pushing the area `why` past its limit (hard rule 4 vs 0); the kit had mixed length notes into its rule table | UX Reviewer, CTO | — |
+| 11 | DIG-118 | Continuity fits the `why` limit, metrics split hard/style/notes, specific continuity, kit cleanup | Summarization engineer | — |
+| 12 | DIG-119 | Operator real run, round 3: snapback en+ko (20 pairs) | Board operator | DIG-118 |
+| 13 | DIG-120 | Blind read, round 3. Board asked (on DIG-97) whether to score it on the pairs where memory is relevant | UX Reviewer, CTO | DIG-119 |
 
 ## Fast Explain
 
