@@ -1,10 +1,11 @@
 // Threads from stored digests (docs/milestone-4-memory.md §1 "thread"): no LLM call, a pure
-// re-derivation from `digest`/`explanation` rows plus the project's current terms every time it
-// runs, so it is safe to call on every update and never drifts from the stored history.
+// re-derivation from `digest`/`file_change` rows plus the project's terms and area links every
+// time it runs, so it is safe to call on every update and never drifts from the stored history.
+// Grouping reads only code facts (DIG-121); the stored L0 is carried along for display.
 import type { DatabaseSync } from 'node:sqlite';
-import type { ExplainLanguage, ThreadDigestRef, ThreadMemory } from '@digestit/core';
+import type { AreaMemory, ExplainLanguage, ThreadDigestRef, ThreadMemory } from '@digestit/core';
 import { MEMORY_LIMITS } from '@digestit/core';
-import { getMemoryItem, upsertMemoryItem } from './memory.js';
+import { getMemoryItem, listMemoryItems, upsertMemoryItem } from './memory.js';
 
 interface DigestFacts {
   id: number;
@@ -13,10 +14,6 @@ interface DigestFacts {
   areas: string[];
   terms: string[];
   l0: string;
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** A digest area's memory `area` key: its label (a path), `''` for the project root. Not its `id`,
@@ -39,16 +36,43 @@ function digestAreaKeys(areasJson: string | null): string[] {
   }
 }
 
+/**
+ * Known terms named on the lines a digest's diff adds or removes (not its context lines): the code
+ * facts a thread is grouped on (DIG-121). Until then terms came from the stored L0 and L2, which
+ * the model writes, so the same commits grouped differently per language and per run: an en L2 that
+ * named `withRetry` and a ko L2 that did not put one digest in different threads. Context lines are
+ * code the change did not touch -- the `request` export sitting next to a new `retryRequest` line
+ * would otherwise tie a later logging change in the same file to the retry work.
+ */
+export function changedTerms(patches: readonly (string | null)[], knownTerms: ReadonlySet<string>): string[] {
+  const found = new Set<string>();
+  const WORD = /[A-Za-z_$][A-Za-z0-9_$]*/g;
+  for (const patch of patches) {
+    if (patch === null) continue;
+    let inHunk = false;
+    for (const line of patch.split('\n')) {
+      if (line.startsWith('diff --git')) inHunk = false;
+      else if (line.startsWith('@@')) inHunk = true;
+      else if (inHunk && (line.startsWith('+') || line.startsWith('-'))) {
+        for (const m of line.slice(1).matchAll(WORD)) if (knownTerms.has(m[0])) found.add(m[0]);
+      }
+    }
+  }
+  return [...found].sort();
+}
+
 function loadDigestFacts(db: DatabaseSync, repoId: number, knownTerms: ReadonlySet<string>): DigestFacts[] {
   const rows = db.prepare(
     `SELECT d.change_unit_id AS id, d.created_at AS createdAt, d.language AS language, d.areas AS areasJson
      FROM digest d WHERE d.repo_id = ? ORDER BY d.created_at, d.change_unit_id`,
   ).all(repoId) as unknown as { id: number; createdAt: string; language: ExplainLanguage; areasJson: string | null }[];
+  const patchesOf = db.prepare('SELECT patch FROM file_change WHERE change_unit_id = ? ORDER BY path');
 
   const facts: DigestFacts[] = [];
   for (const r of rows) {
     const areas = digestAreaKeys(r.areasJson);
     if (areas.length === 0) continue; // no stored areas: predates DIG-75, or nothing to thread on
+    // The L0 is kept only to show: the thread's title and its entries. Grouping never reads it.
     const l0Row = db.prepare(
       `SELECT content FROM explanation WHERE change_unit_id = ? AND level = 0 AND status IN ('ok', 'truncated')
        ORDER BY created_at DESC, rowid DESC LIMIT 1`,
@@ -57,24 +81,21 @@ function loadDigestFacts(db: DatabaseSync, repoId: number, knownTerms: ReadonlyS
     if (l0Row) {
       try { l0 = (JSON.parse(l0Row.content) as { text: string }).text; } catch { /* unreadable row */ }
     }
-    // L0 is business-level and should name no identifiers, so on its own it rarely yields a term;
-    // L2's "how" names the functions and modules changed (DIG-114).
-    const l2Row = db.prepare(
-      `SELECT content FROM explanation WHERE change_unit_id = ? AND level = 2 AND status IN ('ok', 'truncated')
-       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-    ).get(r.id) as { content: string } | undefined;
-    let l2 = '';
-    if (l2Row) {
-      try {
-        const items = (JSON.parse(l2Row.content) as { items?: { title?: string; effect?: string; how?: string; why?: string }[] }).items ?? [];
-        l2 = items.flatMap((it) => [it.title, it.effect, it.how, it.why]).filter((x): x is string => typeof x === 'string').join(' ');
-      } catch { /* unreadable row */ }
-    }
-    const text = `${l0} ${l2}`;
-    const terms = [...knownTerms].filter((t) => new RegExp(`\\b${escapeRegExp(t)}\\b`, 'i').test(text));
-    facts.push({ id: r.id, at: r.createdAt, language: r.language, areas, terms, l0 });
+    const patches = (patchesOf.all(r.id) as unknown as { patch: string | null }[]).map((p) => p.patch);
+    facts.push({ id: r.id, at: r.createdAt, language: r.language, areas, terms: changedTerms(patches, knownTerms), l0 });
   }
   return facts;
+}
+
+/** Each area key's direct neighbours (`uses` and `usedBy`), from the project's area items. */
+function loadAreaLinks(db: DatabaseSync, repoId: number): Map<string, Set<string>> {
+  const links = new Map<string, Set<string>>();
+  for (const it of listMemoryItems(db, repoId, { kind: 'area' })) {
+    if (it.status === 'hidden') continue;
+    const c = it.content as AreaMemory;
+    links.set(c.path, new Set([...c.uses, ...c.usedBy]));
+  }
+  return links;
 }
 
 interface ThreadAccumulator {
@@ -90,16 +111,21 @@ interface ThreadAccumulator {
 const THREAD_IDLE_MS = MEMORY_LIMITS.threadIdleDays * 24 * 60 * 60 * 1000;
 
 /**
- * The join rule (docs/milestone-4-memory.md §1): a digest joins an open thread when it touches one
- * of the thread's areas, and either shares a term with it or overlaps at least half of its areas.
- * DIG-114: area overlap only counts when the digest or the thread has no terms; when both have
- * terms and share none, they are different work, even in the same folder (in a project whose code
- * sits in one folder, area overlap alone put an unrelated cache change into the retry thread).
+ * The join rule (docs/milestone-4-memory.md §1), on code facts only (DIG-121): a digest joins an
+ * open thread when it shares a term with it (a known term on a line its diff adds or removes, see
+ * `changedTerms`) and touches one of the thread's areas or an area directly linked to one (`uses`/
+ * `usedBy`, `links`) -- a test folder's change to the code it tests is the same work. Area overlap
+ * alone (at least half of the thread's areas) only counts when neither side has a term, i.e. in
+ * code the extractor finds no symbols in; a digest with terms never joins a thread on area alone,
+ * nor a digest without terms a thread that has some (DIG-114, DIG-121: in a project whose code sits
+ * in one folder, that put a cache change and a logging change into the retry thread).
  * A thread with no new digest for `MEMORY_LIMITS.threadIdleDays` closes -- checked both between
  * consecutive digests (so a thread from months ago is not silently kept open by today's digest)
  * and, at the end, against `now` for whatever is still open.
  */
-export function buildThreads(facts: readonly DigestFacts[], now: Date): ThreadAccumulator[] {
+export function buildThreads(
+  facts: readonly DigestFacts[], now: Date, links: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
+): ThreadAccumulator[] {
   const open: ThreadAccumulator[] = [];
   const closed: ThreadAccumulator[] = [];
 
@@ -117,10 +143,12 @@ export function buildThreads(facts: readonly DigestFacts[], now: Date): ThreadAc
     expire(new Date(d.at).getTime());
     const match = open.find((t) => {
       const overlap = d.areas.filter((a) => t.areas.has(a));
-      if (overlap.length === 0) return false;
-      if (d.terms.some((term) => t.terms.has(term))) return true;
-      if (d.terms.length > 0 && t.terms.size > 0) return false;
-      return overlap.length * 2 >= t.areas.size;
+      if (d.terms.length > 0 && t.terms.size > 0) {
+        const near = overlap.length > 0 || d.areas.some((a) => [...(links.get(a) ?? [])].some((b) => t.areas.has(b)));
+        return near && d.terms.some((term) => t.terms.has(term));
+      }
+      if (d.terms.length > 0 || t.terms.size > 0) return false;
+      return overlap.length > 0 && overlap.length * 2 >= t.areas.size;
     });
     const ref: ThreadDigestRef = { digestId: d.id, seq: (match?.digests.length ?? 0) + 1, at: d.at, l0: d.l0 };
     if (match) {
@@ -149,7 +177,7 @@ export function buildThreads(facts: readonly DigestFacts[], now: Date): ThreadAc
  * Returns the number of thread items created or updated. */
 export function updateThreads(db: DatabaseSync, batchId: number, repoId: number, knownTerms: ReadonlySet<string>, now: () => Date = () => new Date()): number {
   const facts = loadDigestFacts(db, repoId, knownTerms);
-  const threads = buildThreads(facts, now());
+  const threads = buildThreads(facts, now(), loadAreaLinks(db, repoId));
   let upserted = 0;
   for (const t of threads) {
     const content: ThreadMemory = {

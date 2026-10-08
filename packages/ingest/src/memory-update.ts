@@ -140,11 +140,13 @@ export async function updateProjectMemory(
 
     const notesChanged = updateContextNotes(db, batchId, project, now);
 
-    const activeTermNames = new Set([
+    // Stale terms too (DIG-121): threads group on the names their digests' diffs changed, and a
+    // renamed function's old name is what its earlier diffs say.
+    const threadTermNames = new Set([
       ...liveTermKeys,
-      ...listMemoryItems(db, project.id, { kind: 'term', status: 'active' }).map((t) => t.key),
+      ...listMemoryItems(db, project.id, { kind: 'term' }).filter((t) => t.status !== 'hidden').map((t) => t.key),
     ]);
-    const threadsChanged = updateThreads(db, batchId, project.id, activeTermNames, now);
+    const threadsChanged = updateThreads(db, batchId, project.id, threadTermNames, now);
 
     finishBatch(db, batchId, 0, now);
     counts = { batchId, areasChanged, areasStale, termsChanged, termsStale, notesChanged, threadsChanged };

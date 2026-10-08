@@ -9,7 +9,7 @@ import type {
 import { RepoNotAllowedError } from './config.js';
 import type { JobRef } from './jobs.js';
 import { logJobCall } from './jobs.js';
-import { MEMORY_PROMPT_RULES, checkMemoryDateClaims, checkMemoryMechanism, memoryDateSources } from './memory.js';
+import { MEMORY_PROMPT_RULES, checkMemoryClaims, memoryCheckSources, type MemoryCheckSources } from './memory.js';
 import { loadChange, storeLevels } from './pipeline.js';
 import { DEFAULT_PREPARE_OPTIONS, prepareInput, type PrepareOptions, type RawChange } from './prepare.js';
 import { redact } from './redact.js';
@@ -212,10 +212,10 @@ export function checkDigestLevels(
 
 // ---- Split digest parts (DIG-74/75, docs/explain-speed.md §4) ----
 
-/** `s2` (DIG-101) added the `<memory>` block and its rules. `s3` (DIG-94): the l0 instruction gained a worked example and a self-check; word limits get a tolerance band and l0 is never cut. `s4` (DIG-114): the memory rules ask to cite the earlier change by title and age and a note as the user's, and never to name the mechanism. `s5` (DIG-118): a continuity mention is now a short clause that replaces part of the field instead of an added sentence, with vague continuity claims ruled out. */
-export const DIGEST_SUMMARY_PROMPT_VERSION = 's5';
-/** `at2` (DIG-101) added the `<memory>` block and its rules. `at3` (DIG-94): word limits get a tolerance band and over-limit text is cut at a sentence boundary. `at4` (DIG-114): memory rules as in `s4`. `at5` (DIG-118): memory rules as in `s5`. */
-export const DIGEST_AREA_TEXT_PROMPT_VERSION = 'at5';
+/** `s2` (DIG-101) added the `<memory>` block and its rules. `s3` (DIG-94): the l0 instruction gained a worked example and a self-check; word limits get a tolerance band and l0 is never cut. `s4` (DIG-114): the memory rules ask to cite the earlier change by title and age and a note as the user's, and never to name the mechanism. `s5` (DIG-118): a continuity mention is now a short clause that replaces part of the field instead of an added sentence, with vague continuity claims ruled out. `s6` (DIG-121): term names go in l1 and below, never l0; no relative age but one the slice gives. */
+export const DIGEST_SUMMARY_PROMPT_VERSION = 's6';
+/** `at2` (DIG-101) added the `<memory>` block and its rules. `at3` (DIG-94): word limits get a tolerance band and over-limit text is cut at a sentence boundary. `at4` (DIG-114): memory rules as in `s4`. `at5` (DIG-118): memory rules as in `s5`. `at6` (DIG-121): memory rules as in `s6`. */
+export const DIGEST_AREA_TEXT_PROMPT_VERSION = 'at6';
 
 /** Lower than `DEFAULT_PREPARE_OPTIONS.tokenBudget`: the summary only needs enough to name the change. */
 export const DEFAULT_SUMMARY_PREPARE_OPTIONS: PrepareOptions = { ...DEFAULT_PREPARE_OPTIONS, tokenBudget: 12_000 };
@@ -310,11 +310,11 @@ export interface SummaryCheckResult {
 
 /**
  * Split off `checkDigestLevels`'s L0/L1 rules for the standalone `summary` part. `dateSources`, when
- * given (a memory slice was sent), is the text a date may be quoted from (`memoryDateSources`): any
- * date or weekday the reply names that is not in it is a hard violation (docs/milestone-4-memory.md
- * §3), not a style warning.
+ * given (a memory slice was sent), is what a date or relative age may be quoted from
+ * (`memoryCheckSources`): any date, weekday or age the reply names that is not in it is a hard
+ * violation (docs/milestone-4-memory.md §3), not a style warning.
  */
-export function checkSummaryLevels(raw: unknown, language: ExplainLanguage = DEFAULT_LANGUAGE, dateSources?: string): SummaryCheckResult | null {
+export function checkSummaryLevels(raw: unknown, language: ExplainLanguage = DEFAULT_LANGUAGE, dateSources?: MemoryCheckSources): SummaryCheckResult | null {
   if (!isObj(raw) || !isObj(raw.l0) || !isObj(raw.l1)) return null;
   const { l0: l0raw, l1: l1raw } = raw as { l0: Record<string, unknown>; l1: Record<string, unknown> };
   const bulletsIn = stringArray(l1raw.bullets);
@@ -345,8 +345,7 @@ export function checkSummaryLevels(raw: unknown, language: ExplainLanguage = DEF
     bullets = fitBullets(bullets, tolerated(LIMITS.l1Words));
   } else if (total > LIMITS.l1Words) ln.push(`l1: ${total} words, target ${LIMITS.l1Words}`);
   if (dateSources !== undefined) {
-    v.push(...checkMemoryDateClaims([l0, ...bullets], dateSources, language));
-    v.push(...checkMemoryMechanism([l0, ...bullets], dateSources, language));
+    v.push(...checkMemoryClaims([l0, ...bullets], dateSources, language));
   }
 
   return { levels: { l0: { text: l0 }, l1: { userVisible, bullets } }, violations: v, styleWarnings: sw, lengthNotes: ln };
@@ -363,7 +362,7 @@ export interface AreaTextCheckResult {
  * Split off `checkDigestLevels`'s per-item rules for the standalone `area:<id>` part. `dateSources`
  * as in `checkSummaryLevels`.
  */
-export function checkAreaTextContent(raw: unknown, language: ExplainLanguage = DEFAULT_LANGUAGE, dateSources?: string): AreaTextCheckResult | null {
+export function checkAreaTextContent(raw: unknown, language: ExplainLanguage = DEFAULT_LANGUAGE, dateSources?: MemoryCheckSources): AreaTextCheckResult | null {
   if (!isObj(raw) || typeof raw.title !== 'string' || typeof raw.effect !== 'string' || typeof raw.how !== 'string' || typeof raw.why !== 'string') {
     return null;
   }
@@ -376,8 +375,7 @@ export function checkAreaTextContent(raw: unknown, language: ExplainLanguage = D
   const why = checkProse(raw.why, 'why', LIMITS.digestAreaWords, language, v, sw, { lengthNotes: ln });
   if (title === '') v.push('title is empty');
   if (dateSources !== undefined) {
-    v.push(...checkMemoryDateClaims([title, effect, how, why], dateSources, language));
-    v.push(...checkMemoryMechanism([title, effect, how, why], dateSources, language));
+    v.push(...checkMemoryClaims([title, effect, how, why], dateSources, language));
   }
   return { content: { title, effect, how, why }, violations: v, styleWarnings: sw, lengthNotes: ln };
 }
@@ -444,7 +442,7 @@ export async function explainDigestSummary(
   const memoryText = opts.memory?.text;
   const prepared = prepareDigestSummaryInput(raw, areas.map(({ id, label }) => ({ id, label })), opts.context, language, opts.prepare, memoryText);
   if (!opts.force && isSummaryCached(db, changeUnitId, promptVersion, prepared.inputHash)) return { outcome: 'cached', calls: 0 };
-  const dateSources = memoryText === undefined ? undefined : memoryDateSources(memoryText, prepared.input.files, prepared.input.context);
+  const dateSources = opts.memory === undefined ? undefined : memoryCheckSources(opts.memory, prepared.input.files, prepared.input.context);
 
   const now = opts.job.now ?? (() => new Date());
   let calls = 0;
@@ -541,7 +539,7 @@ export async function explainDigestAreaText(
   const memoryText = opts.memory?.text;
   const skeletons = areas.map(({ id, label }) => ({ id, label }));
   const prepared = prepareDigestAreaTextInput(raw, area, skeletons, opts.context, language, opts.prepare, memoryText);
-  const dateSources = memoryText === undefined ? undefined : memoryDateSources(memoryText, prepared.input.files, prepared.input.context);
+  const dateSources = opts.memory === undefined ? undefined : memoryCheckSources(opts.memory, prepared.input.files, prepared.input.context);
   const notAnalysed = notAnalysedList(prepareInput(raw).input.files);
 
   const now = opts.job.now ?? (() => new Date());

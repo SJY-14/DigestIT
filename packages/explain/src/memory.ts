@@ -19,8 +19,12 @@ export type MemoryPromptKind = keyof typeof MEMORY_LIMITS.sliceTokens;
  * the rule below now gives the exact short clause ("continues <title> from <age>") and says it
  * replaces a less important detail rather than adding to the field, and it rules out a vague
  * continuity claim ("earlier work", "the previous days") that does not name both.
+ * DIG-121: memory-on replies broke the "l0 names no identifier" rule more often than memory-off
+ * ones (a term listed in <memory> read as an invitation), so the rules say where term names go;
+ * and an age may only be one the slice gives for an earlier change, which `checkMemoryAgeClaims`
+ * enforces.
  */
-export const MEMORY_PROMPT_RULES = 'Use the project\'s own area, term and thread names exactly as given in <memory>; invent none. You may say a change continues earlier work only when a thread in <memory> covers it; then name that earlier change the way a colleague would, as a short clause inside the sentence you are already writing -- "continues <title> from <age>" ("continues the retry work from five days earlier"), using that thread\'s own title and age exactly as shown there, never a bare date. That clause counts against the word limit stated for this field: drop a less important detail to make room for it, never add it on top as an extra sentence past the limit. Never say "earlier work", "the previous days" or another vague stand-in for a continuity claim without naming that thread\'s own title and age; if you cannot name both, do not claim continuity at all. A `note` in <memory> is a correction from the user: it outranks every other fact in <memory>, but never outranks what the diff itself shows; cite it the same way, as a short clause, not an added sentence ("per the user\'s note of Tue 22 Sep, the team convention is 200ms"). Name no other date or weekday unless the diff itself shows it. The reader cannot see <memory>: never mention memory, a slice, a note list or any other part of how this text was produced.';
+export const MEMORY_PROMPT_RULES = 'Use the project\'s own area, term and thread names exactly as given in <memory>; invent none. A term in <memory> is a code identifier: it belongs in the detailed fields (the l1 bullets, the area text, the walkthrough), never in l0, which still names no file, function or other identifier -- say there in plain words what the named code does. You may say a change continues earlier work only when a thread in <memory> covers it; then name that earlier change the way a colleague would, as a short clause inside the sentence you are already writing -- "continues <title> from <age>" ("continues the retry work from five days earlier"), using that thread\'s own title and the age shown for that earlier change exactly as written there, never a bare date and never any other age. That clause counts against the word limit stated for this field: drop a less important detail to make room for it, never add it on top as an extra sentence past the limit. Never say "earlier work", "the previous days" or another vague stand-in for a continuity claim without naming that thread\'s own title and age; if you cannot name both, do not claim continuity at all. A `note` in <memory> is a correction from the user: it outranks every other fact in <memory>, but never outranks what the diff itself shows; cite it the same way, as a short clause, not an added sentence ("per the user\'s note of Tue 22 Sep, the team convention is 200ms"). Name no other date, weekday or relative age ("three days earlier", "3일 전") unless the diff itself shows it. The reader cannot see <memory>: never mention memory, a slice, a note list or any other part of how this text was produced.';
 
 /** What retrieval is grounded on: the change's own touched areas, the diff's known identifiers, and the target prompt. */
 export interface MemoryRequest {
@@ -103,6 +107,186 @@ export function relativeAge(fromIso: string, toIso: string, language: ExplainLan
   return `${months} months earlier`;
 }
 
+// ---- relative ages in text (DIG-121) ----
+
+const EN_NUMBER_WORDS: Readonly<Record<string, number>> = {
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18,
+  nineteen: 19, twenty: 20,
+};
+const EN_COUNT = `\\d+|a\\s+few|few|several|${Object.keys(EN_NUMBER_WORDS).join('|')}`;
+/**
+ * A relative age as `relativeAge` writes it in en ("earlier the same day", "the day before",
+ * "3 days earlier", "2 weeks earlier") plus the paraphrases a model reaches for ("three days
+ * before", "a week ago", "yesterday", "the previous days"). Not anchored; see `EN_AGE_RE`.
+ */
+const EN_AGE = `(?:earlier\\s+(?:the\\s+same|that)\\s+day|the\\s+(?:day|week|month)\\s+before|the\\s+previous\\s+(?:days?|weeks?|months?)|yesterday|(?:${EN_COUNT})\\s+(?:days?|weeks?|months?)\\s+(?:earlier|before|ago|prior))`;
+const EN_AGE_RE = new RegExp(`\\b${EN_AGE}\\b`, 'gi');
+/** The ko equivalents ("같은 날 앞서", "하루 전", "3일 전", "2주 전", "2개월 전"). A day number right after a
+ * month ("9월 13일 전") is a date, not an age, so it is left to the date check. */
+const KO_AGE_RE = /같은\s*날\s*앞서|하루\s*전|이틀\s*전|사흘\s*전|일주일\s*전|한\s*달\s*전|(?<![\d월./-]\s?)\d+\s*(?:일|주일?|개월|달)\s*전/g;
+
+interface AgeMention {
+  phrase: string;
+  /** Language-neutral value: `d3` (3 days), `w2`, `m2`; `?…` for one that names no exact age ("a few days"). */
+  key: string;
+  index: number;
+}
+
+function enAgeKey(phrase: string): string {
+  const p = phrase.toLowerCase().replace(/\s+/g, ' ');
+  if (p.startsWith('earlier')) return 'd0';
+  if (p === 'yesterday') return 'd1';
+  const before = /^the (?:(day|week|month) before|previous (day|week|month))$/.exec(p);
+  if (before) return `${(before[1] ?? before[2])![0]}1`;
+  const counted = /^(.+?) (day|week|month)s? (?:earlier|before|ago|prior)$/.exec(p);
+  if (counted) {
+    const n = /^\d+$/.test(counted[1]!) ? Number(counted[1]) : EN_NUMBER_WORDS[counted[1]!];
+    if (n !== undefined) return `${counted[2]![0]}${n}`;
+  }
+  return `?${p}`;
+}
+
+function koAgeKey(phrase: string): string {
+  const p = phrase.replace(/\s+/g, '');
+  const fixed: Record<string, string> = { 같은날앞서: 'd0', 하루전: 'd1', 이틀전: 'd2', 사흘전: 'd3', 일주일전: 'd7', 한달전: 'm1' };
+  if (fixed[p]) return fixed[p]!;
+  const m = /^(\d+)(일|주일?|개월|달)전$/.exec(p);
+  if (!m) return `?${p}`;
+  const unit = m[2] === '일' ? 'd' : m[2]!.startsWith('주') ? 'w' : 'm';
+  return `${unit}${Number(m[1])}`;
+}
+
+/** Every relative age in `text`, en and ko patterns both (a ko reply may slip into en), in order. */
+function findAges(text: string, languages: readonly ExplainLanguage[] = ['en', 'ko']): AgeMention[] {
+  const out: AgeMention[] = [];
+  if (languages.includes('ko')) for (const m of text.matchAll(KO_AGE_RE)) out.push({ phrase: m[0], key: koAgeKey(m[0]), index: m.index });
+  if (languages.includes('en')) for (const m of text.matchAll(EN_AGE_RE)) out.push({ phrase: m[0], key: enAgeKey(m[0]), index: m.index });
+  return out.sort((a, b) => a.index - b.index);
+}
+
+/** The relative age phrases in `text` (en and ko), in order, each once. */
+export function relativeAgesIn(text: string): string[] {
+  return [...new Set(findAges(text).map((m) => m.phrase))];
+}
+
+// ---- continuity clauses in stored L0 text (DIG-121) ----
+
+const EN_CONT = '(?:continu(?:es|ing|ed|e)|build(?:s|ing)?\\s+on|built\\s+on|follow(?:s|ing)?\\s+(?:up\\s+on|on\\s+from)|pick(?:s|ing)?\\s+up|extend(?:s|ing)?|carr(?:ies|ying)\\s+on)';
+/** ", continuing the retry work from three days earlier[ on backoff and …]" up to the clause's end. */
+const EN_CLAUSE_RE = new RegExp(`,\\s*(?:and\\s+)?(?:(?:this|it|which)\\s+)?${EN_CONT}\\b[^,;.]*?\\b${EN_AGE}\\b[^,;.]*`, 'gi');
+/** "Continuing the retry work from three days earlier, failed requests …" */
+const EN_LEAD_RE = new RegExp(`^${EN_CONT}\\b[^,;.]*?\\b${EN_AGE}\\b[^,;.]*,\\s*`, 'i');
+/** "This continues the retry work from three days earlier." as a sentence of its own. */
+const EN_SENTENCE_RE = new RegExp(`^(?:this|it|that)(?:\\s+change)?\\s+${EN_CONT}\\b[^;]*?\\b${EN_AGE}\\b`, 'i');
+/** Whatever age is left once no clause shape matched: drop the age itself ("added three days earlier"). */
+const EN_LEFTOVER_RE = new RegExp(`\\s*\\b(?:from\\s+)?${EN_AGE}\\b`, 'gi');
+
+/** The verb that ties a ko clause to earlier work: "이어", "이어서", "이은", "이어갑니다", … */
+const KO_CONT_RE = /이어(?:갑니다|집니다|나갑니다|받습니다|서|가며|가고|받아)?|이은|잇는|잇고|잇습니다|이었습니다/;
+/** A word that ends in a connective ("막고", "줄이며", "하면서"): the clause before it stands on its own. */
+const KO_CONNECTIVE_RE = /(\S+?)(으며|으면서|면서|며|고)\s+/g;
+
+/** "막" -> "막습니다", "줄이" -> "줄입니다", "만들" -> "만듭니다": a verb stem in the plain polite ending. */
+function koPoliteFinal(stem: string): string {
+  const last = stem.charCodeAt(stem.length - 1);
+  if (last < 0xac00 || last > 0xd7a3) return `${stem}습니다`;
+  const jong = (last - 0xac00) % 28;
+  if (jong !== 0 && jong !== 8) return `${stem}습니다`; // ㄹ (8) drops before ㅂ, like no final consonant
+  return `${stem.slice(0, -1)}${String.fromCharCode(last - jong + 17)}니다`; // 17: ㅂ as the final consonant
+}
+
+function stripKoSentence(sentence: string): string {
+  let s = sentence;
+  for (let guard = 0; guard < 5; guard++) {
+    const age = findAges(s, ['ko'])[0];
+    if (!age) break;
+    const ageEnd = age.index + age.phrase.length;
+    const rest = s.slice(ageEnd);
+    const clauseEnd = rest.search(/[,.!?]/);
+    const verb = KO_CONT_RE.exec(clauseEnd === -1 ? rest : rest.slice(0, clauseEnd));
+    // The clause starts after the last comma before the age, or after a connective word in between.
+    const commaBefore = s.slice(0, age.index).search(/,\s*[^,]*$/);
+    const boundary = commaBefore === -1 ? 0 : commaBefore + (/^,\s*/.exec(s.slice(commaBefore))![0].length);
+    let connective: { start: number; stem: string } | null = null;
+    for (const m of s.slice(boundary, age.index).matchAll(KO_CONNECTIVE_RE)) {
+      connective = { start: boundary + m.index, stem: m[1]! };
+    }
+    if (verb) {
+      const verbEnd = ageEnd + verb.index + verb[0].length;
+      if (!/니다$/.test(verb[0])) {
+        // "…, 3일 전 자동 재시도 작업을 이어 서버 부담을 줄입니다." -> "…, 서버 부담을 줄입니다."
+        const start = connective ? connective.start + s.slice(connective.start).indexOf(' ') + 1 : boundary;
+        const after = verbEnd + (/^,?\s*/.exec(s.slice(verbEnd))![0].length);
+        s = s.slice(0, start) + s.slice(after);
+        continue;
+      }
+      if (connective) {
+        // "…, 요청 반복을 막고 3일 전 재시도 작업을 이어갑니다." -> "…, 요청 반복을 막습니다."
+        s = s.slice(0, connective.start) + koPoliteFinal(connective.stem) + s.slice(verbEnd);
+        continue;
+      }
+    }
+    // No clause shape to cut cleanly: drop the age alone ("3일 전의 작업" -> "작업").
+    s = s.slice(0, age.index) + s.slice(ageEnd).replace(/^의?\s*/, '');
+  }
+  return s;
+}
+
+function stripEnSentence(sentence: string): string {
+  if (findAges(sentence, ['en']).length === 0) return sentence;
+  if (EN_SENTENCE_RE.test(sentence)) return '';
+  let s = sentence.replace(EN_CLAUSE_RE, '');
+  const lead = s.replace(EN_LEAD_RE, '');
+  if (lead !== s) s = lead.charAt(0).toUpperCase() + lead.slice(1);
+  if (findAges(s, ['en']).length > 0) s = s.replace(EN_LEFTOVER_RE, '');
+  return s;
+}
+
+const tidy = (s: string): string =>
+  s.replace(/\s+([,.;!?])/g, '$1').replace(/,\s*([.!?])/g, '$1').replace(/\s{2,}/g, ' ').trim();
+
+/**
+ * Stored L0 text without the continuity clauses it was written with (DIG-121). An L0 that said
+ * "…, continuing the retry work from three days earlier" ("…3일 전 … 작업을 이어갑니다") was true
+ * on its own date; quoted later as a thread's title or entry, that age is stale and a reply
+ * copies it. Every relative age goes: the clause around it when it has a known shape (", continuing
+ * … from <age>", "This continues … <age>.", "<age> … 작업을 이어", "…막고 <age> … 이어갑니다"),
+ * otherwise the age phrase alone. Text with no relative age comes back unchanged. en and ko
+ * patterns both apply, whatever the item's language.
+ */
+export function stripContinuity(text: string): string {
+  if (findAges(text).length === 0) return text;
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  const out = tidy(sentences.map((s) => tidy(stripEnSentence(stripKoSentence(s)))).filter((s) => s !== '').join(' '));
+  return out === '' ? tidy(text.replace(EN_LEFTOVER_RE, '').replace(KO_AGE_RE, '')) : out;
+}
+
+/**
+ * Flags every relative age in the output that is not the age of an earlier change the slice
+ * gives (DIG-121): `ages` are `MemorySlice.ages`, exactly as `relativeAge` wrote them, and
+ * `otherSources` is the diff and project context (an age the code itself contains is the
+ * diff's own fact). Quoted L0 text in the slice is deliberately not a source: its ages were
+ * measured from that change's own date. "three days earlier" equals "3 days earlier"; "a few days
+ * earlier" equals nothing. A hard violation, worded like the date check's so the kit counts both.
+ */
+export function checkMemoryAgeClaims(
+  texts: readonly string[], ages: readonly string[], otherSources: string, language: ExplainLanguage,
+): string[] {
+  const allowed = new Set([...ages.flatMap((a) => findAges(a)), ...findAges(otherSources)].map((m) => m.key));
+  const languages: ExplainLanguage[] = language === 'ko' ? ['ko', 'en'] : ['en'];
+  const v: string[] = [];
+  const seen = new Set<string>();
+  for (const text of texts) {
+    for (const m of findAges(text, languages)) {
+      if (allowed.has(m.key) || seen.has(m.phrase)) continue;
+      seen.add(m.phrase);
+      v.push(`mentions the relative age "${m.phrase}", which is not the age of any earlier change in the memory slice (date check): use an age exactly as given there, or drop the claim`);
+    }
+  }
+  return v;
+}
+
 /** An area rendered as only its relationships (docs/milestone-4-memory.md §3: "with their uses/usedBy names only"). */
 function renderAreaLinks(path: string, c: AreaMemory): string {
   return `- ${path} (area): uses ${joinNames(c.uses)}; used by ${joinNames(c.usedBy)}`;
@@ -147,18 +331,24 @@ function priorDigests(c: ThreadMemory, at: string | undefined): ThreadDigestRef[
 /**
  * A thread as the earlier changes a reader can find on the timeline (DIG-114): its title (the first
  * change's L0), the latest earlier change's L0, and how long before this change each was. No dates:
- * "thread of Thu 17 Sep" named nothing the reader could look up.
+ * "thread of Thu 17 Sep" named nothing the reader could look up. DIG-121: the title, the latest L0
+ * and the summary go through `stripContinuity`, so the only ages in the line are the ones computed
+ * here (returned as `ages`), never one an old L0 measured from its own date.
  */
-function renderThread(c: ThreadMemory, prior: readonly ThreadDigestRef[], language: ExplainLanguage, at: string | undefined): string {
+function renderThread(
+  c: ThreadMemory, prior: readonly ThreadDigestRef[], language: ExplainLanguage, at: string | undefined,
+): { text: string; ages: string[] } {
   const first = prior[0]!;
   const latest = prior[prior.length - 1]!;
   const age = (d: ThreadDigestRef): string | null => (at === undefined ? null : relativeAge(d.at, at, language));
   const changes = prior.length === 1
     ? [`1 earlier change`, age(first)]
-    : [`${prior.length} earlier changes`, age(first) && `first ${age(first)}`, `latest "${latest.l0}"${age(latest) ? ` ${age(latest)}` : ''}`];
+    : [`${prior.length} earlier changes`, age(first) && `first ${age(first)}`, `latest "${stripContinuity(latest.l0)}"${age(latest) ? ` ${age(latest)}` : ''}`];
   const meta = changes.filter((p): p is string => p !== null).join('; ');
-  const summary = c.summary ? redact(c.summary) : null;
-  return `- ${c.title} (thread; ${meta})${summary && summary !== c.title ? `: ${summary}` : ''}`;
+  const title = stripContinuity(c.title);
+  const summary = c.summary ? stripContinuity(redact(c.summary)) : null;
+  const ages = [age(first), prior.length > 1 ? age(latest) : null].filter((a): a is string => a !== null);
+  return { text: `- ${title} (thread; ${meta})${summary && summary !== title ? `: ${summary}` : ''}`, ages };
 }
 
 /** A note on its own (category 1): the target it is about, then the note, labelled as the user's. */
@@ -183,6 +373,8 @@ interface Candidate {
   /** Extra items whose current version was consulted to build this line (e.g. the area a note targets). */
   alsoUses: MemoryItem[];
   text: string;
+  /** The relative ages this line gives as ages of earlier changes (a thread line's, see `renderThread`). */
+  ages: string[];
   /**
    * Whether this line ties the slice to this specific change (a note, a pinned item, a term the
    * diff uses, a thread sharing one): an area's `uses`/`usedBy` line on its own is structure the
@@ -217,18 +409,23 @@ export function selectMemory(items: readonly MemoryItem[], request: MemoryReques
 
   const selectedKeys = new Set<string>();
   const candidates: Candidate[] = [];
-  const take = (it: MemoryItem, text: string, specific: boolean, alsoUses: MemoryItem[] = []): void => {
+  const take = (it: MemoryItem, text: string, specific: boolean, alsoUses: MemoryItem[] = [], ages: string[] = []): void => {
     const k = key(it.kind, it.key);
     if (selectedKeys.has(k)) return;
     selectedKeys.add(k);
-    candidates.push({ item: it, alsoUses, text, specific });
+    candidates.push({ item: it, alsoUses, text, specific, ages });
   };
   const bySortedKey = (list: MemoryItem[]): MemoryItem[] => [...list].sort((a, b) => cmp(a.key, b.key));
   /** `render()` unless a user note targets the item, in which case the note's text stands in for it. */
-  const takeWithOverride = (it: MemoryItem, label: string, render: () => string, specific: boolean): void => {
+  const takeWithOverride = (it: MemoryItem, label: string, render: () => string | { text: string; ages: string[] }, specific: boolean): void => {
     const override = byTargetKey.get(key(it.kind, it.key));
-    if (override) take(it, renderOverride(label, override, language), true, [override]);
-    else take(it, render(), specific);
+    if (override) {
+      take(it, renderOverride(label, override, language), true, [override]);
+      return;
+    }
+    const r = render();
+    if (typeof r === 'string') take(it, r, specific);
+    else take(it, r.text, specific, [], r.ages);
   };
 
   // 1. User notes on touched areas: the note's own text stands in for the area it targets, so the
@@ -251,7 +448,7 @@ export function selectMemory(items: readonly MemoryItem[], request: MemoryReques
     else if (it.kind === 'thread') {
       const prior = priorDigests(it.content as ThreadMemory, at);
       if (prior.length === 0) continue; // nothing earlier than this change to point at
-      takeWithOverride(it, `${(it.content as ThreadMemory).title} (thread)`, () => renderThread(it.content as ThreadMemory, prior, language, at), true);
+      takeWithOverride(it, `${stripContinuity((it.content as ThreadMemory).title)} (thread)`, () => renderThread(it.content as ThreadMemory, prior, language, at), true);
     }
   }
 
@@ -281,7 +478,7 @@ export function selectMemory(items: readonly MemoryItem[], request: MemoryReques
   for (const it of bySortedKey(openThreads)) {
     const prior = priorDigests(it.content as ThreadMemory, at);
     if (prior.length === 0) continue;
-    takeWithOverride(it, `${(it.content as ThreadMemory).title} (thread)`, () => renderThread(it.content as ThreadMemory, prior, language, at), true);
+    takeWithOverride(it, `${stripContinuity((it.content as ThreadMemory).title)} (thread)`, () => renderThread(it.content as ThreadMemory, prior, language, at), true);
   }
 
   // 6. Neighbouring areas: connected to a touched area via `uses`/`usedBy`, but not touched themselves.
@@ -307,7 +504,7 @@ export function selectMemory(items: readonly MemoryItem[], request: MemoryReques
     tokens += lineTokens;
     kept.push(c);
   }
-  if (!kept.some((c) => c.specific)) return { items: [], text: '', tokens: 0, droppedForBudget: dropped };
+  if (!kept.some((c) => c.specific)) return { items: [], text: '', tokens: 0, droppedForBudget: dropped, ages: [] };
 
   const used = new Map<number, number>();
   for (const c of kept) {
@@ -319,6 +516,7 @@ export function selectMemory(items: readonly MemoryItem[], request: MemoryReques
     text: kept.map((c) => c.text).join('\n'),
     tokens,
     droppedForBudget: dropped,
+    ages: [...new Set(kept.flatMap((c) => c.ages))],
   };
 }
 
@@ -351,6 +549,37 @@ const norm = (s: string): string => s.toLowerCase().replace(/[\s,.]+/g, ' ').tri
  */
 export function memoryDateSources(sliceText: string, files: readonly ProviderFile[], context?: string): string {
   return [sliceText, context ?? '', ...files.map((f) => f.patch ?? '')].join('\n');
+}
+
+/** What a reply that was sent a memory slice is checked against (`checkMemoryClaims`). */
+export interface MemoryCheckSources {
+  /** Slice, project context and diff: where a date or a mechanism phrase may come from (`memoryDateSources`). */
+  text: string;
+  /** The ages the slice gives as ages of earlier changes (`MemorySlice.ages`). */
+  ages: readonly string[];
+  /** Project context and diff only: an age found here is the code's own (`checkMemoryAgeClaims`). */
+  codeText: string;
+}
+
+export function memoryCheckSources(slice: MemorySlice, files: readonly ProviderFile[], context?: string): MemoryCheckSources {
+  return {
+    text: memoryDateSources(slice.text, files, context),
+    ages: slice.ages ?? [],
+    codeText: memoryDateSources('', files, context),
+  };
+}
+
+/**
+ * Every memory rule a reply is held to once a slice was sent: dates, relative ages, and never naming
+ * the mechanism. The age check runs only when the slice gives an age: with no earlier change to point
+ * at there is no age to copy, and "7일 전 알림" or "a week before it expires" describes the feature.
+ */
+export function checkMemoryClaims(texts: readonly string[], sources: MemoryCheckSources, language: ExplainLanguage): string[] {
+  return [
+    ...checkMemoryDateClaims(texts, sources.text, language),
+    ...(sources.ages.length > 0 ? checkMemoryAgeClaims(texts, sources.ages, sources.codeText, language) : []),
+    ...checkMemoryMechanism(texts, sources.text, language),
+  ];
 }
 
 /**

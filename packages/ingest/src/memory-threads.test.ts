@@ -1,9 +1,15 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
-import type { ThreadMemory } from '@digestit/core';
-import { getMemoryItem, listMemoryItems, createBatch } from './memory.js';
-import { updateThreads } from './memory-threads.js';
+import type { AreaMemory, ThreadMemory } from '@digestit/core';
+import { getMemoryItem, listMemoryItems, createBatch, upsertMemoryItem } from './memory.js';
+import { changedTerms, updateThreads } from './memory-threads.js';
+// @ts-expect-error -- plain .mjs fixture shared with the A/B kit, no type declarations
+import { SNAPBACK_INIT, SNAPBACK_STORY } from '../test/fixtures/memory-ab-story.mjs';
 
 function setup(): { db: DatabaseSync; repoId: number } {
   const db = openDb(':memory:');
@@ -32,6 +38,17 @@ function insertDigest(
   ).run(id, JSON.stringify({ text: l0 }), createdAt);
 }
 
+/** One `file_change` row per path, with `patch` as the stored unified diff. */
+function insertPatches(db: DatabaseSync, id: number, patches: Record<string, string>): void {
+  for (const [path, patch] of Object.entries(patches)) {
+    db.prepare("INSERT INTO file_change (change_unit_id, path, status, patch) VALUES (?, ?, 'M', ?)").run(id, path, patch);
+  }
+}
+
+/** A minimal unified diff for `path` whose hunk has the given context (' '), added ('+') and removed ('-') lines. */
+const patch = (path: string, ...lines: string[]): string =>
+  [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`, '@@ -1,3 +1,3 @@', ...lines].join('\n');
+
 function insertL2(db: DatabaseSync, id: number, createdAt: string, how: string): void {
   const content = { items: [{ title: 'Area', effect: 'Effect.', how, why: 'Why.', paths: ['src/x.js'] }] };
   db.prepare(
@@ -58,23 +75,29 @@ describe('updateThreads', () => {
     expect(content.state).toBe('open');
   });
 
-  it('reads terms from L2 as well as L0, since L0 names no identifiers (DIG-114)', () => {
+  it('takes terms from the lines the diff adds or removes, never from L0, L2 or context lines (DIG-121)', () => {
     const { db, repoId } = setup();
-    insertDigest(db, repoId, 1, '2026-09-01T00:00:00.000Z', [{ label: 'src' }], 'Failed requests now retry automatically.');
-    insertL2(db, 1, '2026-09-01T00:00:00.000Z', 'Adds `withRetry`, which calls the function up to three times.');
+    insertDigest(db, repoId, 1, '2026-09-01T00:00:00.000Z', [{ label: 'src' }], 'Failed requests now retry; see memoize.');
+    insertL2(db, 1, '2026-09-01T00:00:00.000Z', 'Adds `withRetry` next to `request`, unlike `memoize`.');
+    insertPatches(db, 1, { 'src/retry.js': patch('src/retry.js', " export { request } from './http.js';", '+export async function withRetry(fn) {}') });
     const batch = createBatch(db, repoId, 'manual', null, now('2026-09-03T00:00:00.000Z'));
-    updateThreads(db, batch, repoId, new Set(['withRetry', 'memoize']), now('2026-09-03T00:00:00.000Z'));
+    updateThreads(db, batch, repoId, new Set(['withRetry', 'memoize', 'request']), now('2026-09-03T00:00:00.000Z'));
     expect((listMemoryItems(db, repoId, { kind: 'thread' })[0]!.content as ThreadMemory).terms).toEqual(['withRetry']);
+  });
+
+  it('changedTerms reads removed lines too, and skips headers and lines outside a hunk', () => {
+    const p = ['diff --git a/src/a.js b/src/a.js', '--- a/src/withRetry.js', '+++ b/src/withRetry.js', '@@ -1 +1 @@', '-withRetry()', '+retryRequest()'].join('\n');
+    expect(changedTerms([p, null], new Set(['withRetry', 'retryRequest', 'HttpError']))).toEqual(['retryRequest', 'withRetry']);
   });
 
   it('same folder, both with terms, none shared: separate threads (DIG-114)', () => {
     const { db, repoId } = setup();
     insertDigest(db, repoId, 1, '2026-09-01T00:00:00.000Z', [{ label: 'src' }], 'Failed requests now retry automatically.');
-    insertL2(db, 1, '2026-09-01T00:00:00.000Z', 'Adds `withRetry`.');
+    insertPatches(db, 1, { 'src/retry.js': patch('src/retry.js', '+export function withRetry() {}') });
     insertDigest(db, repoId, 2, '2026-09-02T00:00:00.000Z', [{ label: 'src' }], 'Repeated GET requests are served from a cache.');
-    insertL2(db, 2, '2026-09-02T00:00:00.000Z', 'Adds `memoize` around the GET path.');
+    insertPatches(db, 2, { 'src/cache.js': patch('src/cache.js', '+export function memoize() {}') });
     insertDigest(db, repoId, 3, '2026-09-03T00:00:00.000Z', [{ label: 'src' }], 'Retries now back off between attempts.');
-    insertL2(db, 3, '2026-09-03T00:00:00.000Z', 'Makes `withRetry` wait longer after each failure.');
+    insertPatches(db, 3, { 'src/retry.js': patch('src/retry.js', '-export function withRetry() {}', '+export function withRetry(baseMs) {}') });
     const batch = createBatch(db, repoId, 'manual', null, now('2026-09-04T00:00:00.000Z'));
     updateThreads(db, batch, repoId, new Set(['withRetry', 'memoize']), now('2026-09-04T00:00:00.000Z'));
 
@@ -82,14 +105,46 @@ describe('updateThreads', () => {
     expect(threads.map((t) => t.digests.map((d) => d.digestId)).sort()).toEqual([[1, 3], [2]]);
   });
 
-  it('same folder, one side without terms: area overlap still joins', () => {
+  it('a digest without terms never joins a thread that has some, even in the same folder (DIG-121)', () => {
     const { db, repoId } = setup();
     insertDigest(db, repoId, 1, '2026-09-01T00:00:00.000Z', [{ label: 'src' }], 'Failed requests now retry automatically.');
-    insertL2(db, 1, '2026-09-01T00:00:00.000Z', 'Adds `withRetry`.');
+    insertPatches(db, 1, { 'src/retry.js': patch('src/retry.js', '+export function withRetry() {}') });
     insertDigest(db, repoId, 2, '2026-09-02T00:00:00.000Z', [{ label: 'src' }], 'Tidies up comments.');
+    insertPatches(db, 2, { 'src/http.js': patch('src/http.js', '-// old', '+// new') });
+    const batch = createBatch(db, repoId, 'manual', null, now('2026-09-03T00:00:00.000Z'));
+    updateThreads(db, batch, repoId, new Set(['withRetry']), now('2026-09-03T00:00:00.000Z'));
+    expect(listMemoryItems(db, repoId, { kind: 'thread' })).toHaveLength(2);
+  });
+
+  it('same folder, neither side with terms: area overlap still joins', () => {
+    const { db, repoId } = setup();
+    insertDigest(db, repoId, 1, '2026-09-01T00:00:00.000Z', [{ label: 'docs' }], 'Explains setup.');
+    insertDigest(db, repoId, 2, '2026-09-02T00:00:00.000Z', [{ label: 'docs' }], 'Explains configuration.');
     const batch = createBatch(db, repoId, 'manual', null, now('2026-09-03T00:00:00.000Z'));
     updateThreads(db, batch, repoId, new Set(['withRetry']), now('2026-09-03T00:00:00.000Z'));
     expect(listMemoryItems(db, repoId, { kind: 'thread' })).toHaveLength(1);
+  });
+
+  it('a shared term joins across directly linked areas (tests uses src), not unlinked ones (DIG-121)', () => {
+    const { db, repoId } = setup();
+    const b0 = createBatch(db, repoId, 'manual', null, now('2026-09-01T00:00:00.000Z'));
+    const areaItem = (path: string, uses: string[], usedBy: string[]): void => {
+      const content: AreaMemory = { kind: 'area', path, fileCount: 1, exports: [], uses, usedBy, doc: null, summary: null, fingerprint: path };
+      upsertMemoryItem(db, b0, repoId, 'area', path, null, content, 'code', { files: [], checkpointId: null, digestIds: [], jobId: null }, now('2026-09-01T00:00:00.000Z'));
+    };
+    areaItem('src', [], ['tests']);
+    areaItem('tests', ['src'], []);
+    areaItem('docs', [], []);
+    insertDigest(db, repoId, 1, '2026-09-01T00:00:00.000Z', [{ label: 'src' }], 'Failed requests now retry automatically.');
+    insertPatches(db, 1, { 'src/retry.js': patch('src/retry.js', '+export function withRetry() {}') });
+    insertDigest(db, repoId, 2, '2026-09-02T00:00:00.000Z', [{ label: 'tests' }], 'Retries are now tested.');
+    insertPatches(db, 2, { 'tests/retry.test.js': patch('tests/retry.test.js', "+import { withRetry } from '../src/retry.js';") });
+    insertDigest(db, repoId, 3, '2026-09-03T00:00:00.000Z', [{ label: 'docs' }], 'Documents retries.');
+    insertPatches(db, 3, { 'docs/retry.md': patch('docs/retry.md', '+Call withRetry(fn).') });
+    const batch = createBatch(db, repoId, 'manual', null, now('2026-09-04T00:00:00.000Z'));
+    updateThreads(db, batch, repoId, new Set(['withRetry']), now('2026-09-04T00:00:00.000Z'));
+    const threads = listMemoryItems(db, repoId, { kind: 'thread' }).map((t) => t.content as ThreadMemory);
+    expect(threads.map((t) => t.digests.map((d) => d.digestId)).sort()).toEqual([[1, 2], [3]]);
   });
 
   it('a digest touching an unrelated area with no shared term starts its own thread', () => {
@@ -130,5 +185,81 @@ describe('updateThreads', () => {
     const b2 = createBatch(db, repoId, 'daily', null, now('2026-09-02T00:00:00.000Z'));
     updateThreads(db, b2, repoId, new Set(), now('2026-09-02T00:00:00.000Z'));
     expect(getMemoryItem(db, repoId, 'thread', 'd1', 'en')!.version).toBe(v1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The snapback story (packages/ingest/test/fixtures/memory-ab-story.mjs), DIG-121
+// ---------------------------------------------------------------------------
+
+type StoryStep = { dayOffset: number; kind: 'files' | 'note'; message: string; write?: Record<string, string> };
+
+/** `git diff --no-index` between two versions of one file: the same unified diff shape the shadow store records. */
+function gitPatch(dir: string, path: string, before: string | undefined, after: string): string {
+  const a = join(dir, 'a'), b = join(dir, 'b');
+  writeFileSync(a, before ?? '');
+  writeFileSync(b, after);
+  try {
+    execFileSync('git', ['diff', '--no-index', '--no-color', '-U3', a, b], { encoding: 'utf8' });
+    return '';
+  } catch (e) {
+    return ((e as { stdout: string }).stdout).replaceAll(a, `a/${path}`).replaceAll(b, `b/${path}`);
+  }
+}
+
+const areaLabel = (path: string): string => (path.includes('/') ? path.slice(0, path.indexOf('/')) : 'project root');
+
+/**
+ * Replays the story's file steps as digests with real patches and an L0 in `language` that differs
+ * on purpose between languages (and names identifiers in one but not the other), then threads them.
+ * Returns each thread's story step numbers (1-based, counting only file steps, as the kit's pairs do).
+ */
+function threadStory(language: 'en' | 'ko'): number[][] {
+  const { db, repoId } = setup();
+  const dir = mkdtempSync(join(tmpdir(), 'digestit-threads-'));
+  try {
+    const tree: Record<string, string> = { ...SNAPBACK_INIT.write };
+    const base = Date.parse('2026-10-08T10:00:00.000Z');
+    const steps = (SNAPBACK_STORY as StoryStep[]).filter((s) => s.kind === 'files');
+    steps.forEach((step, i) => {
+      const id = i + 1;
+      const at = new Date(base + step.dayOffset * 24 * 60 * 60 * 1000).toISOString();
+      const paths = Object.keys(step.write!);
+      const l0 = language === 'en'
+        ? `${step.message}, continuing the retry work from three days earlier.`
+        : `${step.message} 작업으로, 3일 전 재시도 작업을 이어갑니다.`;
+      insertDigest(db, repoId, id, at, [...new Set(paths.map((p) => areaLabel(p)))].map((label) => ({ label })), l0);
+      if (language === 'en') insertL2(db, id, at, 'Touches `request`, `withRetry`, `HttpError` and `cached`.');
+      insertPatches(db, id, Object.fromEntries(paths.map((p) => [p, gitPatch(dir, p, tree[p], step.write![p]!)])));
+      Object.assign(tree, step.write);
+    });
+    // The areas the extractor finds for the story's final tree: `tests` imports `src`.
+    const b0 = createBatch(db, repoId, 'manual', null, now('2026-10-08T10:00:00.000Z'));
+    for (const [path, uses, usedBy] of [['src', [], ['tests']], ['tests', ['src'], []], ['', [], []]] as const) {
+      const content: AreaMemory = { kind: 'area', path, fileCount: 1, exports: [], uses: [...uses], usedBy: [...usedBy], doc: null, summary: null, fingerprint: path };
+      upsertMemoryItem(db, b0, repoId, 'area', path, null, content, 'code', { files: [], checkpointId: null, digestIds: [], jobId: null }, now('2026-10-08T10:00:00.000Z'));
+    }
+    // Every name the story's code exports; `withRetry` is stale after the rename but still a term.
+    const terms = new Set(['request', 'withRetry', 'retryRequest', 'HttpError', 'cached']);
+    const batch = createBatch(db, repoId, 'manual', null, now('2026-10-08T11:00:00.000Z'));
+    updateThreads(db, batch, repoId, terms, now('2026-10-08T11:00:00.000Z'));
+    return listMemoryItems(db, repoId, { kind: 'thread' })
+      .map((t) => (t.content as ThreadMemory).digests.map((d) => d.digestId))
+      .sort((a, b) => a[0]! - b[0]!);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe('updateThreads on the snapback story (DIG-121)', () => {
+  it('puts all the retry work in one thread and every unrelated change outside it', () => {
+    const threads = threadStory('en');
+    const retry = threads.find((t) => t.includes(1))!;
+    expect(retry).toEqual([1, 3, 4, 6, 8, 10]);
+    for (const other of [2, 5, 7, 9]) expect(retry).not.toContain(other);
+  });
+
+  it('groups the same commits the same way in en and ko, whatever the L0 and L2 say', () => {
+    expect(threadStory('ko')).toEqual(threadStory('en'));
   });
 });

@@ -26,11 +26,19 @@ filtered by the denylist, `.gitignore`, project ignores and the size cap), with 
 TS/JS `export` and `import`, Python top-level `def`/`class` and imports, Go exported names, Rust
 `pub` items. Other languages get file names only. Relative and workspace imports resolve to areas.
 Doc text is capped at 400 characters and passed through `redact()` **before storage**. A thread is
-built from the digests' stored L0, L2 and area lists: a new digest joins an open thread when it
-touches one of its areas and shares a term or at least half its areas. Area overlap only counts
-when the digest or the thread has no terms yet; when both have terms and share none, they are
-different work, even in the same folder (DIG-114). A thread closes after 14 days with
-no new digest.
+built from code facts only: each digest's area list and its terms, which are the known terms
+(current or stale, so a renamed function's old name still counts) named on the lines its diff adds
+or removes, never its context lines. The model-written L0 and L2 are not read for grouping, so en
+and ko group the same commits the same way (DIG-121; before, terms came from L0 and L2 text, and a
+ko L2 that named different identifiers than the en one split the story differently). A new digest
+joins an open thread when both have terms, they share one, and the digest touches one of the
+thread's areas or an area directly linked to one (`uses`/`usedBy`: a test folder's change to the
+code it tests is the same work). Area overlap alone (at least half the thread's areas) counts only
+when neither side has terms. A digest with terms never joins on area alone, and a digest without
+terms never joins a thread that has some (DIG-114, DIG-121: in a one-folder project that put a
+cache change and a logging change into the retry thread). The stored L0 is kept only for display,
+as the thread's title (the first digest's) and entries. A thread closes after 14 days with no new
+digest.
 
 **Storage** (next migration, same SQLite DB in the data dir): `memory_item` (unique on repo, kind,
 key, language), `memory_revision` (every version of every item, with its batch), `memory_batch`
@@ -81,8 +89,18 @@ made at all (DIG-118, after a round-2 read found the added sentence pushing `why
 tolerance band, and a vague "the previous days" where the slice had a named, dated change). The
 validator flags any date or weekday that is not in the slice or the diff, and any text that names
 the mechanism ("in memory", "memory says", "프로젝트 메모리") unless the diff itself uses the
-phrase. The slice is part of each call's input hash, and its item versions go to `memory_use`. Old
-digests are not re-explained when memory changes.
+phrase. A stored L0 was written with its own continuity clause ("…, continuing the retry work from
+three days earlier", "…3일 전 … 작업을 이어갑니다"), true on its own date and stale anywhere later, so a
+thread's title, its latest entry and its summary are rendered without such clauses
+(`stripContinuity`, at render time, so threads stored before this are covered too), and the
+thread-summary task gets the L0s the same way and may not name a relative age. The only ages in a
+slice are the ones `relativeAge` computed for it (`MemorySlice.ages`); any other relative age in a
+reply ("three days earlier", "3일 전", "a few days earlier") is a hard violation that triggers a
+retry, unless the diff itself contains it; the check runs only when the slice gives an age, so a
+feature's own lead time ("7일 전 알림") is not flagged where no thread is in play (DIG-121, after round 3 found two replies copying a
+quoted L0's stale age). The prompt also says that term names belong in l1 and below and that l0
+still names no identifier. The slice is part of each call's input hash, and its item versions go
+to `memory_use`. Old digests are not re-explained when memory changes.
 
 ## 4. Budget
 
@@ -132,7 +150,9 @@ The same digests are explained with memory off and on (same model, same prompts 
   are broken down by rule per arm, and further by kind (DIG-118): hard violations and style
   warnings both cause a retry (DIG-94), an in-band length note never does, and `explain_call.
   violations` tags each message ("violation:"/"style:"/"note:") so the split needs no guessing --
-  a row logged before that tagging reads as kind `unknown`.
+  a row logged before that tagging reads as kind `unknown`. The memory section shows thread titles
+  and entries without their continuity clauses, as the prompt does, and `dateCheckViolations`
+  counts relative-age violations too (DIG-121).
 
 ## 7. Board decisions (approved as recommended, 2026-10-01)
 

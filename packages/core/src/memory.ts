@@ -135,6 +135,12 @@ export interface MemorySlice {
   text: string;
   tokens: number;
   droppedForBudget: number;
+  /**
+   * Every relative age the text gives *as an age* of an earlier change ("5 days earlier"), as
+   * `relativeAge` wrote it (DIG-121). The only ages a reply may repeat; an age inside quoted L0
+   * text is not one of them. Omitted or empty when the slice gives none.
+   */
+  ages?: string[];
 }
 
 export const MEMORY_LIMITS = {

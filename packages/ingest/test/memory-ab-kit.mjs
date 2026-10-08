@@ -35,6 +35,10 @@
 // sqlite connection is closed as soon as its metrics are read, and `rmSync` below gets Node's own
 // retry, so a trailing WAL/SHM write under a memory-on `home` no longer races the final cleanup
 // into ENOTEMPTY.
+//
+// DIG-121 (round 3 follow-up): thread titles and entries in the memory section drop the continuity
+// clauses their stored L0s were written with (`stripContinuity`, as the prompt does), and
+// `dateCheckViolations` also counts the new relative-age check.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -292,7 +296,10 @@ function pipelineMetrics(pipeline) {
     }
   }
   const lint = lintDb(db);
-  const dateViolations = db.prepare("SELECT count(*) AS n FROM explain_call WHERE violations LIKE '%date/weekday%'").get().n;
+  // DIG-121: a relative age the slice did not give is a date-check violation too ("relative age").
+  const dateViolations = db.prepare(
+    "SELECT count(*) AS n FROM explain_call WHERE violations LIKE '%date/weekday%' OR violations LIKE '%relative age%'",
+  ).get().n;
   const promptTokens = promptTokenTotal(db);
   const callCount = db.prepare('SELECT count(*) AS n FROM explain_call').get().n;
   // Sanity check that the arms really differ: the on arm writes a memory_use row per part that got a

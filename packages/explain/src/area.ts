@@ -9,7 +9,7 @@ import {
 } from '@digestit/core/hunks';
 import { areaHunks, promptHunks, renderHunks } from './difflines.js';
 import { DIGEST_PROMPT_VERSION } from './digest.js';
-import { MEMORY_PROMPT_RULES, checkMemoryDateClaims, checkMemoryMechanism, memoryDateSources } from './memory.js';
+import { MEMORY_PROMPT_RULES, checkMemoryClaims, memoryCheckSources, type MemoryCheckSources } from './memory.js';
 import type { AreaInput, AreaStreamChunk, ExplanationProvider, ProviderFile } from './provider.js';
 import { RepoNotAllowedError } from './config.js';
 import type { JobRef } from './jobs.js';
@@ -20,8 +20,8 @@ import { redact } from './redact.js';
 import { DEFAULT_LANGUAGE, VOICE, callReasons, checkProse, languageInstruction, softCount } from './style.js';
 import { LIMITS, sentenceCount, truncateSentences } from './validate.js';
 
-/** Bump whenever the instructions or the rendering below change. `a1` was the why/design/risks/notes shape; `a2` allowed a 120-word body paragraph; `a4` (DIG-65) added the AI-tell style rules; `a5` (DIG-70) asked for backticks around code identifiers/flags/paths; `a6` (DIG-96/98) replaced whole-hunk `hunks` with exact `ranges` and line-anchored `callouts` (docs/l3-step-snippets.md). A row stored under an older version is never read back (`explainArea` reads only the current version), so older walkthroughs simply show as not generated. `a7` (DIG-101) added the `<memory>` block and its rules. `a8` (DIG-114): the memory rules ask to cite the earlier change by title and age and a note as the user's, and never to name the mechanism. `a9` (DIG-118): memory rules as in `s5` (digest.ts) -- a continuity mention replaces part of the field instead of adding a sentence, and a vague continuity claim is ruled out. */
-export const AREA_PROMPT_VERSION = 'a9';
+/** Bump whenever the instructions or the rendering below change. `a1` was the why/design/risks/notes shape; `a2` allowed a 120-word body paragraph; `a4` (DIG-65) added the AI-tell style rules; `a5` (DIG-70) asked for backticks around code identifiers/flags/paths; `a6` (DIG-96/98) replaced whole-hunk `hunks` with exact `ranges` and line-anchored `callouts` (docs/l3-step-snippets.md). A row stored under an older version is never read back (`explainArea` reads only the current version), so older walkthroughs simply show as not generated. `a7` (DIG-101) added the `<memory>` block and its rules. `a8` (DIG-114): the memory rules ask to cite the earlier change by title and age and a note as the user's, and never to name the mechanism. `a9` (DIG-118): memory rules as in `s5` (digest.ts) -- a continuity mention replaces part of the field instead of adding a sentence, and a vague continuity claim is ruled out. `a10` (DIG-121): memory rules as in `s6`. */
+export const AREA_PROMPT_VERSION = 'a10';
 
 /**
  * Larger than `DEFAULT_PREPARE_OPTIONS.tokenBudget`: a digest call splits that
@@ -224,13 +224,14 @@ interface ParsedStep {
  * be scoped to this area (e.g. `prepared.input.files`); ranges and callouts
  * are checked against the hunks the prompt showed, using `rangeSpan` and its
  * sibling helpers in `@digestit/core/hunks` (docs/l3-step-snippets.md), never
- * a second slicer. `dateSources`, when given (a memory slice was sent), is the
- * text a date may be quoted from (`memoryDateSources`): any date or weekday the
- * reply names that is not in it is a hard violation (docs/milestone-4-memory.md
- * §3). Returns `null` when the shape is unusable (not repairable).
+ * a second slicer. `dateSources`, when given (a memory slice was sent), is what
+ * a date or relative age may be quoted from (`memoryCheckSources`): any date,
+ * weekday or age the reply names that is not in it is a hard violation
+ * (docs/milestone-4-memory.md §3). Returns `null` when the shape is unusable
+ * (not repairable).
  */
 export function checkAreaWalkthrough(
-  raw: unknown, files: readonly ProviderFile[], language: ExplainLanguage = DEFAULT_LANGUAGE, dateSources?: string,
+  raw: unknown, files: readonly ProviderFile[], language: ExplainLanguage = DEFAULT_LANGUAGE, dateSources?: MemoryCheckSources,
 ): AreaCheckResult | null {
   if (!isObj(raw) || typeof raw.overview !== 'string' || !Array.isArray(raw.steps) || !Array.isArray(raw.check)) return null;
   const v: string[] = [];
@@ -389,8 +390,7 @@ export function checkAreaWalkthrough(
 
   if (dateSources !== undefined) {
     const stepTexts = steps.flatMap((s) => [s.title, s.body, ...s.callouts.map((c) => c.note)]);
-    v.push(...checkMemoryDateClaims([overview, ...stepTexts, ...check], dateSources, language));
-    v.push(...checkMemoryMechanism([overview, ...stepTexts, ...check], dateSources, language));
+    v.push(...checkMemoryClaims([overview, ...stepTexts, ...check], dateSources, language));
   }
 
   return { content: { overview, steps, check }, violations: v, styleWarnings: sw, lengthNotes: ln };
@@ -543,7 +543,7 @@ export async function explainArea(
   const language = options.language ?? DEFAULT_LANGUAGE;
   const memoryText = options.memory?.text;
   const prepared = prepareAreaInput(raw, digestArea, options.context, language, options.prepare, memoryText);
-  const dateSources = memoryText === undefined ? undefined : memoryDateSources(memoryText, prepared.input.files, prepared.input.context);
+  const dateSources = options.memory === undefined ? undefined : memoryCheckSources(options.memory, prepared.input.files, prepared.input.context);
   if (isAreaCached(db, changeUnitId, areaId, promptVersion, prepared.inputHash)) {
     return { changeUnitId, areaId, outcome: 'cached', calls: 0 };
   }

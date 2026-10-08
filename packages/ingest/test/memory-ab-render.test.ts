@@ -83,6 +83,23 @@ describe('pair file: project memory section (DIG-114)', () => {
     expect(md).toContain('**Term** `withRetry` — _used in: area:src, summary, walkthrough:src_');
   });
 
+  it('shows thread titles and entries without their stale continuity clauses, as the prompt does (DIG-121)', () => {
+    const stale = 'Retries now back off and report HTTP errors, continuing the retry work from three days earlier.';
+    const ko = '재시도 간격이 늘어나, 3일 전 자동 재시도 작업을 이어 서버 부담을 줄입니다.';
+    const entry = {
+      kind: 'thread', key: 'd2', version: 1, at: '2026-09-20T10:00:00.000Z', parts: ['summary'],
+      content: {
+        kind: 'thread', title: stale, areas: ['src'], terms: [], state: 'open', summary: null,
+        digests: [{ ...RETRY_2, l0: stale }, { digestId: 3, seq: 2, at: '2026-09-21T10:00:00.000Z', l0: ko }],
+      },
+    };
+    const md = renderMemorySection([entry], THIS_ONE.at);
+    expect(md).toContain('**Thread** "Retries now back off and report HTTP errors."');
+    expect(md).toContain('  - Sun 20 Sep (2026-09-20), 3 days earlier: "Retries now back off and report HTTP errors."');
+    expect(md).toContain('"재시도 간격이 늘어나, 서버 부담을 줄입니다."');
+    expect(md).not.toMatch(/continuing|3일 전/);
+  });
+
   it('says so when no memory was sent', () => {
     const { db, repoId } = setup();
     insertDigest(db, repoId, 7, '2026-09-25T10:00:00.000Z');
