@@ -162,7 +162,7 @@ export function violationRule(message) {
   return message.replace(/"[^"]*"/g, '"…"').replace(/\([^)]*\)/g, '(…)').replace(/\b\d+\b/g, 'N').trim();
 }
 
-const KINDS = ['violation', 'style', 'note', 'unknown'];
+const KINDS = ['violation', 'style', 'note', 'repair', 'unknown'];
 
 /**
  * Splits one `explain_call.violations` message into its DIG-118 kind tag ("violation:"/"style:"/
@@ -171,7 +171,7 @@ const KINDS = ['violation', 'style', 'note', 'unknown'];
  * silently miscounted as whichever kind its text happens to resemble.
  */
 export function splitKindTag(raw) {
-  const m = /^(violation|style|note): /.exec(raw);
+  const m = /^(violation|style|note|repair): /.exec(raw);
   return m ? { kind: m[1], message: raw.slice(m[0].length) } : { kind: 'unknown', message: raw };
 }
 
@@ -194,7 +194,10 @@ const addCount = (byPart, part, rule, n) => {
  * so a lower first-try rate can be traced to its rule *and* to whether it was a hard violation, a
  * style warning (DIG-94: style warnings retry too) or a length note (never a retry, DIG-94).
  * `retryRulesByPart` lists only the retry-causing rules (hard violations and style warnings) under
- * each part kind, so a first-try gap reads straight off it.
+ * each part kind, so a first-try gap reads straight off it. DIG-125: walkthrough anchors the
+ * validator fixed by itself (kind `repair`) are neither a violation nor a note: they appear only
+ * under `byKind.repair`, and a call whose only findings are repairs is not in `callsWithViolations`,
+ * so the top-level totals stay comparable with rounds 2-3.
  */
 export function violationCounts(db) {
   const rows = db.prepare("SELECT part, violations FROM explain_call WHERE violations IS NOT NULL AND violations <> ''").all();
@@ -203,23 +206,28 @@ export function violationCounts(db) {
   const byKind = Object.fromEntries(KINDS.map((k) => [k, emptyKindBucket()]));
   const retryRulesByPart = {};
   let messages = 0;
+  let calls = 0;
   for (const r of rows) {
     const partKind = (r.part ?? 'unknown').replace(/:.*$/, '');
+    let counted = false;
     for (const raw of r.violations.split('; ').filter(Boolean)) {
       const { kind, message } = splitKindTag(raw);
       const rule = violationRule(message);
-      byRule[rule] = (byRule[rule] ?? 0) + 1;
-      byPart[partKind] = (byPart[partKind] ?? 0) + 1;
       const bucket = byKind[kind];
       bucket.messages++;
       bucket.byRule[rule] = (bucket.byRule[rule] ?? 0) + 1;
       bucket.byPart[partKind] = (bucket.byPart[partKind] ?? 0) + 1;
+      if (kind === 'repair') continue;
+      counted = true;
+      byRule[rule] = (byRule[rule] ?? 0) + 1;
+      byPart[partKind] = (byPart[partKind] ?? 0) + 1;
       if (RETRY_KINDS.includes(kind)) addCount(retryRulesByPart, partKind, rule, 1);
       messages++;
     }
+    if (counted) calls++;
   }
   for (const kind of KINDS) byKind[kind].byRule = sortCounts(byKind[kind].byRule);
-  return { callsWithViolations: rows.length, messages, byPart, byRule: sortCounts(byRule), byKind, retryRulesByPart: sortNested(retryRulesByPart) };
+  return { callsWithViolations: calls, messages, byPart, byRule: sortCounts(byRule), byKind, retryRulesByPart: sortNested(retryRulesByPart) };
 }
 
 /** Sums `violationCounts` results (one per pipeline) into one per-arm rollup. */
@@ -248,4 +256,50 @@ export function mergeViolationCounts(list) {
   for (const kind of KINDS) out.byKind[kind].byRule = sortCounts(out.byKind[kind].byRule);
   out.retryRulesByPart = sortNested(out.retryRulesByPart);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// raw provider replies (DIG-125 item 6, opt-in: DIGESTIT_AB_RAW_REPLIES=1)
+// ---------------------------------------------------------------------------
+
+/** Every string inside `value` passed through `redact`, the same pass the stored explanations get. */
+export function redactDeep(value, redact) {
+  if (typeof value === 'string') return redact(value);
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, redact));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v, redact)]));
+  return value;
+}
+
+/**
+ * `provider` with every call's reply appended to `write` as one JSON line, before any validation:
+ * which call (`method`, first try or retry, the retry feedback it got), the scenario/arm/language in
+ * `meta`, and the reply itself (`content`/`levels`/`areas`/`summary`, whichever the method returns),
+ * redacted string by string. The provider's own behaviour is untouched; a failed call is recorded
+ * with its error message and rethrown.
+ */
+export function captureReplies(provider, write, meta, redact) {
+  return new Proxy(provider, {
+    get(target, prop) {
+      const v = Reflect.get(target, prop, target);
+      if (typeof v !== 'function' || typeof prop !== 'string' || prop === 'constructor') return v;
+      return async (...args) => {
+        const input = args[0];
+        const base = {
+          at: new Date().toISOString(), ...meta, method: prop,
+          attempt: input?.retryFeedback?.length ? 2 : 1,
+          retryFeedback: input?.retryFeedback ?? null,
+          area: input?.area?.id ?? null,
+        };
+        try {
+          const res = await v.apply(target, args);
+          const reply = res?.content ?? res?.levels ?? res?.areas ?? res?.summary ?? null;
+          write(JSON.stringify(redactDeep({ ...base, model: res?.model ?? null, reply }, redact)));
+          return res;
+        } catch (e) {
+          write(JSON.stringify(redactDeep({ ...base, error: e instanceof Error ? e.message : String(e) }, redact)));
+          throw e;
+        }
+      };
+    },
+  });
 }

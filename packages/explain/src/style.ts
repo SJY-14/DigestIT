@@ -144,6 +144,8 @@ interface CheckedProse {
   violations: string[];
   styleWarnings: string[];
   lengthNotes: string[];
+  /** Deterministic fixes the validator already made (DIG-125, walkthrough anchors only). */
+  repairs?: string[];
 }
 
 /** The `style_warnings` count stored with a result: AI tells plus in-band length notes (DIG-94). */
@@ -156,7 +158,8 @@ export const softCount = (c: CheckedProse): number => c.styleWarnings.length + c
  * style warnings (retry) from in-band length notes (never a retry) without re-deriving the kind
  * from the message text, which `styleWarnings` and the boilerplate half of `violations` cannot be
  * told apart by otherwise. A row stored before this change has no tag; `violationCounts` reads an
- * untagged message as kind `unknown` rather than guessing.
+ * untagged message as kind `unknown` rather than guessing. DIG-125: a walkthrough anchor the
+ * validator fixed by itself is tagged "repair": neither a violation nor a soft note, never a retry.
  */
 export function callReasons(c: CheckedProse | null): string | undefined {
   if (c === null) return 'violation: provider output has an unusable shape';
@@ -164,6 +167,7 @@ export function callReasons(c: CheckedProse | null): string | undefined {
     ...c.violations.map((m) => `violation: ${m}`),
     ...c.styleWarnings.map((m) => `style: ${m}`),
     ...c.lengthNotes.map((m) => `note: ${m}`),
+    ...(c.repairs ?? []).map((m) => `repair: ${m}`),
   ];
   return tagged.join('; ') || undefined;
 }

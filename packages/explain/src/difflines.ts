@@ -1,4 +1,5 @@
 import { splitHunks, walkPatch, type PatchHunk, type PatchLine } from '@digestit/core/hunks';
+import { lineId } from './lineids.js';
 import type { ProviderFile } from './provider.js';
 
 /** Line numbers that exist on each side of a per-file unified patch. */
@@ -49,16 +50,21 @@ export function promptHunks(patch: string | null): PatchHunk[] {
 }
 
 /**
- * Like `numberPatch`, but each hunk is labelled `hunk n` for the area
- * walkthrough prompt, and hunks with no visible line are left out. A hunk cut
- * by the token budget ends with the truncation marker.
+ * The area walkthrough prompt's rendering (DIG-125): each hunk is labelled
+ * `hunk n`, and every content line carries its line ID instead of a line
+ * number: `2.7+ text` (added), `2.8  text` (context), `2.9- text` (deleted),
+ * counting the hunk's shown `-`, `+` and context lines from 1 (`indexLineIds`
+ * numbers them the same way). A `\ No newline` marker is shown as is, with no
+ * ID. Hunks with no visible line are left out. A hunk cut by the token budget
+ * ends with the truncation marker.
  */
 export function renderHunks(patch: string): string {
   const out: string[] = [];
   const hunks = promptHunks(patch);
   for (const h of hunks) {
     out.push(`hunk ${h.index}  ${h.header}`);
-    for (const l of h.lines) out.push(numberLine(l)!);
+    let n = 0;
+    for (const l of h.lines) out.push(l.kind === '\\' ? l.text : `${lineId(h.index, ++n)}${l.kind} ${l.text}`);
   }
   const all = splitHunks(patch);
   const last = hunks[hunks.length - 1];

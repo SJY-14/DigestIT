@@ -31,7 +31,46 @@ interface WalkthroughStep {
   replacement). A range may not cross hunks.
 - `hunks` is dropped from the step. The server reads only rows of the current
   `AREA_PROMPT_VERSION`, so after the bump to `a6` older walkthroughs show as not generated
-  ("Generate" again, one call per area).
+  ("Generate" again, one call per area). Since DIG-125 it reads the newest row among
+  `AREA_STORED_VERSIONS` (every version from `a6` on, which all store this shape), current prompt
+  first, so a prompt bump that keeps the stored shape no longer hides walkthroughs already made.
+
+## 1a. Line IDs in the prompt (DIG-125, area prompt `a11`)
+
+In rounds 2–3 of the memory A/B run, most walkthrough retries came from anchoring: a callout outside
+its own step's ranges, or ranges that overlap. The model had to pick a side and copy per-side numbers
+(`12+` and `12-` can be two different lines). The prompt now labels every shown line with a
+hunk-relative **line ID** instead: `2.7` is the 7th shown line of hunk 2, counting `-`, `+` and
+context lines alike (`2.7+ text`, `2.8  text`, `2.9- text`). A `\ No newline at end of file`
+marker gets no ID. The model answers with
+
+```json
+"ranges":   [{"path": "src/retry.js", "from": "2.3", "to": "2.9"}],
+"callouts": [{"path": "src/retry.js", "line": "2.5", "note": "doubles the delay"}]
+```
+
+(a callout may use `from`/`to` for a few lines). IDs must be strings: `2.10` as a JSON number would
+read as `2.1`. The prompt states the anchor rules with one worked example in the walkthrough's
+language (`ANCHOR_EXAMPLE`, en and ko).
+
+The parser (`packages/explain/src/lineids.ts`) turns the IDs into the stored `LineRange`. Nothing
+downstream changes: the stored JSON, the cache, `rangeSpan` and the UI all still see
+`{path, side, start, end}`. The `a6`–`a10` shape `{path, side, start, end}` is still accepted.
+
+**Side.** `new` when the named lines include any new-numbered line (added or context), `old` when
+they are all deleted lines.
+
+**Snap rule.** `rangeSpan` cannot cut everywhere: a `new` range that starts on an added line takes
+the deleted lines right before it, and a run of deleted lines at the edge of a mixed span has no
+new-side number. When the named lines `from..to` cannot be stored exactly, they are snapped to the
+**smallest stored range whose `rangeSpan` keeps every named line**, on the preferred side; the other
+side is used only when the preferred one cannot hold them at all (for example `+` then a run of `-`
+lines that ends the hunk). The stored range always round-trips: `rangeSpan(side, start, end)` gives
+back exactly the span that was checked. Tests: `lineids.test.ts` (a span starting on `-` lines, a
+span of only `-` lines, a span ending at a `\ No newline` marker, and every pair of lines in a
+fixture checked against all stored ranges for minimality).
+
+Streamed steps go through the same parser one range at a time, so the UI never sees line IDs.
 
 ## 2. Validator rules (`checkAreaWalkthrough`, area prompt `a6`)
 
@@ -58,12 +97,34 @@ Repairs on the kept result: drop bad ranges and callouts, drop a step left with 
 move a mechanical step to the end. Keep the rules in `LIMITS` and state the same numbers in the
 prompt, counted the same way (see DIG-94: a limit the prompt does not state costs a retry).
 
+## 2a. Repair before retry (DIG-125)
+
+Before a reply counts as invalid, mechanical anchoring slips are fixed without a call. Each fix is
+recorded as a `repair` finding (`AreaCheckResult.repairs`, logged as `repair: …` in
+`explain_call.violations`). A repair is neither a violation nor a soft note: it never triggers a
+retry, never goes into the retry feedback and never counts in `style_warnings`. A retry happens only
+when a hard violation is left after repair.
+
+| Slip | Repair | Not repaired (stays a violation) |
+|---|---|---|
+| A range entry that names no lines, or repeats a range of the same step exactly | dropped | — |
+| Two ranges of one step overlap | merged into one range (snapped as in §1a) | when no stored range holds the union |
+| A range overlaps an earlier step's range | the later range is trimmed off the earlier lines | trimming would leave nothing, split the range in two (overlap strictly inside), or leave one of the step's callouts outside every range of the step |
+| A callout outside its step's ranges, in the same file and hunk as one of them | clipped to its lines inside the nearest range, or moved to that range's nearest line | another file or hunk; or the moved callout would overlap another callout of the step |
+| A non-mechanical step with no callout | — | always: adding one would change what the step says |
+
+Repairs change anchors only, never prose. The coverage check and the "Other changes" fallback run
+after repair, unchanged, and the no-repeat rule still holds. `checkAreaWalkthrough(…, { repair:
+false })` reports every slip as the violation it was before; the replay in
+`first-try-replay.test.ts` uses it as its baseline.
+
 ## 3. Prompt (area prompt `a6`)
 
 - Walk the change in logical order. Each step is one idea over one small range (a few to ~20
   changed lines); a large new file is several steps, one per part.
-- `ranges`: copy the line numbers from the `N+`/`N-` prefixes; one range per hunk; never give the
-  same line to two steps.
+- `ranges`: copy the line IDs (`"2.3"` to `"2.9"`, §1a) from the line prefixes; one range per
+  hunk; never give the same line to two steps. (Before `a11`: line numbers from the `N+`/`N-`
+  prefixes, with a side.)
 - `callouts`: 1–4 per step, like review comments on specific lines: "this line/part does X"
   (e.g. "retryable status codes", "backoff doubles each attempt", "gives up after `retries`").
   The body explains why; the callouts say which line does what. Every sentence of the body should
