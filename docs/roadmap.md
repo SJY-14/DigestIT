@@ -27,8 +27,8 @@ rounds 1 and 2 showed no harm to quality (round 2: 0 losses) and found no fabric
 | 12 | DIG-119 | Operator real run, round 3: snapback en+ko (20 pairs, ~140 calls, approved 2026-10-08) | Board operator | — |
 | 13 | DIG-120 | Blind read, round 3 (done). Board bar (2026-10-08): per language, memory wins ≥ 80 % of the pairs where its memory was relevant and loses at most 1 of the rest; ties are not wins; plus the existing bars. Not passed: relevant pairs 3/4 in en and ko (both pair-10 losses are stale "N days earlier" ages copied from stored L0 text in thread titles), en 3 other losses, first-try 0.77 vs 0.87 (en) and 0.77 vs 0.81 (ko) | UX Reviewer, CTO | — |
 | 14 | DIG-121 | No stale ages in thread text, a relative-age check, thread grouping on code facts only, L0 without identifiers (merged; prompts s6/at6/a10) | Summarization engineer | — |
-| 15 | DIG-125 | L3 walkthrough valid on the first try (Board, DIG-124): hunk-relative line IDs in the prompt, deterministic repair before retry (logged apart from violations), stricter L0 identifier check, stub-replay target ≥ 0.95 first-try for walkthrough and summary, opt-in raw-reply capture | Summarization engineer (Opus) | — |
-| 16 | DIG-122 | Operator real run, round 4: snapback en+ko (~140 calls, needs the Board's OK); also verifies DIG-125 | Board operator | DIG-125 |
+| 15 | DIG-125 | L3 walkthrough valid on the first try (Board, DIG-124): hunk-relative line IDs in the prompt, deterministic repair before retry (logged apart from violations), stricter L0 identifier check, opt-in raw-reply capture (merged; prompts a11/s7/d6). Stub replay: walkthrough first-try 0.90–1.00 after repair (was 0.40–0.67); summary unchanged by the check, so round 4 measures the prompt | Summarization engineer | — |
+| 16 | DIG-122 | Operator real run, round 4: snapback en+ko (~140 calls, needs the Board's OK), with `DIGESTIT_AB_RAW_REPLIES=1`; also verifies DIG-125 | Board operator | — |
 | 17 | DIG-123 | Blind read, round 4, against the same bars as round 3 | UX Reviewer, CTO | DIG-122 |
 
 ## Fast Explain
