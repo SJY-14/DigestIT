@@ -96,7 +96,8 @@ thread's title, its latest entry and its summary are rendered without such claus
 thread-summary task gets the L0s the same way and may not name a relative age. The only ages in a
 slice are the ones `relativeAge` computed for it (`MemorySlice.ages`); any other relative age in a
 reply ("three days earlier", "3일 전", "a few days earlier") is a hard violation that triggers a
-retry, unless the diff itself contains it (DIG-121, after round 3 found two replies copying a
+retry, unless the diff itself contains it; the check runs only when the slice gives an age, so a
+feature's own lead time ("7일 전 알림") is not flagged where no thread is in play (DIG-121, after round 3 found two replies copying a
 quoted L0's stale age). The prompt also says that term names belong in l1 and below and that l0
 still names no identifier. The slice is part of each call's input hash, and its item versions go
 to `memory_use`. Old digests are not re-explained when memory changes.

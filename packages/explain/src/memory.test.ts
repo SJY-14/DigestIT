@@ -587,6 +587,12 @@ describe('checkMemoryAgeClaims (DIG-121)', () => {
     expect(checkMemoryAgeClaims(['retry work from 2 weeks earlier를 이어갑니다.'], ['5일 전'], '', 'ko')).toHaveLength(1);
   });
 
+  it('skips the age check when the slice gives no age, so a feature\'s own lead time is not flagged', () => {
+    const slice = { items: [], text: '- `src` (area): uses none; used by `tests`', tokens: 1, droppedForBudget: 0, ages: [] };
+    expect(checkMemoryClaims(['구독 만료 7일 전 알림을 보냅니다.'], memoryCheckSources(slice, []), 'ko')).toEqual([]);
+    expect(checkMemoryClaims(['Users get a reminder a week before the plan expires.'], memoryCheckSources(slice, []), 'en')).toEqual([]);
+  });
+
   it('accepts an age the diff itself contains', () => {
     const files: ProviderFile[] = [{ path: 'src/age.js', status: 'M', additions: 1, deletions: 0, patch: "+  return '3 days earlier';" }];
     const slice = { items: [], text: '- x (thread; 1 earlier change; 2 weeks earlier)', tokens: 1, droppedForBudget: 0, ages: ['2 weeks earlier'] };

@@ -569,11 +569,15 @@ export function memoryCheckSources(slice: MemorySlice, files: readonly ProviderF
   };
 }
 
-/** Every memory rule a reply is held to once a slice was sent: dates, relative ages, and never naming the mechanism. */
+/**
+ * Every memory rule a reply is held to once a slice was sent: dates, relative ages, and never naming
+ * the mechanism. The age check runs only when the slice gives an age: with no earlier change to point
+ * at there is no age to copy, and "7일 전 알림" or "a week before it expires" describes the feature.
+ */
 export function checkMemoryClaims(texts: readonly string[], sources: MemoryCheckSources, language: ExplainLanguage): string[] {
   return [
     ...checkMemoryDateClaims(texts, sources.text, language),
-    ...checkMemoryAgeClaims(texts, sources.ages, sources.codeText, language),
+    ...(sources.ages.length > 0 ? checkMemoryAgeClaims(texts, sources.ages, sources.codeText, language) : []),
     ...checkMemoryMechanism(texts, sources.text, language),
   ];
 }
