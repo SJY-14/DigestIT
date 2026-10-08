@@ -1,17 +1,18 @@
-import type { AreaWalkthrough, ExplainLanguage, LineRange, StepCallout, WalkthroughStep } from '@digestit/core';
+import type { ExplainLanguage } from '@digestit/core';
 import { changedCount, walkPatch, type PatchHunk, type PatchLine } from '@digestit/core/hunks';
 import { NO_CHANGE, LIMITS, truncateWords } from './validate.js';
 import { promptHunks } from './difflines.js';
+import { lineId } from './lineids.js';
 import { MEMORY_TASK_LIMITS } from './memory-tasks.js';
 import { buildAreaPrompt } from './area.js';
 import { buildContextPrompt } from './context.js';
 import { buildDigestAreaTextPrompt, buildDigestSummaryPrompt } from './digest.js';
 import { estimateTokens } from './prepare.js';
 import type {
-  AreaInput, AreaResult, AreaStreamChunk, BriefingFacts, CallTiming, BriefingResult, BriefingSentence, ContextInput, ContextResult,
+  AreaInput, AreaReply, AreaResult, AreaStreamChunk, BriefingFacts, CallTiming, BriefingResult, BriefingSentence, ContextInput, ContextResult,
   DigestAreaTextInput, DigestAreaTextResult, DigestInput, DigestResult, DigestSummaryInput, DigestSummaryResult,
   ExplanationInput, ExplanationProvider, MemoryAreaSummaryOut, MemorySummarizeAreasInput, MemorySummarizeAreasResult,
-  MemorySummarizeThreadInput, MemorySummarizeThreadResult, ProviderFile, ProviderResult, RangeInput, RollupInput, RollupResult,
+  MemorySummarizeThreadInput, MemorySummarizeThreadResult, ProviderFile, ProviderResult, RangeInput, ReplyStep, RollupInput, RollupResult,
 } from './provider.js';
 
 function firstSentence(text: string): string {
@@ -66,12 +67,16 @@ function changeGroups(lines: readonly PatchLine[]): PatchLine[][] {
 }
 
 /**
- * `LineRange`s over one hunk's own changed lines: one range normally, several when the hunk has
+ * Line-ID ranges (DIG-125) over one hunk's own changed lines: one range normally, several when the hunk has
  * more than `LIMITS.walkRangeMaxChanged` changed lines (never splitting inside one replacement
  * block), and at least two when this hunk alone is the file's only hunk and the file has more than
  * `LIMITS.walkFileChangedMax` changed lines (so no single range covers 100% of it, rule 3).
  */
-function hunkRanges(path: string, hunk: PatchHunk, fileChanged: number): LineRange[] {
+function hunkRanges(path: string, hunk: PatchHunk, fileChanged: number): { path: string; from: string; to: string }[] {
+  // Line IDs as the prompt shows them (DIG-125): the n-th `-`/`+`/context line of the hunk.
+  const ids = new Map<PatchLine, string>();
+  let shown = 0;
+  for (const l of hunk.lines) if (l.kind !== '\\') ids.set(l, lineId(hunk.index, ++shown));
   const groups = changeGroups(hunk.lines);
   if (groups.length === 0) return [];
   const hunkChanged = groups.reduce((n, g) => n + g.length, 0);
@@ -93,12 +98,7 @@ function hunkRanges(path: string, hunk: PatchHunk, fileChanged: number): LineRan
     n += g.length;
   }
   if (cur.length > 0) chunks.push(cur);
-  return chunks.map((lines) => {
-    const newNos = lines.map((l) => l.newNo).filter((no): no is number => no !== undefined);
-    if (newNos.length > 0) return { path, side: 'new' as const, start: Math.min(...newNos), end: Math.max(...newNos) };
-    const oldNos = lines.map((l) => l.oldNo).filter((no): no is number => no !== undefined);
-    return { path, side: 'old' as const, start: Math.min(...oldNos), end: Math.max(...oldNos) };
-  });
+  return chunks.map((lines) => ({ path, from: ids.get(lines[0]!)!, to: ids.get(lines[lines.length - 1]!)! }));
 }
 
 /**
@@ -324,7 +324,7 @@ export class StubProvider implements ExplanationProvider {
    * Deterministic walkthrough: one step per hunk (the rest grouped into the last step when there
    * are more hunks than `walkStepsMax`), each step's range(s) over just that hunk's changed lines
    * (split at `walkRangeMaxChanged` for a big hunk, docs/l3-step-snippets.md) and one callout on
-   * its first changed line, so every hunk the prompt shows is covered without ever repeating a
+   * its first changed line, all named by line IDs as a real reply does, so every hunk the prompt shows is covered without ever repeating a
    * whole hunk under two steps.
    */
   async explainArea(input: AreaInput, onProgress?: (chunk: AreaStreamChunk) => void): Promise<AreaResult> {
@@ -339,13 +339,9 @@ export class StubProvider implements ExplanationProvider {
     const groups = inventory.length > LIMITS.walkStepsMax
       ? [...inventory.slice(0, LIMITS.walkStepsMax - 1).map((h) => [h]), inventory.slice(LIMITS.walkStepsMax - 1)]
       : inventory.map((h) => [h]);
-    const steps: WalkthroughStep[] = groups.map((group) => {
+    const steps: ReplyStep[] = groups.map((group) => {
       const ranges = group.flatMap(({ path, hunk }) => hunkRanges(path, hunk, fileChanged.get(path) ?? 0));
-      const callout = ranges[0]!;
-      const callouts: StepCallout[] = [{
-        path: callout.path, side: callout.side, start: callout.start, end: callout.start,
-        note: ko ? '스텁 콜아웃: 분석 없음' : 'stub callout: not analysed',
-      }];
+      const callouts = [{ path: ranges[0]!.path, line: ranges[0]!.from, note: ko ? '스텁 콜아웃: 분석 없음' : 'stub callout: not analysed' }];
       const a = group.reduce((n, { hunk }) => n + hunk.lines.filter((l) => l.kind === '+').length, 0);
       const d = group.reduce((n, { hunk }) => n + hunk.lines.filter((l) => l.kind === '-').length, 0);
       if (group.length > 1) {
@@ -381,7 +377,7 @@ export class StubProvider implements ExplanationProvider {
     const check = largest
       ? [ko ? `가장 큰 변경부터 확인하세요: ${largest.path}.` : `Read ${largest.path} first; it is the largest edit in this area.`]
       : [ko ? '분석할 수 있는 hunk가 없으니 파일을 직접 확인하세요.' : 'No hunk could be analysed; open the files directly.'];
-    const content: AreaWalkthrough = { overview, steps, check };
+    const content: AreaReply = { overview, steps, check };
     onProgress?.({ overview, steps, done: true });
     return { provider: this.id, model: this.model, content, timing: stubTiming(buildAreaPrompt(input), content) };
   }

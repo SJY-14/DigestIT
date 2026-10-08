@@ -59,6 +59,60 @@ const HTML = /<\/?(?:a|abbr|b|blockquote|br|button|code|div|em|embed|form|h[1-6]
 const URL_RE = /\bhttps?:\/\/\S+/gi;
 export const FILE_REF = /`|\b[\w-]+\.(?:tsx?|jsx?|json|md|ya?ml|py|sql|sh|css|html|toml|lock)\b|\b[\w-]+\/[\w./-]+/;
 
+/**
+ * Mixed-case product names that read as prose, not code: `l0CodeName` lets them through even
+ * though their inner capital looks like a camelCase or PascalCase identifier.
+ */
+const PRODUCT_NAMES = new Set([
+  'GitHub', 'GitLab', 'BitBucket', 'TypeScript', 'JavaScript', 'CoffeeScript', 'WebAssembly', 'WebSocket', 'WebSockets',
+  'WebGL', 'WebGPU', 'WebRTC', 'WebKit', 'GraphQL', 'MySQL', 'PostgreSQL', 'MongoDB', 'DynamoDB', 'CouchDB', 'MariaDB',
+  'IndexedDB', 'CockroachDB', 'ClickHouse', 'BigQuery', 'CloudWatch', 'CloudFront', 'CloudFlare', 'DigitalOcean', 'HashiCorp',
+  'FastAPI', 'OpenAPI', 'OpenAI', 'OpenID', 'OpenSSL', 'OpenSSH', 'OpenTelemetry', 'ChatGPT', 'NodeJS', 'NestJS', 'SwiftUI',
+  'AppKit', 'IntelliJ', 'JetBrains', 'WebStorm', 'PyCharm', 'PyPI', 'NumPy', 'SciPy', 'PyTorch', 'TensorFlow', 'LaTeX',
+  'VSCode', 'PowerShell', 'PowerPoint', 'OneDrive', 'SharePoint', 'DevOps', 'DevTools', 'YouTube', 'LinkedIn', 'PayPal',
+  'WhatsApp', 'TikTok', 'WordPress', 'iPhone', 'iPad', 'iPadOS', 'iOS', 'macOS', 'watchOS', 'tvOS', 'visionOS', 'iCloud',
+  'MacBook', 'AirPods', 'AirDrop', 'FaceTime', 'FreeBSD', 'OpenBSD', 'NetBSD', 'NixOS', 'CentOS', 'RedHat', 'SaaS', 'PaaS',
+  'IaaS', 'DigestIT',
+]);
+
+/** Quoted spans: "…", “…”, '…' (not an apostrophe), ‘…’, 「…」 and 『…』. */
+const QUOTED = [/"([^"\n]+)"/g, /\u201c([^\u201d\n]+)\u201d/g, /(?<![\p{L}\p{N}_])'([^'\n]+)'(?![\p{L}\p{N}_])/gu, /\u2018([^\u2019\n]+)\u2019/g, /\u300c([^\u300d\n]+)\u300d/g, /\u300e([^\u300f\n]+)\u300f/g];
+/** `name()` or `obj.name(arg)`: a call written out. */
+const CALL = /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\([^()\s]*\)/;
+
+/**
+ * A quoted span that is one code-like token: no space, only ASCII code characters, and not a
+ * plain capitalised word or an acronym (a UI label such as "Save" or "PDF" reads as prose).
+ */
+function quotedCode(inner: string): boolean {
+  const t = inner.trim();
+  if (t === '' || /\s/.test(t) || !/[A-Za-z]/.test(t) || !/^[\w$.:/@#<>[\]{}=+-]+$/.test(t)) return false;
+  return !/^[A-Z][a-z]+$/.test(t) && !/^[A-Z]{2,}s?$/.test(t) && !PRODUCT_NAMES.has(t);
+}
+
+/**
+ * The first file name or code identifier in an L0 line, or `null` (DIG-125): what `FILE_REF`
+ * catches (a backtick, a file name with a known extension, a path), plus a quoted code-like token
+ * ('retry', "max_retries", 「withRetry」), a camelCase/PascalCase name with an inner capital
+ * (`withRetry`, `RetryPolicy`; product names such as GitHub or TypeScript excepted), a snake_case
+ * name, and a `name()` call. L0 is for a product owner: it names no identifier at all.
+ */
+export function l0CodeName(text: string): string | null {
+  const ref = FILE_REF.exec(text);
+  if (ref) return ref[0];
+  for (const re of QUOTED) {
+    for (const m of text.matchAll(re)) if (quotedCode(m[1]!)) return m[0];
+  }
+  const call = CALL.exec(text);
+  if (call) return call[0];
+  for (const m of text.matchAll(/[A-Za-z0-9_$]+/g)) {
+    const t = m[0];
+    if (/[A-Za-z0-9]_[A-Za-z0-9]|^_[A-Za-z]/.test(t)) return t;
+    if (/[a-z][A-Z]/.test(t) && !PRODUCT_NAMES.has(t)) return t;
+  }
+  return null;
+}
+
 export function truncateWords(s: string, n: number): string {
   const parts = s.trim().split(/\s+/);
   return parts.length <= n ? s.trim() : `${parts.slice(0, n).join(' ')}…`;

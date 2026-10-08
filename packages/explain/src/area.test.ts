@@ -214,14 +214,14 @@ describe('buildAreaPrompt', () => {
 
   it('labels each file\'s hunks 1..n and lists every hunk to cover', () => {
     const p = buildAreaPrompt(baseInput);
-    expect(p).toContain('--- apps/web/src/App.tsx [M] +2 -0, 2 hunks\nhunk 1  @@ -1,3 +1,4 @@\n1  import React from "react";\n2+ import { Settings } from "./Settings";');
-    expect(p).toContain('hunk 2  @@ -20,2 +21,3 @@\n21    <Route path="/" />\n22+   <Route path="/settings" element={<Settings />} />');
+    expect(p).toContain('--- apps/web/src/App.tsx [M] +2 -0, 2 hunks\nhunk 1  @@ -1,3 +1,4 @@\n1.1  import React from "react";\n1.2+ import { Settings } from "./Settings";');
+    expect(p).toContain('hunk 2  @@ -20,2 +21,3 @@\n2.1    <Route path="/" />\n2.2+   <Route path="/settings" element={<Settings />} />');
     expect(p).toContain('--- apps/web/src/Settings.tsx [A] +2 -0, 1 hunk\nhunk 1  @@ -0,0 +1,2 @@');
     expect(p).toContain('Hunk list (cover every one):\n- apps/web/src/App.tsx: hunk 1, hunk 2\n- apps/web/src/Settings.tsx: hunk 1\n</change>');
     expect(p).toContain(
       '{"overview":string,"steps":[{"title":string,"body":string,'
-      + '"ranges":[{"path":string,"side":"old"|"new","start":number,"end":number}],'
-      + '"callouts":[{"path":string,"side":"old"|"new","start":number,"end":number,"note":string}],'
+      + '"ranges":[{"path":string,"from":string,"to":string}],'
+      + '"callouts":[{"path":string,"line":string,"note":string}],'
       + '"mechanical":boolean}],"check":string[]}',
     );
     expect(p).toContain('what this code does now, what it did before, and why it was changed this way');
@@ -243,7 +243,7 @@ describe('buildAreaPrompt', () => {
     const files: ProviderFile[] = [{ path: 'a.md', status: 'M', additions: 2, deletions: 2, patch: tricky, filteredReason: null }];
     const p = buildAreaPrompt({ ...baseInput, files });
     expect(splitHunks(tricky).map((h) => h.index)).toEqual([1, 2]);
-    expect(p).toContain('hunk 1  @@ -1,3 +1,3 @@\n1  a\n2- -- looks like a header\n2+ @@ -9 +9 @@ looks like a hunk\nhunk 2  @@ -40,2 +40,2 @@');
+    expect(p).toContain('hunk 1  @@ -1,3 +1,3 @@\n1.1  a\n1.2- -- looks like a header\n1.3+ @@ -9 +9 @@ looks like a hunk\nhunk 2  @@ -40,2 +40,2 @@');
     expect(p).toContain('- a.md: hunk 1, hunk 2');
   });
 
@@ -364,7 +364,8 @@ describe('checkAreaWalkthrough', () => {
     const r = checkAreaWalkthrough(reply, FILES)!;
     expect(r.violations.some((v) => v.startsWith('step 3: range 1 apps/web/src/App.tsx new 0-0 is malformed'))).toBe(true);
     expect(r.violations).toContain('step 3: references no valid range');
-    expect(r.violations.some((v) => v.startsWith('step 4: range 1 is malformed'))).toBe(true);
+    // A range that names no lines at all is dropped as a repair (DIG-125); the step still has none left.
+    expect(r.repairs).toContain('step 4: range 1 names no lines; dropped');
     expect(r.violations).toContain('step 4: references no valid range');
     expect(r.content.steps).toHaveLength(2);
   });
@@ -411,17 +412,15 @@ describe('checkAreaWalkthrough', () => {
     expect(r.violations).toEqual(expect.arrayContaining([expect.stringContaining('covers 35 changed lines: split it at the step boundaries')]));
   });
 
-  it('rejects two ranges of the same step that overlap', () => {
+  it('drops an exact duplicate range of the same step as a repair, not a violation (DIG-125)', () => {
     const dupe = {
       ...validReply.steps[1]!,
-      ranges: [range('apps/web/src/App.tsx', 'new', 2), range('apps/web/src/App.tsx', 'new', 2)],
-      callouts: [callout('apps/web/src/App.tsx', 'new', 2, 'imports the new screen')],
+      ranges: [range('apps/web/src/App.tsx', 'new', 2), range('apps/web/src/App.tsx', 'new', 2), range('apps/web/src/App.tsx', 'new', 22)],
     };
     const r = checkAreaWalkthrough({ ...validReply, steps: [validReply.steps[0]!, dupe] }, FILES)!;
-    expect(r.violations).toEqual(expect.arrayContaining([
-      expect.stringContaining('step 2: range 2 (apps/web/src/App.tsx new 2-2) overlaps another range in the same step'),
-    ]));
-    expect(r.content.steps[1]!.ranges).toEqual([range('apps/web/src/App.tsx', 'new', 2)]);
+    expect(r.violations).toEqual([]);
+    expect(r.repairs).toEqual(['step 2: range 2 (apps/web/src/App.tsx new 2-2) repeats range 1; dropped']);
+    expect(r.content.steps[1]!.ranges).toEqual([range('apps/web/src/App.tsx', 'new', 2), range('apps/web/src/App.tsx', 'new', 22)]);
   });
 
   it('rejects two ranges of different steps that overlap, naming both steps and the lines', () => {

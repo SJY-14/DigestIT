@@ -1,5 +1,4 @@
 import type {
-  AreaWalkthrough,
   DigestAreaSkeleton,
   DigestL2Content,
   ExplainLanguage,
@@ -7,8 +6,8 @@ import type {
   L1Content,
   L2Content,
   L3Content,
+  LineRange,
   ProjectContextContent,
-  WalkthroughStep,
 } from '@digestit/core';
 
 /** The Fast Explain tasks (docs/explain-speed.md §3), each with its own model/effort. `memory` is the
@@ -51,10 +50,34 @@ export interface CallMeta {
   timing?: CallTiming;
 }
 
+/**
+ * A walkthrough range or callout anchor as the model writes it (DIG-125): line IDs from the prompt,
+ * `{path, from, to}` or `{path, line}` ("2.7" = hunk 2, 7th shown line). The stored `LineRange` shape
+ * (area prompts a6-a10) is still read. `checkAreaWalkthrough` turns either into a `LineRange`.
+ */
+export type LineRef = { path: string; from: string; to: string } | { path: string; line: string } | LineRange;
+
+/** One walkthrough step as the model writes it; `WalkthroughStep` once validated. */
+export interface ReplyStep {
+  title: string;
+  body: string;
+  ranges: LineRef[];
+  callouts: (LineRef & { note: string })[];
+  mechanical: boolean;
+}
+
+/** An area walkthrough reply before validation; `AreaWalkthrough` once validated. */
+export interface AreaReply {
+  overview: string;
+  steps: ReplyStep[];
+  check: string[];
+}
+
 /** Steps arrive in order and are only ever appended; `overview` is set once the model has written it. */
 export interface AreaStreamChunk {
   overview: string | null;
-  steps: WalkthroughStep[];
+  /** As the model wrote them (line IDs); `explainArea` turns them into stored ranges before the UI sees them. */
+  steps: ReplyStep[];
   done: boolean;
 }
 
@@ -352,7 +375,7 @@ export interface AreaInput {
 }
 
 export interface AreaResult extends CallMeta {
-  content: AreaWalkthrough;
+  content: AreaReply;
   provider: string;
   model: string;
 }
