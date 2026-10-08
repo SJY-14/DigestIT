@@ -77,8 +77,11 @@ const PRODUCT_NAMES = new Set([
 
 /** Quoted spans: "…", “…”, '…' (not an apostrophe), ‘…’, 「…」 and 『…』. */
 const QUOTED = [/"([^"\n]+)"/g, /\u201c([^\u201d\n]+)\u201d/g, /(?<![\p{L}\p{N}_])'([^'\n]+)'(?![\p{L}\p{N}_])/gu, /\u2018([^\u2019\n]+)\u2019/g, /\u300c([^\u300d\n]+)\u300d/g, /\u300e([^\u300f\n]+)\u300f/g];
-/** `name()` or `obj.name(arg)`: a call written out. */
-const CALL = /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\([^()\s]*\)/;
+/**
+ * `name()` or `obj.name(arg)`: a call written out. The arguments are ASCII only, so a gloss in
+ * parentheses ("GitHub(깃허브)", "API(응답)") reads as prose, and a plural "(s)"/"(es)" is not a call.
+ */
+const CALL = /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(([\x21-\x27\x2a-\x7e]*)\)/g;
 
 /**
  * A quoted span that is one code-like token: no space, only ASCII code characters, and not a
@@ -103,8 +106,7 @@ export function l0CodeName(text: string): string | null {
   for (const re of QUOTED) {
     for (const m of text.matchAll(re)) if (quotedCode(m[1]!)) return m[0];
   }
-  const call = CALL.exec(text);
-  if (call) return call[0];
+  for (const m of text.matchAll(CALL)) if (m[1] !== 's' && m[1] !== 'es') return m[0];
   for (const m of text.matchAll(/[A-Za-z0-9_$]+/g)) {
     const t = m[0];
     if (/[A-Za-z0-9]_[A-Za-z0-9]|^_[A-Za-z]/.test(t)) return t;

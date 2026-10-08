@@ -41,6 +41,7 @@ const PASSES: { lang: string; text: string }[] = [
   { lang: 'en', text: 'A new "Save" button and a "PDF" option let readers keep a copy of the report.' },
   { lang: 'en', text: 'Users\' settings now survive a restart on macOS and iOS, so nobody has to sign in twice.' },
   { lang: 'en', text: 'Retries now wait longer each time (up to three attempts), so a busy server gets room to recover.' },
+  { lang: 'en', text: 'Reviewers now see which file(s) and branch(es) changed, so they know where to start.' },
   { lang: 'ko', text: 'HTTP 요청이 끝내 실패해도 오류 형식이 일정하고 재시도 간격이 늘어나, 3일 전 자동 재시도 작업을 이어 서버 부담을 줄입니다.' },
   { lang: 'ko', text: 'API 호출이 실패하면 간격을 두고 다시 시도하고 오류 형태도 통일해, 일시적 장애에서 호출자가 직접 대응하지 않아도 됩니다.' },
   { lang: 'ko', text: '재시도 함수를 패키지 진입점에서 바로 가져다 쓸 수 있어, 사용자가 실패한 API 호출을 직접 재시도하기 쉬워집니다.' },
@@ -48,6 +49,8 @@ const PASSES: { lang: string; text: string }[] = [
   { lang: 'ko', text: '「내보내기」 버튼이 페이지 배치를 유지해, 보고서가 화면과 같은 모양으로 인쇄됩니다.' },
   { lang: 'ko', text: '‘저장’ 버튼으로 보고서 사본을 남길 수 있어, 표를 손으로 옮기지 않아도 됩니다.' },
   { lang: 'ko', text: '재시도 간격이 매번 두 배로 늘어나(최대 세 번), 바쁜 서버가 회복할 여유를 얻습니다.' },
+  { lang: 'ko', text: 'GitHub(깃허브) 로그인이 끊기지 않아, 사용자가 다시 로그인하지 않아도 됩니다.' },
+  { lang: 'ko', text: 'API(외부 연동) 응답이 빨라져 페이지가 바로 열립니다.' },
 ];
 
 describe('l0CodeName (DIG-125)', () => {

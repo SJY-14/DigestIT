@@ -94,7 +94,8 @@ as one range per hunk; those ranges are exempt from rule 3). Changed lines insid
 outside every range are allowed; the full diff shows them without a step badge.
 
 Repairs on the kept result: drop bad ranges and callouts, drop a step left with no range, and
-move a mechanical step to the end.
+move a mechanical step to the end. Keep the rules in `LIMITS` and state the same numbers in the
+prompt, counted the same way (see DIG-94: a limit the prompt does not state costs a retry).
 
 ## 2a. Repair before retry (DIG-125)
 
@@ -115,8 +116,7 @@ when a hard violation is left after repair.
 Repairs change anchors only, never prose. The coverage check and the "Other changes" fallback run
 after repair, unchanged, and the no-repeat rule still holds. `checkAreaWalkthrough(…, { repair:
 false })` reports every slip as the violation it was before; the replay in
-`first-try-replay.test.ts` uses it as its baseline. Keep the rules in `LIMITS` and state the same numbers in the
-prompt, counted the same way (see DIG-94: a limit the prompt does not state costs a retry).
+`first-try-replay.test.ts` uses it as its baseline.
 
 ## 3. Prompt (area prompt `a6`)
 
