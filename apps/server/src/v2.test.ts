@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
-import { createProvider, type ExplanationProvider } from '@digestit/explain';
+import { AREA_PROMPT_VERSION, AREA_STORED_VERSIONS, createProvider, type ExplanationProvider } from '@digestit/explain';
 import { ensureDir0700, initProject, projectDataDir } from '@digestit/ingest';
 import { buildApp } from './app.js';
 import { SESSION_COOKIE } from './auth.js';
@@ -733,13 +733,28 @@ describe('POST /api/projects/:id/explain and the digest/area GETs', () => {
     expect((await get(app, `/api/digests/${digestId}/areas/src`)).json()).toMatchObject({ status: 'none', l3: null });
 
     // A row from the previous whole-hunk-step prompt (a5, DIG-98) is not shown either: only the
-    // current AREA_PROMPT_VERSION (a6, ranges + callouts) is ever read back.
+    // stored shape of a6 on (ranges + callouts, AREA_STORED_VERSIONS) is ever read back.
     db.prepare('DELETE FROM area_explanation').run();
     db.prepare(
       `INSERT INTO area_explanation (change_unit_id, area_id, content, status, provider, model, prompt_version, input_hash, created_at)
        VALUES (?, 'src', '{"overview":"x","steps":[{"title":"t","body":"b","hunks":[{"path":"src/b.ts","hunk":1}],"mechanical":false}],"check":["c"]}', 'ok', 'stub', 'stub-1', 'a5', 'h', '2026-09-01T00:00:00Z')`,
     ).run(digestId);
     expect((await get(app, `/api/digests/${digestId}/areas/src`)).json()).toMatchObject({ status: 'none', l3: null });
+
+    // DIG-125: a walkthrough stored by an earlier prompt with today's shape (a10) still renders after
+    // the bump to line IDs (a11); a row of the current prompt wins over it once there is one.
+    const a10 = { overview: 'old', steps: [{ title: 't', body: 'b', ranges: [{ path: 'src/b.ts', side: 'new', start: 1, end: 1 }], callouts: [], mechanical: true }], check: ['c'] };
+    db.prepare(
+      `INSERT INTO area_explanation (change_unit_id, area_id, content, status, provider, model, prompt_version, input_hash, created_at)
+       VALUES (?, 'src', ?, 'ok', 'stub', 'stub-1', 'a10', 'h', '2026-09-02T00:00:00Z')`,
+    ).run(digestId, JSON.stringify(a10));
+    expect(AREA_STORED_VERSIONS).toContain('a10');
+    expect((await get(app, `/api/digests/${digestId}/areas/src`)).json()).toMatchObject({ status: 'ok', l3: a10 });
+    db.prepare(
+      `INSERT INTO area_explanation (change_unit_id, area_id, content, status, provider, model, prompt_version, input_hash, created_at)
+       VALUES (?, 'src', ?, 'ok', 'stub', 'stub-1', ?, 'h', '2026-09-01T00:00:00Z')`,
+    ).run(digestId, JSON.stringify({ ...a10, overview: 'current' }), AREA_PROMPT_VERSION);
+    expect((await get(app, `/api/digests/${digestId}/areas/src`)).json()).toMatchObject({ l3: { overview: 'current' } });
 
     expect((await get(app, `/api/digests/${digestId}/areas/nope`)).statusCode).toBe(404);
     expect((await get(app, '/api/digests/999')).statusCode).toBe(404);

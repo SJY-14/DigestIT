@@ -59,6 +59,8 @@ describe.each(LANGS)('walkthrough repair before retry (DIG-125, %s)', (language)
     const r = checkAreaWalkthrough(sample.build(language), SAMPLE_FILES, language)!;
     expect(r.violations).toEqual([]);
     expect(r.repairs.length).toBeGreaterThan(0);
+    // `explain_call.violations` joins messages with "; ", so a repair message never contains one.
+    for (const m of r.repairs) expect(m).not.toContain('; ');
     expectCoveredOnce(r.content, SAMPLE_FILES, language);
     // Prose is never touched by a repair.
     expect(r.content.steps.map((s) => [s.title, s.body])).toEqual(validSample(language).steps.map((s) => [s.title, s.body]));
@@ -71,29 +73,29 @@ describe.each(LANGS)('walkthrough repair before retry (DIG-125, %s)', (language)
 
   it('moves a callout just outside its range to the nearest line inside it', () => {
     const r = checkAreaWalkthrough(SAMPLES.find((s) => s.id === 'callout-outside-only')!.build(language), SAMPLE_FILES, language)!;
-    expect(r.repairs).toEqual(["step 3: callout 1 (src/retry.js 1.6) was outside step 3's ranges; moved to src/retry.js 1.4"]);
+    expect(r.repairs).toEqual(["step 3: callout 1 (src/retry.js 1.6) was outside step 3's ranges, moved to src/retry.js 1.4"]);
     expect(r.content.steps[2]!.callouts.map(({ note: _n, ...c }) => c)).toEqual([{ path: 'src/retry.js', side: 'new', start: 3, end: 3 }]);
   });
 
   it('clips a callout that runs past its range to the lines inside it', () => {
     const r = checkAreaWalkthrough(SAMPLES.find((s) => s.id === 'callout-overhang')!.build(language), SAMPLE_FILES, language)!;
     // 1.10-1.11 named inside the range; 1.10 is the added half of a replacement, so 1.9 (its removed half) comes along.
-    expect(r.repairs).toEqual(["step 1: callout 1 (src/retry.js 1.10-1.12) was outside step 1's ranges; moved to src/retry.js 1.9-1.11"]);
+    expect(r.repairs).toEqual(["step 1: callout 1 (src/retry.js 1.10-1.12) was outside step 1's ranges, moved to src/retry.js 1.9-1.11"]);
     expect(r.content.steps[0]!.callouts.map(({ note: _n, ...c }) => c)).toEqual([{ path: 'src/retry.js', side: 'new', start: 8, end: 9 }]);
   });
 
   it('merges overlapping ranges of one step, and drops an exact duplicate', () => {
     const merged = checkAreaWalkthrough(SAMPLES.find((s) => s.id === 'same-step-overlap')!.build(language), SAMPLE_FILES, language)!;
-    expect(merged.repairs).toEqual(['step 1: range 2 (src/retry.js 1.9-1.11) overlapped range 1 of the same step; merged into src/retry.js 1.8-1.11']);
+    expect(merged.repairs).toEqual(['step 1: range 2 (src/retry.js 1.9-1.11) overlapped range 1 of the same step, merged into src/retry.js 1.8-1.11']);
     expect(merged.content.steps[0]!.ranges).toEqual([{ path: 'src/retry.js', side: 'new', start: 7, end: 9 }]);
     const dup = checkAreaWalkthrough(SAMPLES.find((s) => s.id === 'same-step-duplicate')!.build(language), SAMPLE_FILES, language)!;
-    expect(dup.repairs).toEqual(['step 1: range 2 (src/retry.js 1.8-1.11) repeats range 1; dropped']);
+    expect(dup.repairs).toEqual(['step 1: range 2 (src/retry.js 1.8-1.11) repeats range 1, dropped']);
     expect(dup.content).toEqual(checkAreaWalkthrough(validSample(language), SAMPLE_FILES, language)!.content);
   });
 
   it('trims a later step\'s range off an earlier step\'s lines', () => {
     const r = checkAreaWalkthrough(SAMPLES.find((s) => s.id === 'cross-step-overlap')!.build(language), SAMPLE_FILES, language)!;
-    expect(r.repairs).toEqual(["step 3: range 1 (src/retry.js 1.1-1.8) overlapped step 1's range (src/retry.js 1.8-1.11); trimmed to src/retry.js 1.1-1.7"]);
+    expect(r.repairs).toEqual(["step 3: range 1 (src/retry.js 1.1-1.8) overlapped step 1's range (src/retry.js 1.8-1.11), trimmed to src/retry.js 1.1-1.7"]);
     expect(r.content.steps[2]!.ranges).toEqual([{ path: 'src/retry.js', side: 'new', start: 1, end: 6 }]);
   });
 
@@ -141,7 +143,7 @@ describe.each(LANGS)('walkthrough repair before retry (DIG-125, %s)', (language)
     reply.steps[1] = { ...reply.steps[1]!, ranges: [{} as never, ...reply.steps[1]!.ranges] };
     const r = checkAreaWalkthrough(reply, SAMPLE_FILES, language)!;
     expect(r.violations).toEqual([]);
-    expect(r.repairs).toEqual(['step 2: range 1 names no lines; dropped']);
+    expect(r.repairs).toEqual(['step 2: range 1 names no lines, dropped']);
   });
 
   it('keeps the "Other changes" fallback for a hunk no range touches', () => {
@@ -246,7 +248,7 @@ describe.each(LANGS)('explainArea: retry only for a hard violation left after re
     const r = await explainArea(db, id, 'src', p, { job: { jobId, budget: 40 }, language });
     expect(r).toMatchObject({ outcome: 'ok', calls: 1 });
     const logged = db.prepare('SELECT violations FROM explain_call WHERE job_id = ?').all(jobId) as { violations: string | null }[];
-    expect(logged).toEqual([{ violations: "repair: step 3: callout 1 (src/retry.js 1.6) was outside step 3's ranges; moved to src/retry.js 1.4" }]);
+    expect(logged).toEqual([{ violations: "repair: step 3: callout 1 (src/retry.js 1.6) was outside step 3's ranges, moved to src/retry.js 1.4" }]);
     const row = db.prepare('SELECT status, style_warnings FROM area_explanation').get() as { status: string; style_warnings: number };
     expect(row).toEqual({ status: 'ok', style_warnings: 0 });
   });

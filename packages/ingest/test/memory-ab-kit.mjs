@@ -39,8 +39,14 @@
 // DIG-121 (round 3 follow-up): thread titles and entries in the memory section drop the continuity
 // clauses their stored L0s were written with (`stripContinuity`, as the prompt does), and
 // `dateCheckViolations` also counts the new relative-age check.
+//
+// DIG-125: walkthrough anchors the validator now fixes by itself are logged as kind `repair` and
+// reported apart (`violations.byKind.repair`, never a retry). `DIGESTIT_AB_RAW_REPLIES=1` keeps every
+// provider reply, before validation, as JSON lines under <out>/raw-replies/ (redacted like the stored
+// explanations; <out> is under .cache/, which git ignores), so the next round's findings can be
+// traced to the replies that caused them.
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,7 +60,7 @@ import {
 } from '@digestit/ingest';
 import { SNAPBACK_INIT, SNAPBACK_STORY } from './fixtures/memory-ab-story.mjs';
 import {
-  READER_SHEET, loadDigestMemory, mergeViolationCounts, promptTokenTotal, renderPair, violationCounts,
+  READER_SHEET, captureReplies, loadDigestMemory, mergeViolationCounts, promptTokenTotal, renderPair, violationCounts,
 } from './memory-ab-render.mjs';
 import { closeDbs, removeScratchDirs } from './scratch-cleanup.mjs';
 
@@ -412,7 +418,14 @@ async function main() {
       const pipelines = {};
       for (const arm of ARMS) {
         console.log(`--- ${scenarioName} / ${language} / memory-${arm} ---`);
-        const provider = makeProvider(real);
+        let provider = makeProvider(real);
+        if (process.env.DIGESTIT_AB_RAW_REPLIES === '1') {
+          const rawDir = join(out, 'raw-replies');
+          mkdirSync(rawDir, { recursive: true });
+          const file = join(rawDir, `${scenarioName}-${language}-${arm}.jsonl`);
+          writeFileSync(file, '');
+          provider = captureReplies(provider, (line) => appendFileSync(file, line + '\n'), { scenario: scenarioName, language, arm }, redact);
+        }
         const projectDir = mkdtempSync(join(tmpdir(), `digestit-ab-proj-${scenarioName}-${arm}-${language}-`));
         scratchDirs.push(projectDir);
         const { init, steps } = scenarioName === 'snapback' ? snapbackSteps(now) : historySteps(history, projectDir);
@@ -487,7 +500,7 @@ async function main() {
     console.log(`  validator findings: ${violations.callsWithViolations} call(s), by part ${JSON.stringify(violations.byPart)}`);
     // DIG-118 item 2: hard violations and style warnings both cause a retry (DIG-94); length notes
     // never do. Split so a lower first-try rate is traceable to its kind without opening the DB.
-    console.log(`  by kind: violation ${violations.byKind.violation.messages}, style ${violations.byKind.style.messages}, note ${violations.byKind.note.messages}, unknown ${violations.byKind.unknown.messages}`);
+    console.log(`  by kind: violation ${violations.byKind.violation.messages}, style ${violations.byKind.style.messages}, note ${violations.byKind.note.messages}, repair ${violations.byKind.repair.messages}, unknown ${violations.byKind.unknown.messages}`);
     console.log(`  retry-causing rules by part: ${JSON.stringify(violations.retryRulesByPart)}`);
   }
 }

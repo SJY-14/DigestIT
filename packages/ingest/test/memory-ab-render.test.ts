@@ -2,10 +2,10 @@ import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { openDb } from '@digestit/core';
 import type { NoteMemory, TermMemory, ThreadMemory } from '@digestit/core';
-import { logJobCall, startJob } from '@digestit/explain';
+import { logJobCall, redact, startJob } from '@digestit/explain';
 import { createBatch, recordMemoryUse, upsertMemoryItem } from '../src/memory.js';
 import {
-  READER_SHEET, loadDigestMemory, mergeViolationCounts, promptTokenTotal, renderMemorySection, renderPair, splitKindTag,
+  READER_SHEET, captureReplies, loadDigestMemory, mergeViolationCounts, promptTokenTotal, renderMemorySection, renderPair, splitKindTag,
   violationCounts, violationRule,
 } from './memory-ab-render.mjs';
 
@@ -166,6 +166,7 @@ describe('metrics (DIG-114)', () => {
         violation: { messages: 2, byRule: { 'l1: N words, limit N': 2 }, byPart: { summary: 1, walkthrough: 1 } },
         style: { messages: 1, byRule: { 'why: reads like marketing copy': 1 }, byPart: { summary: 1 } },
         note: { messages: 1, byRule: { 'l0: N words, target N': 1 }, byPart: { summary: 1 } },
+        repair: { messages: 0, byRule: {}, byPart: {} },
         unknown: { messages: 0, byRule: {}, byPart: {} },
       },
       retryRulesByPart: {
@@ -179,6 +180,47 @@ describe('metrics (DIG-114)', () => {
     expect(merged.byKind.style.messages).toBe(2);
     expect(merged.byKind.note.messages).toBe(2);
     expect(merged.retryRulesByPart.summary).toEqual({ 'l1: N words, limit N': 2, 'why: reads like marketing copy': 2 });
+  });
+
+  it('reports walkthrough repairs only under byKind.repair: not a violation, a note, a retry rule or a call with findings (DIG-125)', () => {
+    const { db, jobId } = seedRetryStory();
+    const base = { jobId, changeUnitId: 4, model: 'm', durationMs: 1, outcome: 'ok' as const };
+    const moved = "repair: step 3: callout 1 (src/retry.js 1.6) was outside step 3's ranges, moved to src/retry.js 1.4";
+    logJobCall(db, new Date(), 'area', { ...base, part: 'walkthrough:src', violations: moved });
+    logJobCall(db, new Date(), 'area', { ...base, part: 'walkthrough:src', violations: `violation: step 2: needs at least one callout; ${moved}` });
+    const v = violationCounts(db);
+    expect(v.callsWithViolations).toBe(1);
+    expect(v.messages).toBe(1);
+    expect(v.byRule).toEqual({ 'step N: needs at least one callout': 1 });
+    expect(v.retryRulesByPart).toEqual({ walkthrough: { 'step N: needs at least one callout': 1 } });
+    expect(v.byKind.repair).toEqual({
+      messages: 2, byRule: { "step N: callout N (…) was outside step N's ranges, moved to src/retry.js N.N": 2 }, byPart: { walkthrough: 2 },
+    });
+    expect(mergeViolationCounts([v, v]).byKind.repair.messages).toBe(4);
+    expect(splitKindTag(moved).kind).toBe('repair');
+  });
+
+  it('keeps raw replies, redacted, without changing what the provider returns (DIG-125)', async () => {
+    const lines: string[] = [];
+    const inner = {
+      id: 'stub', model: 'stub-1',
+      async explainArea(input: { retryFeedback?: string[]; area: { id: string } }) {
+        return { content: { overview: 'token: sk-ant-abcdefghijklmnopqrstuvwx leaked', steps: [], check: [] }, provider: 'stub', model: 'stub-1', input };
+      },
+      async explainDigestSummary() { throw new Error('boom'); },
+    };
+    const wrapped = captureReplies(inner, (l: string) => lines.push(l), { scenario: 'snapback', language: 'en', arm: 'on' }, redact);
+    expect(wrapped.id).toBe('stub');
+    const res = await wrapped.explainArea({ area: { id: 'src' } });
+    expect(res.content.overview).toContain('sk-ant-');
+    await wrapped.explainArea({ area: { id: 'src' }, retryFeedback: ['step 2: needs at least one callout'] });
+    await expect(wrapped.explainDigestSummary()).rejects.toThrow('boom');
+    const rec = lines.map((l) => JSON.parse(l));
+    expect(rec.map((r) => [r.method, r.attempt, r.area])).toEqual([['explainArea', 1, 'src'], ['explainArea', 2, 'src'], ['explainDigestSummary', 1, null]]);
+    expect(rec[0]).toMatchObject({ scenario: 'snapback', language: 'en', arm: 'on', model: 'stub-1', retryFeedback: null });
+    expect(rec[0].reply.overview).not.toContain('sk-ant-');
+    expect(rec[1].retryFeedback).toEqual(['step 2: needs at least one callout']);
+    expect(rec[2].error).toBe('boom');
   });
 
   it('reads an untagged (pre-DIG-118) message as kind "unknown" instead of guessing', () => {

@@ -442,7 +442,7 @@ export function checkAreaWalkthrough(
     (s.ranges as unknown[]).forEach((r, j) => {
       const parsed = parseRange(r, patches);
       if (!parsed.ok) {
-        if (parsed.empty && repair) rp.push(`${label}: range ${j + 1} names no lines; dropped`);
+        if (parsed.empty && repair) rp.push(`${label}: range ${j + 1} names no lines, dropped`);
         else v.push(`${label}: range ${j + 1} ${parsed.reason}`);
         return;
       }
@@ -453,7 +453,7 @@ export function checkAreaWalkthrough(
         return;
       }
       if (same) {
-        rp.push(`${label}: range ${j + 1} (${range.text}) repeats range ${same.n}; dropped`);
+        rp.push(`${label}: range ${j + 1} (${range.text}) repeats range ${same.n}, dropped`);
         return;
       }
       const overlapping = (span: LineSpan, except: readonly OwnRange[]): OwnRange[] =>
@@ -475,7 +475,7 @@ export function checkAreaWalkthrough(
         return;
       }
       const first = own.indexOf(group.reduce((a, b) => (own.indexOf(a) < own.indexOf(b) ? a : b)));
-      rp.push(`${label}: range ${j + 1} (${range.text}) overlapped range ${group.map((g) => g.n).sort((a, b) => a - b).join(', ')} of the same step; merged into ${merged.text}`);
+      rp.push(`${label}: range ${j + 1} (${range.text}) overlapped range ${group.map((g) => g.n).sort((a, b) => a - b).join(', ')} of the same step, merged into ${merged.text}`);
       own[first] = { n: own[first]!.n, range: merged };
       for (const g of group) if (own.indexOf(g) !== -1 && own.indexOf(g) !== first) own.splice(own.indexOf(g), 1);
     });
@@ -513,7 +513,7 @@ export function checkAreaWalkthrough(
         v.push(`${label}: range ${o.n} (${o.range.text}) overlaps step ${clashing.step + 1}'s range (${clashing.range.text})`);
         continue;
       }
-      rp.push(`${label}: range ${o.n} (${o.range.text}) overlapped step ${clashing.step + 1}'s range (${clashing.range.text}); trimmed to ${trimmed.text}`);
+      rp.push(`${label}: range ${o.n} (${o.range.text}) overlapped step ${clashing.step + 1}'s range (${clashing.range.text}), trimmed to ${trimmed.text}`);
       kept.push({ n: o.n, range: trimmed });
     }
     const ranges = kept.map((o) => o.range);
@@ -545,7 +545,7 @@ export function checkAreaWalkthrough(
           v.push(`${label}: callout ${c.n} (${at.text}) is not inside one of ${label}'s own ranges`);
           continue;
         }
-        rp.push(`${label}: callout ${c.n} (${at.text}) was outside ${label}'s ranges; moved to ${moved.text}`);
+        rp.push(`${label}: callout ${c.n} (${at.text}) was outside ${label}'s ranges, moved to ${moved.text}`);
         at = moved;
       }
       if (callouts.some((o) => o.path === at.path && spansOverlap(o.span, at.span))) {

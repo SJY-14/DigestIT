@@ -365,7 +365,7 @@ describe('checkAreaWalkthrough', () => {
     expect(r.violations.some((v) => v.startsWith('step 3: range 1 apps/web/src/App.tsx new 0-0 is malformed'))).toBe(true);
     expect(r.violations).toContain('step 3: references no valid range');
     // A range that names no lines at all is dropped as a repair (DIG-125); the step still has none left.
-    expect(r.repairs).toContain('step 4: range 1 names no lines; dropped');
+    expect(r.repairs).toContain('step 4: range 1 names no lines, dropped');
     expect(r.violations).toContain('step 4: references no valid range');
     expect(r.content.steps).toHaveLength(2);
   });
@@ -419,7 +419,7 @@ describe('checkAreaWalkthrough', () => {
     };
     const r = checkAreaWalkthrough({ ...validReply, steps: [validReply.steps[0]!, dupe] }, FILES)!;
     expect(r.violations).toEqual([]);
-    expect(r.repairs).toEqual(['step 2: range 2 (apps/web/src/App.tsx new 2-2) repeats range 1; dropped']);
+    expect(r.repairs).toEqual(['step 2: range 2 (apps/web/src/App.tsx new 2-2) repeats range 1, dropped']);
     expect(r.content.steps[1]!.ranges).toEqual([range('apps/web/src/App.tsx', 'new', 2), range('apps/web/src/App.tsx', 'new', 22)]);
   });
 
