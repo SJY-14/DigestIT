@@ -1,7 +1,7 @@
 // DIG-107/DIG-114 memory A/B kit: the blinded pair files, the reader sheet and the DB-derived
 // metrics, split out of memory-ab-kit.mjs so they are unit-tested (memory-ab-render.test.mjs)
 // without running a whole replay.
-import { formatMemoryDate, relativeAge } from '@digestit/explain';
+import { formatMemoryDate, relativeAge, stripContinuity } from '@digestit/explain';
 
 // ---------------------------------------------------------------------------
 // what the memory-on arm was sent for one digest (DIG-114 kit item 1)
@@ -50,9 +50,11 @@ function renderEntry(e, digestAt) {
     const prior = c.digests.filter((d) => d.at < digestAt).sort((a, b) => (a.at < b.at ? -1 : 1));
     const changes = prior.length === 0
       ? '  - _(no change before this one)_'
-      : prior.map((d) => `  - ${dayLabel(d.at)}, ${relativeAge(d.at, digestAt, 'en')}: "${d.l0}"`).join('\n');
+      : prior.map((d) => `  - ${dayLabel(d.at)}, ${relativeAge(d.at, digestAt, 'en')}: "${stripContinuity(d.l0)}"`).join('\n');
     const span = prior.length === 0 ? '' : ` — first ${dayLabel(prior[0].at)}, last ${dayLabel(prior[prior.length - 1].at)}`;
-    return `- **Thread** "${c.title}"${span} — ${usedIn}\n${changes}`;
+    // DIG-121: titles and entries without the continuity clauses their L0s were written with, as
+    // the prompt shows them (`renderThread`), so the reader sees the same ages the model did.
+    return `- **Thread** "${stripContinuity(c.title)}"${span} — ${usedIn}\n${changes}`;
   }
   if (e.kind === 'term') {
     return `- **Term** \`${c.term}\`${c.meaning ? `: ${c.meaning}` : ''} — ${usedIn}`;

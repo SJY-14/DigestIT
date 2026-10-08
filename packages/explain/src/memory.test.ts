@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AreaMemory, MemoryContent, MemoryItem, MemoryProvenance, NoteMemory, TermMemory, ThreadMemory } from '@digestit/core';
 import {
-  MEMORY_PROMPT_RULES, checkMemoryDateClaims, checkMemoryMechanism, formatMemoryDate, identifiersInDiff, memoryDateSources,
-  relativeAge, selectMemory,
+  MEMORY_PROMPT_RULES, checkMemoryAgeClaims, checkMemoryClaims, checkMemoryDateClaims, checkMemoryMechanism, formatMemoryDate,
+  identifiersInDiff, memoryCheckSources, memoryDateSources, relativeAge, relativeAgesIn, selectMemory, stripContinuity,
 } from './memory.js';
 import type { ProviderFile } from './provider.js';
 
@@ -134,7 +134,7 @@ describe('selectMemory: only what is specific to this change (DIG-114)', () => {
   it('sends nothing when the slice would hold only area relationships', () => {
     const items = [area('src', { usedBy: ['tests'] }), area('tests', { uses: ['src'] })];
     const slice = selectMemory(items, { ...KIND, touchedAreas: ['src'] }, 10_000);
-    expect(slice).toEqual({ items: [], text: '', tokens: 0, droppedForBudget: 0 });
+    expect(slice).toEqual({ items: [], text: '', tokens: 0, droppedForBudget: 0, ages: [] });
   });
 
   it('keeps the area lines once a term the diff uses is in the slice', () => {
@@ -448,6 +448,157 @@ describe('MEMORY_PROMPT_RULES (DIG-118: a continuity mention fits the word limit
 
   it('still asks for the thread\'s own title and age, never a bare date, as in DIG-114', () => {
     expect(MEMORY_PROMPT_RULES).toContain('never a bare date');
-    expect(MEMORY_PROMPT_RULES).toContain("that thread's own title and age exactly as shown there");
+    expect(MEMORY_PROMPT_RULES).toContain("that thread's own title and the age shown for that earlier change exactly as written there");
+  });
+
+  it('puts term names in l1 and below and keeps l0 free of identifiers (DIG-121)', () => {
+    expect(MEMORY_PROMPT_RULES).toMatch(/A term in <memory> is a code identifier: it belongs in the detailed fields/);
+    expect(MEMORY_PROMPT_RULES).toMatch(/never in l0, which still names no file, function or other identifier/);
+  });
+
+  it('allows no relative age but the one shown for an earlier change (DIG-121)', () => {
+    expect(MEMORY_PROMPT_RULES).toContain('never any other age');
+    expect(MEMORY_PROMPT_RULES).toMatch(/Name no other date, weekday or relative age/);
+  });
+});
+
+// Round 3 of the memory A/B (DIG-120): the L0s the snapback story stored, which a later slice quoted
+// as thread titles and entries, and the Version A sentences that copied their stale ages.
+const EN_STALE = {
+  backoff: 'Failed requests now retry with growing delays and surface a consistent error type, continuing the retry work from three days earlier.',
+  rename: 'The retry helper is renamed and exported publicly, so developers can call retries directly, continuing the retry work from three days earlier.',
+};
+const KO_STALE = {
+  backoff: 'HTTP 요청이 끝내 실패해도 오류 형식이 일정하고 재시도 간격이 늘어나, 3일 전 자동 재시도 작업을 이어 서버 부담을 줄입니다.',
+  fourxx: '재시도 호출 옵션을 객체로 바꾸고 4xx 오류는 재시도하지 않아, 소용없는 요청 반복을 막고 3일 전 재시도 진입점 작업을 이어갑니다.',
+};
+const EN_10_A = 'The retry rules were only visible by reading the loop body. The comment records them at the function, continuing the retry work from three days earlier on backoff and a consistent error type.';
+const KO_10_A = '`src/retry.js`의 `retryRequest` 선언 위에 JSDoc 한 줄을 추가했습니다. 로직은 건드리지 않았고, 3일 전 재시도 진입점 작업에서 넣은 4xx 규칙을 문서화합니다.';
+const KO_10_A_OK = '재시도 호출 옵션을 객체로 바꾸고 4xx 오류를 재시도하지 않게 한 5일 전 작업을 이어, `maxAttempts`와 `HttpError` 규칙을 호출부가 알 수 있게 합니다.';
+
+describe('stripContinuity (DIG-121)', () => {
+  it('drops an en continuity clause and its stale age from a stored L0', () => {
+    expect(stripContinuity(EN_STALE.backoff)).toBe('Failed requests now retry with growing delays and surface a consistent error type.');
+    expect(stripContinuity(EN_STALE.rename)).toBe('The retry helper is renamed and exported publicly, so developers can call retries directly.');
+    expect(stripContinuity("Callers can import retries from 'snapback' directly, and this continues the retry work from three days earlier."))
+      .toBe("Callers can import retries from 'snapback' directly.");
+    expect(stripContinuity('The comment records them at the function, continuing the retry work from three days earlier on backoff and a consistent error type.'))
+      .toBe('The comment records them at the function.');
+  });
+
+  it('handles a leading clause, a sentence of its own, and a bare age (en)', () => {
+    expect(stripContinuity('Continuing the retry work from 5 days earlier, failed requests now stop on client errors.'))
+      .toBe('Failed requests now stop on client errors.');
+    expect(stripContinuity('Retries now back off. This continues the retry work from three days earlier.')).toBe('Retries now back off.');
+    expect(stripContinuity('Fixes the retry helper added two weeks earlier.')).toBe('Fixes the retry helper added.');
+  });
+
+  it('drops a ko continuity clause, mid-sentence or sentence-final', () => {
+    expect(stripContinuity(KO_STALE.backoff)).toBe('HTTP 요청이 끝내 실패해도 오류 형식이 일정하고 재시도 간격이 늘어나, 서버 부담을 줄입니다.');
+    expect(stripContinuity(KO_STALE.fourxx)).toBe('재시도 호출 옵션을 객체로 바꾸고 4xx 오류는 재시도하지 않아, 소용없는 요청 반복을 막습니다.');
+    expect(stripContinuity('자동 재시도를 다루던 3일 전 작업을 이어, 즉시 재시도로 서버를 몰아붙이지 않게 합니다.'))
+      .toBe('즉시 재시도로 서버를 몰아붙이지 않게 합니다.');
+    expect(stripContinuity('실패한 요청을 줄이며 하루 전 작업을 이어갑니다.')).toBe('실패한 요청을 줄입니다.');
+  });
+
+  it('drops the age alone when a ko clause has no shape it can cut cleanly', () => {
+    const out = stripContinuity('대기 시간을 없애려는 변경으로, 3일 전 재시도 진입점 작업을 이어갑니다.');
+    expect(out).toBe('대기 시간을 없애려는 변경으로, 재시도 진입점 작업을 이어갑니다.');
+    expect(relativeAgesIn(out)).toEqual([]);
+  });
+
+  it('leaves text with no relative age alone, including "earlier" with no count and a ko date', () => {
+    const plain = 'Adds a small in-memory cache helper so repeated work with the same key can reuse its earlier result.';
+    expect(stripContinuity(plain)).toBe(plain);
+    expect(stripContinuity('요청마다 걸린 시간을 디버그 로그로 남겨, 느린 호출을 개발자가 바로 찾을 수 있게 합니다.'))
+      .toBe('요청마다 걸린 시간을 디버그 로그로 남겨, 느린 호출을 개발자가 바로 찾을 수 있게 합니다.');
+    expect(relativeAgesIn('9월 13일 전에 배포한 버전')).toEqual([]);
+  });
+});
+
+describe('selectMemory: no stale ages in a thread line (DIG-121)', () => {
+  const at = '2026-10-08T10:00:00.000Z';
+  const enThreads = (): MemoryItem[] => [
+    thread('d1', {
+      title: 'The HTTP client can now automatically retry a failed request, so brief network errors no longer break a call.',
+      areas: ['src'], terms: ['retryRequest'],
+      digests: [
+        { digestId: 1, seq: 1, at: '2026-09-24T10:00:00.000Z', l0: 'The HTTP client can now automatically retry a failed request, so brief network errors no longer break a call.' },
+        { digestId: 4, seq: 2, at: '2026-09-30T10:00:00.000Z', l0: EN_STALE.rename },
+      ],
+    }),
+    thread('d3', {
+      title: EN_STALE.backoff, areas: ['src'], terms: ['HttpError'],
+      digests: [{ digestId: 3, seq: 1, at: '2026-09-27T10:00:00.000Z', l0: EN_STALE.backoff }],
+    }),
+  ];
+
+  it('strips the clause from the title and the latest entry, and returns the ages it computed (en)', () => {
+    const slice = selectMemory(enThreads(), { ...KIND, touchedAreas: ['src'], identifiers: ['retryRequest', 'HttpError'], at }, 10_000);
+    expect(slice.text).not.toMatch(/three days earlier|continuing/);
+    expect(slice.text).toContain('latest "The retry helper is renamed and exported publicly, so developers can call retries directly." 8 days earlier');
+    expect(slice.text).toContain('- Failed requests now retry with growing delays and surface a consistent error type. (thread; 1 earlier change; 11 days earlier)');
+    expect(slice.ages).toEqual(['2 weeks earlier', '8 days earlier', '11 days earlier']);
+  });
+
+  it('does the same for ko, and for a stored summary', () => {
+    const t = thread('d1', {
+      title: KO_STALE.backoff, areas: ['src'], summary: '재시도 작업이 3일 전부터 이어집니다.',
+      digests: [
+        { digestId: 3, seq: 1, at: '2026-09-27T10:00:00.000Z', l0: KO_STALE.backoff },
+        { digestId: 6, seq: 2, at: '2026-10-03T10:00:00.000Z', l0: KO_STALE.fourxx },
+      ],
+    }, { language: 'ko' });
+    const slice = selectMemory([t], { ...KIND, language: 'ko', touchedAreas: ['src'], at }, 10_000);
+    expect(relativeAgesIn(slice.text)).toEqual(['11일 전', '5일 전']);
+    expect(slice.text).toContain('소용없는 요청 반복을 막습니다.');
+    expect(slice.ages).toEqual(['11일 전', '5일 전']);
+  });
+
+  it('gives no ages for an empty slice', () => {
+    expect(selectMemory([], { ...KIND, at }, 10_000).ages).toEqual([]);
+  });
+});
+
+describe('checkMemoryAgeClaims (DIG-121)', () => {
+  it('flags the round 3 en-10 Version A age, which the slice gave for no earlier change', () => {
+    const v = checkMemoryAgeClaims([EN_10_A], ['2 weeks earlier', 'the day before', '11 days earlier'], '', 'en');
+    expect(v).toHaveLength(1);
+    expect(v[0]).toContain('"three days earlier"');
+    expect(v[0]).toContain('(date check)');
+  });
+
+  it('flags the round 3 ko-10 Version A age but accepts the one it got right', () => {
+    const ages = ['2주 전', '5일 전', '8일 전', '하루 전'];
+    const v = checkMemoryAgeClaims([KO_10_A, KO_10_A_OK], ages, '', 'ko');
+    expect(v).toHaveLength(1);
+    expect(v[0]).toContain('"3일 전"');
+  });
+
+  it('accepts an age the slice gives, in words or digits, and the same-day and day-before forms', () => {
+    expect(checkMemoryAgeClaims(['This continues the retry work from three days earlier.'], ['3 days earlier'], '', 'en')).toEqual([]);
+    expect(checkMemoryAgeClaims(['It picks up the backoff work from the day before.'], ['the day before'], '', 'en')).toEqual([]);
+    expect(checkMemoryAgeClaims(['같은 날 앞서 바꾼 재시도 규칙을 이어갑니다.'], ['같은 날 앞서'], '', 'ko')).toEqual([]);
+    expect(checkMemoryAgeClaims(['하루 전 작업을 이어갑니다.'], ['하루 전'], '', 'ko')).toEqual([]);
+  });
+
+  it('flags a vague age and an en age in a ko reply', () => {
+    expect(checkMemoryAgeClaims(['It continues the retry work from a few days earlier.'], ['3 days earlier'], '', 'en')).toHaveLength(1);
+    expect(checkMemoryAgeClaims(['retry work from 2 weeks earlier를 이어갑니다.'], ['5일 전'], '', 'ko')).toHaveLength(1);
+  });
+
+  it('accepts an age the diff itself contains', () => {
+    const files: ProviderFile[] = [{ path: 'src/age.js', status: 'M', additions: 1, deletions: 0, patch: "+  return '3 days earlier';" }];
+    const slice = { items: [], text: '- x (thread; 1 earlier change; 2 weeks earlier)', tokens: 1, droppedForBudget: 0, ages: ['2 weeks earlier'] };
+    expect(checkMemoryClaims(['Ages now read "3 days earlier".'], memoryCheckSources(slice, files), 'en')).toEqual([]);
+  });
+
+  it('never takes an age from quoted text in the slice, only from the ages it gives', () => {
+    const slice = {
+      items: [], tokens: 1, droppedForBudget: 0, ages: ['2 weeks earlier'],
+      text: `- Retry (thread; 2 earlier changes; first 2 weeks earlier; latest "${EN_STALE.rename}" 8 days earlier)`,
+    };
+    const v = checkMemoryClaims([EN_10_A], memoryCheckSources(slice, []), 'en');
+    expect(v.some((m) => m.includes('"three days earlier"'))).toBe(true);
   });
 });

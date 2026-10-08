@@ -114,9 +114,29 @@ describe('buildThreadSummaryPrompt', () => {
     expect(first).toBeGreaterThan(-1);
     expect(second).toBeGreaterThan(first);
   });
+
+  it('sends the title and every L0 without its continuity clause (DIG-121)', () => {
+    const stale = 'Failed requests now retry with growing delays, continuing the retry work from three days earlier.';
+    const ko = '재시도 간격이 늘어나, 3일 전 자동 재시도 작업을 이어 서버 부담을 줄입니다.';
+    const prompt = buildThreadSummaryPrompt({
+      ...THREAD_INPUT, title: stale,
+      digests: [{ at: '2026-09-27T10:00:00.000Z', l0: stale }, { at: '2026-09-28T10:00:00.000Z', l0: ko }],
+    });
+    const block = prompt.slice(prompt.indexOf('<thread'));
+    expect(block).not.toMatch(/three days earlier|3일 전/);
+    expect(block).toContain('Title: Failed requests now retry with growing delays.');
+    expect(block).toContain('재시도 간격이 늘어나, 서버 부담을 줄입니다.');
+  });
 });
 
 describe('checkThreadSummary', () => {
+  it('flags a relative age, en or ko, since the summary is quoted from other dates (DIG-121)', () => {
+    expect(checkThreadSummary({ summary: 'Retry work that began two weeks earlier now covers backoff.' }, 'en')!.violations)
+      .toEqual(['summary: names the relative age "two weeks earlier"; describe the work without one']);
+    expect(checkThreadSummary({ summary: '3일 전 시작한 재시도 작업이 백오프까지 다룹니다.' }, 'ko')!.violations)
+      .toEqual(['summary: names the relative age "3일 전"; describe the work without one']);
+  });
+
   it('accepts a short summary', () => {
     const r = checkThreadSummary({ summary: 'Cleans up retry logging and stops L0 from truncating mid-sentence.' }, 'en');
     expect(r).not.toBeNull();

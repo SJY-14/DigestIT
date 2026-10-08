@@ -220,15 +220,24 @@ describe('checkSummaryLevels (DIG-74 split)', () => {
 
   it('flags an l1 bullet that cites memory itself once a memory slice was sent (DIG-114)', () => {
     const l1 = { userVisible: true, bullets: ['Calls now retry, but the 200ms convention in memory is not applied here.'] };
-    const r = checkSummaryLevels({ l0: validReply.l0, l1 }, 'en', '- withRetry (term)')!;
+    const r = checkSummaryLevels({ l0: validReply.l0, l1 }, 'en', { text: '- withRetry (term)', ages: [], codeText: '' })!;
     expect(r.violations).toEqual([expect.stringContaining('names the memory mechanism ("convention in memory")')]);
     // No slice sent: neither memory check runs, same as the date check.
     expect(checkSummaryLevels({ l0: validReply.l0, l1 }, 'en')!.violations).toEqual([]);
   });
 
   it('flags an area text that cites memory itself (DIG-114)', () => {
-    const r = checkAreaTextContent({ title: 'Retry backoff', effect: 'Retries wait longer.', how: 'Doubles the delay per attempt.', why: 'Memory says the team uses 200ms.' }, 'en', '')!;
+    const r = checkAreaTextContent({ title: 'Retry backoff', effect: 'Retries wait longer.', how: 'Doubles the delay per attempt.', why: 'Memory says the team uses 200ms.' }, 'en', { text: '', ages: [], codeText: '' })!;
     expect(r.violations).toEqual([expect.stringContaining('names the memory mechanism ("Memory says")')]);
+  });
+
+  it('flags a relative age the slice did not give for an earlier change, as a date-check violation (DIG-121)', () => {
+    const sources = { text: '- Retry (thread; 1 earlier change; 11 days earlier)', ages: ['11 days earlier'], codeText: '' };
+    const why = 'The comment records the rules at the function, continuing the retry work from three days earlier.';
+    const r = checkAreaTextContent({ title: 'Retry doc', effect: 'Nothing changes at runtime.', how: 'Adds a doc comment.', why }, 'en', sources)!;
+    expect(r.violations).toEqual([expect.stringMatching(/relative age "three days earlier".*\(date check\)/)]);
+    const ok = checkAreaTextContent({ title: 'Retry doc', effect: 'Nothing changes at runtime.', how: 'Adds a doc comment.', why: why.replace('three', 'eleven') }, 'en', sources)!;
+    expect(ok.violations).toEqual([]);
   });
 
   it('flags an l0 that mentions a file name', () => {
