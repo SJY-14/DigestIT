@@ -12,7 +12,7 @@ rounds 1 and 2 showed no harm to quality (round 2: 0 losses) and found no fabric
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-97 | Design, contract, Board decisions D1–D3 (approved), review, acceptance | CTO | DIG-121 |
+| 0 | DIG-97 | Design, contract, Board decisions D1–D3 (approved), review, acceptance | CTO | DIG-123 |
 | 1 | DIG-100 | Store, migration, rollback, export/clear, deterministic extraction, threads, `digest memory` CLI (merged) | Diff engineer | — |
 | 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task (merged; prompts s2/at2/a7) | Summarization engineer | — |
 | 3 | DIG-103 | `MemoryWorker` triggers, budget share, retrieval wired into Explain, memory API (merged) | Diff engineer | — |
@@ -26,7 +26,9 @@ rounds 1 and 2 showed no harm to quality (round 2: 0 losses) and found no fabric
 | 11 | DIG-118 | Continuity fits the `why` limit, metrics split hard/style/notes + retry rules per part, specific continuity, kit cleanup (merged; prompts s5/at5/a9) | Summarization engineer | — |
 | 12 | DIG-119 | Operator real run, round 3: snapback en+ko (20 pairs, ~140 calls, approved 2026-10-08) | Board operator | — |
 | 13 | DIG-120 | Blind read, round 3 (done). Board bar (2026-10-08): per language, memory wins ≥ 80 % of the pairs where its memory was relevant and loses at most 1 of the rest; ties are not wins; plus the existing bars. Not passed: relevant pairs 3/4 in en and ko (both pair-10 losses are stale "N days earlier" ages copied from stored L0 text in thread titles), en 3 other losses, first-try 0.77 vs 0.87 (en) and 0.77 vs 0.81 (ko) | UX Reviewer, CTO | — |
-| 14 | DIG-121 | No stale ages in thread text, a relative-age check, thread grouping on code facts only, L0 without identifiers | Summarization engineer | — |
+| 14 | DIG-121 | No stale ages in thread text, a relative-age check, thread grouping on code facts only, L0 without identifiers (merged; prompts s6/at6/a10) | Summarization engineer | — |
+| 15 | DIG-122 | Operator real run, round 4: snapback en+ko (~140 calls, needs the Board's OK) | Board operator | — |
+| 16 | DIG-123 | Blind read, round 4, against the same bars as round 3 | UX Reviewer, CTO | DIG-122 |
 
 ## Fast Explain
 
