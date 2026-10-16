@@ -11,6 +11,11 @@
 //   was partial) and "worst" (both genuine, so not repairable).
 // - the summary replay can only show the deterministic check. The stronger l0 prompt is what should
 //   lower the identifier rate, and only a real run can measure that (DIG-122 round 4).
+//
+// DIG-126: round 4 (DIG-122) left one residual rule, callout-vs-callout overlap, as the main cause
+// of a retry in both arms; its raw replies were not kept either, so the `round4` mix below is the
+// same kind of guess as `best`/`worst` above, one reply per overlap shape (test/walkthrough-
+// samples.ts), spread over the ~17 occurrences the real metrics logged.
 // Run `pnpm --filter @digestit/explain exec vitest run src/first-try-replay.test.ts` to print the report.
 import { describe, expect, it } from 'vitest';
 import type { ExplainLanguage } from '@digestit/core';
@@ -25,7 +30,7 @@ const PER_ARM = 30;
 const languageOf = (i: number): ExplainLanguage => (i < 20 ? 'en' : 'ko');
 
 /** Walkthrough replies with a defect, per arm and scenario, matching the round 2-3 rule counts. */
-const WALKTHROUGH_MIX: Record<'best' | 'worst', Record<Arm, [string, number][]>> = {
+const WALKTHROUGH_MIX: Record<'best' | 'worst' | 'round4', Record<Arm, [string, number][]>> = {
   best: {
     on: [['callout-outside-only', 2], ['callout-outside-sibling', 7], ['same-step-overlap', 3], ['same-step-duplicate', 3], ['cross-step-overlap', 1]],
     off: [['callout-outside-sibling', 5], ['same-step-overlap', 2], ['same-step-duplicate', 2], ['cross-step-overlap', 1]],
@@ -33,6 +38,14 @@ const WALKTHROUGH_MIX: Record<'best' | 'worst', Record<Arm, [string, number][]>>
   worst: {
     on: [['needs-callout', 2], ['callout-outside-sibling', 9], ['same-step-overlap', 3], ['same-step-duplicate', 3], ['cross-step-same-lines', 1]],
     off: [['callout-outside-sibling', 5], ['same-step-overlap', 2], ['same-step-duplicate', 2], ['cross-step-same-lines', 1]],
+  },
+  // DIG-126: round 4's single residual rule, callout-vs-callout overlap, spread over its three
+  // repairable shapes plus the one that stays a violation, 17 total (`.cache/DIG-121-acceptance-
+  // real/metrics.json`: en 5/5, ko 3/4 digests hit it). The raw replies were not kept, so the mix
+  // of shapes is a guess, not a measurement (as for round 2-3's `best`/`worst` above).
+  round4: {
+    on: [['callout-overlap-duplicate', 3], ['callout-overlap-partial', 3], ['callout-overlap-covered', 3], ['callout-overlap-same-line', 1]],
+    off: [['callout-overlap-duplicate', 2], ['callout-overlap-partial', 2], ['callout-overlap-covered', 2], ['callout-overlap-same-line', 1]],
   },
 };
 
@@ -67,7 +80,7 @@ function walkthroughPasses(reply: unknown, language: ExplainLanguage, repair: bo
   return r.violations.length === 0 && r.styleWarnings.length === 0;
 }
 
-function walkthroughRate(arm: Arm, scenario: 'best' | 'worst', repair: boolean): number {
+function walkthroughRate(arm: Arm, scenario: 'best' | 'worst' | 'round4', repair: boolean): number {
   const defects = WALKTHROUGH_MIX[scenario][arm].flatMap(([id, n]) => Array.from({ length: n }, () => SAMPLES.find((s) => s.id === id)!));
   let pass = 0;
   for (let i = 0; i < PER_ARM; i++) {
@@ -101,15 +114,19 @@ describe('first-try replay (DIG-125)', () => {
     wBestBefore: walkthroughRate(arm, 'best', false),
     wBest: walkthroughRate(arm, 'best', true),
     wWorst: walkthroughRate(arm, 'worst', true),
+    // DIG-126: round 4's residual, callout-vs-callout overlap, before and after this issue's repair.
+    r4Before: walkthroughRate(arm, 'round4', false),
+    r4After: walkthroughRate(arm, 'round4', true),
     sBefore: summaryRate(arm, false),
     sAfter: summaryRate(arm, true),
   }));
 
   it('prints the report', () => {
     const lines = [
-      `| memory | walkthrough before (worst / best mix) | walkthrough after, best | walkthrough after, worst | summary before | summary after (check only) |`,
-      `|---|---|---|---|---|---|`,
-      ...rows.map((r) => `| ${r.arm} | ${pct(r.wBefore)} / ${pct(r.wBestBefore)} | ${pct(r.wBest)} | ${pct(r.wWorst)} | ${pct(r.sBefore)} | ${pct(r.sAfter)} |`),
+      `| memory | walkthrough before (worst / best mix) | walkthrough after, best | walkthrough after, worst | round 4 before | round 4 after | summary before | summary after (check only) |`,
+      `|---|---|---|---|---|---|---|---|`,
+      ...rows.map((r) =>
+        `| ${r.arm} | ${pct(r.wBefore)} / ${pct(r.wBestBefore)} | ${pct(r.wBest)} | ${pct(r.wWorst)} | ${pct(r.r4Before)} | ${pct(r.r4After)} | ${pct(r.sBefore)} | ${pct(r.sAfter)} |`),
     ];
     console.log(`first-try pass, ${PER_ARM} first attempts per arm:\n${lines.join('\n')}`);
   });
@@ -125,5 +142,14 @@ describe('first-try replay (DIG-125)', () => {
 
   it('the summary replay is unchanged by the deterministic check: only the prompt can move it', () => {
     for (const r of rows) expect(r.sAfter).toBe(r.sBefore);
+  });
+
+  it('callout-overlap repair lifts round 4\'s residual close to the 0.95 target (DIG-126)', () => {
+    for (const r of rows) {
+      expect(r.r4After).toBeGreaterThanOrEqual(0.9);
+      expect(r.r4After).toBeGreaterThan(r.r4Before);
+      // The same single line with two different notes is not trivial: it still costs a retry.
+      expect(r.r4After).toBeLessThan(1);
+    }
   });
 });

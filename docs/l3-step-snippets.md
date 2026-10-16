@@ -51,7 +51,9 @@ marker gets no ID. The model answers with
 
 (a callout may use `from`/`to` for a few lines). IDs must be strings: `2.10` as a JSON number would
 read as `2.1`. The prompt states the anchor rules with one worked example in the walkthrough's
-language (`ANCHOR_EXAMPLE`, en and ko).
+language (`ANCHOR_EXAMPLE`, en and ko); since DIG-126 (prompt `a12`) that example also covers the
+callout no-overlap rule, stated the way the range rule already was ("each line in at most one
+callout") rather than the one-line aside it used to be.
 
 The parser (`packages/explain/src/lineids.ts`) turns the IDs into the stored `LineRange`. Nothing
 downstream changes: the stored JSON, the cache, `rangeSpan` and the UI all still see
@@ -110,13 +112,32 @@ when a hard violation is left after repair.
 | A range entry that names no lines, or repeats a range of the same step exactly | dropped | — |
 | Two ranges of one step overlap | merged into one range (snapped as in §1a) | when no stored range holds the union |
 | A range overlaps an earlier step's range | the later range is trimmed off the earlier lines | trimming would leave nothing, split the range in two (overlap strictly inside), or leave one of the step's callouts outside every range of the step |
-| A callout outside its step's ranges, in the same file and hunk as one of them | clipped to its lines inside the nearest range, or moved to that range's nearest line | another file or hunk; or the moved callout would overlap another callout of the step |
+| A callout outside its step's ranges, in the same file and hunk as one of them | clipped to its lines inside the nearest range, or moved to that range's nearest line, even onto a line another callout already holds (then goes through §2b) | another file or hunk |
 | A non-mechanical step with no callout | — | always: adding one would change what the step says |
 
 Repairs change anchors only, never prose. The coverage check and the "Other changes" fallback run
 after repair, unchanged, and the no-repeat rule still holds. `checkAreaWalkthrough(…, { repair:
 false })` reports every slip as the violation it was before; the replay in
 `first-try-replay.test.ts` uses it as its baseline.
+
+## 2b. Callout overlap repair (DIG-126)
+
+Round 4's raw replies were not kept, but memory A/B metrics (`.cache/DIG-121-acceptance-real/
+metrics.json`) showed the anchoring repairs above removed the round 2-3 rules they targeted, and
+left one residual as the main cause of a retry in both arms: "callout N overlaps another callout in
+step N". The validator now repairs this too, when the overlap is trivial, processing a step's
+callouts in reply order and comparing each against the ones already kept:
+
+| Shape | Repair | Not repaired (stays a violation) |
+|---|---|---|
+| Exact duplicate: same lines, same note after trimming whitespace | the later callout is dropped | — |
+| Partial overlap: the later callout has lines of its own outside the earlier one's | the later callout is trimmed to just those lines (snapped as in §1a) | the trim would leave nothing contiguous (e.g. the earlier one's lines sit in the middle of the later one's) |
+| The later callout's lines are fully covered by the earlier one's (or the two name the same lines with a different note), and the earlier one spans more lines | the earlier callout is trimmed to exclude the later one's lines, keeping the later one as the model wrote it | trimming the earlier one would leave it empty, or would drop its own first line (the later one's lines sit inside, not at an edge, of the earlier one's) |
+| Same single line, two different notes (or any other case above the earlier one does not span more lines than the later one) | — | always: neither callout can give way without changing what it says |
+
+A callout moved in from outside its step's ranges (§2a) that lands on a line another callout
+already holds is not failed outright: it goes through these same rules, as if it had always pointed
+there. Repairs here never touch a note's text, only line anchors, same as §2a.
 
 ## 3. Prompt (area prompt `a6`)
 

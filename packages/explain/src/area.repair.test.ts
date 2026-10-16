@@ -114,6 +114,60 @@ describe.each(LANGS)('walkthrough repair before retry (DIG-125, %s)', (language)
     expectCoveredOnce(orphan.content, SAMPLE_FILES, language);
   });
 
+  it('drops an exact duplicate callout, same line and note (DIG-126)', () => {
+    const r = checkAreaWalkthrough(SAMPLES.find((s) => s.id === 'callout-overlap-duplicate')!.build(language), SAMPLE_FILES, language)!;
+    expect(r.repairs).toEqual(["step 1: callout 2 (src/retry.js 1.10) repeats callout 1's lines and note, dropped"]);
+    expect(r.content.steps[0]!.callouts.map(({ note: _n, ...c }) => c)).toEqual([{ path: 'src/retry.js', side: 'new', start: 8, end: 8 }]);
+  });
+
+  it('trims a later callout to its own non-overlapping line (DIG-126)', () => {
+    const r = checkAreaWalkthrough(SAMPLES.find((s) => s.id === 'callout-overlap-partial')!.build(language), SAMPLE_FILES, language)!;
+    expect(r.repairs).toEqual([
+      "step 1: callout 2 (src/retry.js 1.10-1.11) overlapped callout 1 (src/retry.js 1.9-1.10) in step 1, trimmed to src/retry.js 1.11",
+    ]);
+    expect(r.content.steps[0]!.callouts.map(({ note: _n, ...c }) => c)).toEqual([
+      { path: 'src/retry.js', side: 'new', start: 8, end: 8 },
+      { path: 'src/retry.js', side: 'new', start: 9, end: 9 },
+    ]);
+  });
+
+  it("trims the earlier callout instead when the later one's lines are fully covered by it (DIG-126)", () => {
+    const r = checkAreaWalkthrough(SAMPLES.find((s) => s.id === 'callout-overlap-covered')!.build(language), SAMPLE_FILES, language)!;
+    expect(r.repairs).toEqual([
+      "step 1: callout 1 (src/retry.js 1.9-1.11) overlapped by callout 2 (src/retry.js 1.11) in step 1, trimmed to src/retry.js 1.9-1.10",
+    ]);
+    expect(r.content.steps[0]!.callouts.map(({ note: _n, ...c }) => c)).toEqual([
+      { path: 'src/retry.js', side: 'new', start: 8, end: 8 },
+      { path: 'src/retry.js', side: 'new', start: 9, end: 9 },
+    ]);
+  });
+
+  it('keeps two callouts on the same single line a violation when their notes differ (DIG-126)', () => {
+    const r = checkAreaWalkthrough(SAMPLES.find((s) => s.id === 'callout-overlap-same-line')!.build(language), SAMPLE_FILES, language)!;
+    expect(r.violations).toEqual(['step 1: callout 2 (src/retry.js 1.10) overlaps another callout in step 1']);
+    expect(r.repairs).toEqual([]);
+  });
+
+  it("names an earlier callout by its own reply position, not shifted by a dropped duplicate before it (DIG-126)", () => {
+    const reply = validSample(language);
+    const [wrap, wait] = reply.steps[0]!.callouts.map((c) => c.note);
+    reply.steps[0] = {
+      ...reply.steps[0]!,
+      callouts: [
+        { path: 'src/retry.js', line: '1.8', note: wrap! },
+        { path: 'src/retry.js', line: '1.8', note: wrap! }, // exact duplicate of callout 1: dropped, never occupies a kept slot
+        { path: 'src/retry.js', from: '1.9', to: '1.10', note: wait! },
+        { path: 'src/retry.js', from: '1.10', to: '1.11', note: wrap! }, // overlaps callout 3, not 2
+      ],
+    };
+    const r = checkAreaWalkthrough(reply, SAMPLE_FILES, language)!;
+    expect(r.repairs).toEqual([
+      "step 1: callout 2 (src/retry.js 1.8) repeats callout 1's lines and note, dropped",
+      "step 1: callout 4 (src/retry.js 1.10-1.11) overlapped callout 3 (src/retry.js 1.9-1.10) in step 1, trimmed to src/retry.js 1.11",
+    ]);
+    expect(r.violations).toEqual([]);
+  });
+
   it('keeps an overlap strictly inside a later range a violation (trimming would split it in two)', () => {
     const reply = validSample(language);
     reply.steps[2] = { ...reply.steps[2]!, ranges: [{ path: 'src/retry.js', from: '1.1', to: '1.13' }] };
@@ -128,14 +182,18 @@ describe.each(LANGS)('walkthrough repair before retry (DIG-125, %s)', (language)
     expect(r.repairs).toEqual([]);
   });
 
-  it('does not move a callout in another file, or onto a line another callout of the step holds', () => {
+  it('does not move a callout anchored in a file the step has no range in', () => {
     const other = checkAreaWalkthrough(SAMPLES.find((s) => s.id === 'callout-other-file')!.build(language), SAMPLE_FILES, language)!;
     expect(other.violations).toEqual(["step 3: callout 2 (src/errors.js 1.2) is not inside one of step 3's own ranges"]);
+  });
+
+  it('moves a callout onto a line another callout holds, then runs it through the overlap rules (DIG-126)', () => {
     const reply = validSample(language);
-    // 1.12 is outside step 1's 1.8-1.11; its nearest line, 1.11, already has a callout.
+    // 1.12 is outside step 1's 1.8-1.11; its nearest line, 1.11, already has a callout with a different note.
     reply.steps[0] = { ...reply.steps[0]!, callouts: [reply.steps[0]!.callouts[1]!, { ...reply.steps[0]!.callouts[0]!, line: '1.12' }] };
-    const taken = checkAreaWalkthrough(reply, SAMPLE_FILES, language)!;
-    expect(taken.violations).toEqual(["step 1: callout 2 (src/retry.js 1.12) is not inside one of step 1's own ranges"]);
+    const r = checkAreaWalkthrough(reply, SAMPLE_FILES, language)!;
+    expect(r.repairs).toEqual(["step 1: callout 2 (src/retry.js 1.12) was outside step 1's ranges, moved to src/retry.js 1.11"]);
+    expect(r.violations).toEqual(['step 1: callout 2 (src/retry.js 1.11) overlaps another callout in step 1']);
   });
 
   it('drops a range entry that names no lines, when the step has another', () => {
