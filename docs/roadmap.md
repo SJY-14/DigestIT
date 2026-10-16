@@ -12,7 +12,7 @@ rounds 1 and 2 showed no harm to quality (round 2: 0 losses) and found no fabric
 
 | # | Key | Issue | Owner | Depends on |
 |---|---|---|---|---|
-| 0 | DIG-97 | Design, contract, Board decisions D1–D3 (approved), review, acceptance. Open item: en first-try on the next A/B run | CTO | DIG-126 |
+| 0 | DIG-97 | Design, contract, Board decisions D1–D3 (approved), review, acceptance. Open item: en first-try on the next A/B run | CTO | DIG-127 |
 | 1 | DIG-100 | Store, migration, rollback, export/clear, deterministic extraction, threads, `digest memory` CLI (merged) | Diff engineer | — |
 | 2 | DIG-101 | `selectMemory`, `<memory>` prompt block, date check, `memory` summary task (merged; prompts s2/at2/a7) | Summarization engineer | — |
 | 3 | DIG-103 | `MemoryWorker` triggers, budget share, retrieval wired into Explain, memory API (merged) | Diff engineer | — |
@@ -30,6 +30,7 @@ rounds 1 and 2 showed no harm to quality (round 2: 0 losses) and found no fabric
 | 15 | DIG-125 | L3 walkthrough valid on the first try (Board, DIG-124): hunk-relative line IDs in the prompt, deterministic repair before retry (logged apart from violations), stricter L0 identifier check, opt-in raw-reply capture (merged; prompts a11/s7/d6). Stub replay: walkthrough first-try 0.90–1.00 after repair (was 0.40–0.67); summary unchanged by the check, so round 4 measures the prompt | Summarization engineer | — |
 | 16 | DIG-122 | Operator real run, round 4 (done): first try 0.887 on / 0.903 off (round 3: 0.774 / 0.839). DIG-125's target rules and L0 identifiers fell to 0; the new residual is callout-vs-callout overlap (8 / 9), which has no repair. Raw replies not kept | Board operator | — |
 | 18 | DIG-126 | Repair overlapping callouts before retry, clearer callout rule (en/ko), per-part first-try in the A/B metrics, raw replies on by default (merged; prompt a12). Stub replay of the round 4 residual: walkthrough first-try 0.67→0.97 on, 0.77→0.97 off (same single line with two notes still retries). Real check rides on the next A/B run (closes DIG-124) | Summarization engineer | Operator: next memory A/B real run |
+| 19 | DIG-127 | Operator real run, round 5 (snapback en+ko, after DIG-126; needs the Board's OK on ~140 calls): per-part first try against the 0.95 targets, en on vs off, raw replies kept | Board operator | — |
 | 17 | DIG-123 | Blind read, round 4 (done; tally checked against `key.json` by the CTO). The blind read **passes** in both languages: relevant pairs 4/4 en and 4/4 ko, other pairs 1 loss en and 0 ko; 0 unsupported continuity claims, 0 wrong ages, 0 mechanism mentions, 0 AI tells, L0 p50 within 1 %. Still open: first-try in en is 26/31 parts with memory on vs 28/31 off (ko 29/31 vs 28/31, both languages 55/62 vs 56/62). The two extra en-on failures are an L0 over its word limit and walkthrough range rules. The bar is not waived. It is re-checked on the next A/B run after DIG-126, which adds per-part first-try | UX Reviewer, CTO | — |
 
 ## Fast Explain
