@@ -3,6 +3,10 @@
 // in memory A/B rounds 2-3 (`.cache/DIG-11{4,8}-acceptance-real/metrics.json`). The raw replies of
 // those rounds were not kept, so each sample is written to reproduce its rule message, in the line-ID
 // shape of area prompt a11. Shared by area.repair.test.ts and first-try-replay.test.ts.
+// DIG-126: round 4's raw replies were not kept either (`.cache/DIG-121-acceptance-real/metrics.json`
+// had no `raw-replies/`), so its one residual rule, callout-vs-callout overlap, is reproduced the
+// same way: one sample per overlap shape (exact duplicate, partial, one fully covering the other,
+// and the non-trivial same-single-line-different-note case), in the `line`/`from`/`to` callout shape.
 import type { ExplainLanguage } from '@digestit/core';
 import type { AreaReply, ProviderFile, ReplyStep } from '../src/provider.js';
 
@@ -205,5 +209,35 @@ export const SAMPLES: Sample[] = [
     outcome: 'retry',
     // A callout on a file the step has no range in: moving it would change what it points at.
     build: (l) => edit(l, 2, (s, t) => ({ callouts: [...s.callouts, { path: E, line: '1.2', note: t.s2.status }] })),
+  },
+  // DIG-126: round 4's single residual rule, "callout N overlaps another callout in step N"
+  // (`.cache/DIG-121-acceptance-real/metrics.json`), one sample per overlap shape.
+  {
+    id: 'callout-overlap-duplicate',
+    rules: ['step N: callout N (…) overlaps another callout in step N'],
+    outcome: 'repaired',
+    // Step 1's two callouts name the same line with the same note.
+    build: (l) => edit(l, 0, (_s, t) => ({ callouts: [{ path: R, line: '1.10', note: t.s1.wrap }, { path: R, line: '1.10', note: t.s1.wrap }] })),
+  },
+  {
+    id: 'callout-overlap-partial',
+    rules: ['step N: callout N (…) overlaps another callout in step N'],
+    outcome: 'repaired',
+    // Step 1's second callout's lines run into the first's; its own 1.11 is free.
+    build: (l) => edit(l, 0, (_s, t) => ({ callouts: [{ path: R, from: '1.9', to: '1.10', note: t.s1.wrap }, { path: R, from: '1.10', to: '1.11', note: t.s1.wait }] })),
+  },
+  {
+    id: 'callout-overlap-covered',
+    rules: ['step N: callout N (…) overlaps another callout in step N'],
+    outcome: 'repaired',
+    // Step 1's first callout's lines fully cover the second's trailing line.
+    build: (l) => edit(l, 0, (_s, t) => ({ callouts: [{ path: R, from: '1.9', to: '1.11', note: t.s1.wrap }, { path: R, line: '1.11', note: t.s1.wait }] })),
+  },
+  {
+    id: 'callout-overlap-same-line',
+    rules: ['step N: callout N (…) overlaps another callout in step N'],
+    outcome: 'retry',
+    // Step 1's two callouts both name 1.10, with different notes: not a trivial duplicate.
+    build: (l) => edit(l, 0, (_s, t) => ({ callouts: [{ path: R, line: '1.10', note: t.s1.wrap }, { path: R, line: '1.10', note: t.s1.wait }] })),
   },
 ];

@@ -45,6 +45,13 @@
 // provider reply, before validation, as JSON lines under <out>/raw-replies/ (redacted like the stored
 // explanations; <out> is under .cache/, which git ignores), so the next round's findings can be
 // traced to the replies that caused them.
+//
+// DIG-126 (round 4 follow-up): raw-reply capture now defaults on for `--real` (round 4 ran without
+// it, so its one residual rule's exact shapes were never known; `DIGESTIT_AB_RAW_REPLIES=0` opts
+// out), a dry run still defaults off, and the kit prints which at the top. `firstTryByPart` (per
+// scenario/language/arm, and pooled in `byArm`) splits the pooled first-try rate by `summary`/
+// `area`/`walkthrough`, so the Board's per-part targets read directly off one row instead of
+// requiring a fresh query.
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -287,18 +294,39 @@ function percentile(sorted, p) {
   return sorted[idx];
 }
 
+/** `summary`/`area:<id>`/`walkthrough` part first-try attempted/pass, for the Board's per-part
+ * targets (walkthrough and summary >= 0.95 first try); `context` calls count only in the pooled
+ * `attemptedParts`/`firstTryParts` below, not here, since they are not one of those three. */
+function emptyPartCounts() {
+  return { summary: { attempted: 0, firstTry: 0 }, area: { attempted: 0, firstTry: 0 }, walkthrough: { attempted: 0, firstTry: 0 } };
+}
+
+function withPassRate(counts) {
+  return Object.fromEntries(Object.entries(counts).map(([k, c]) => [k, { ...c, passRate: c.attempted === 0 ? null : c.firstTry / c.attempted }]));
+}
+
 function pipelineMetrics(pipeline) {
   const { db, digests } = pipeline;
   let attempted = 0;
   let firstTry = 0;
+  const byPart = emptyPartCounts();
   for (const d of digests) {
     for (const p of d.report?.parts ?? []) {
       attempted++;
-      if ((p.status === 'ok' || p.status === 'truncated') && p.calls === 1) firstTry++;
+      const ok = (p.status === 'ok' || p.status === 'truncated') && p.calls === 1;
+      if (ok) firstTry++;
+      const kind = p.part === 'summary' ? 'summary' : p.part.startsWith('area:') ? 'area' : null;
+      if (kind) {
+        byPart[kind].attempted++;
+        if (ok) byPart[kind].firstTry++;
+      }
     }
     if (d.walkthroughOutcome) {
       attempted++;
-      if ((d.walkthroughOutcome.outcome === 'ok' || d.walkthroughOutcome.outcome === 'truncated') && d.walkthroughOutcome.calls === 1) firstTry++;
+      const ok = (d.walkthroughOutcome.outcome === 'ok' || d.walkthroughOutcome.outcome === 'truncated') && d.walkthroughOutcome.calls === 1;
+      if (ok) firstTry++;
+      byPart.walkthrough.attempted++;
+      if (ok) byPart.walkthrough.firstTry++;
     }
   }
   const lint = lintDb(db);
@@ -329,6 +357,9 @@ function pipelineMetrics(pipeline) {
     // raw inputs for the per-arm rollup in main(), which pools these rather than averaging rates
     attemptedParts: attempted,
     firstTryParts: firstTry,
+    // DIG-126: the same first-try pass as above, split by part kind, so the Board's targets
+    // (walkthrough and summary >= 0.95 first try) can be read directly off one arm's row.
+    firstTryByPart: withPassRate(byPart),
     l0DurationsMs: durations,
   };
 }
@@ -409,6 +440,13 @@ async function main() {
 
   const history = scenarios.includes('history') ? buildHistoryScenario() : null;
 
+  // DIG-126: raw replies default on for a real run (findable evidence for the next round's
+  // findings, as DIG-125 wanted but round 4 ran without); `DIGESTIT_AB_RAW_REPLIES=0` opts out.
+  // A dry run still defaults off (the stub's replies are deterministic, nothing to trace).
+  const rawRepliesEnv = process.env.DIGESTIT_AB_RAW_REPLIES;
+  const rawReplies = rawRepliesEnv === '0' ? false : rawRepliesEnv === '1' ? true : real;
+  console.log(`raw-reply capture: ${rawReplies ? 'on' : 'off'}${rawRepliesEnv === undefined ? ` (default for --${real ? 'real' : 'dry-run'})` : ''}`);
+
   const metrics = { generatedAt: now.toISOString(), real, scenarios, languages, byScenarioLanguageArm: [], byArm: {}, termCoverage: [] };
   const key = {};
   const l0Durations = { on: [], off: [] };
@@ -419,7 +457,7 @@ async function main() {
       for (const arm of ARMS) {
         console.log(`--- ${scenarioName} / ${language} / memory-${arm} ---`);
         let provider = makeProvider(real);
-        if (process.env.DIGESTIT_AB_RAW_REPLIES === '1') {
+        if (rawReplies) {
           const rawDir = join(out, 'raw-replies');
           mkdirSync(rawDir, { recursive: true });
           const file = join(rawDir, `${scenarioName}-${language}-${arm}.jsonl`);
@@ -465,11 +503,17 @@ async function main() {
     const digestCount = rows.reduce((n, r) => n + r.digestCount, 0);
     const attemptedParts = rows.reduce((n, r) => n + r.attemptedParts, 0);
     const firstTryParts = rows.reduce((n, r) => n + r.firstTryParts, 0);
+    const pooledByPart = emptyPartCounts();
+    for (const kind of Object.keys(pooledByPart)) {
+      pooledByPart[kind].attempted = rows.reduce((n, r) => n + r.firstTryByPart[kind].attempted, 0);
+      pooledByPart[kind].firstTry = rows.reduce((n, r) => n + r.firstTryByPart[kind].firstTry, 0);
+    }
     metrics.byArm[arm] = {
       digestCount,
       explainCallCount: rows.reduce((n, r) => n + r.explainCallCount, 0),
       memoryUseRows: rows.reduce((n, r) => n + r.memoryUseRows, 0),
       firstTryPassRate: attemptedParts === 0 ? null : firstTryParts / attemptedParts,
+      firstTryByPart: withPassRate(pooledByPart),
       aiTellHits: rows.reduce((n, r) => n + r.aiTellHits, 0),
       dateCheckViolations: rows.reduce((n, r) => n + r.dateCheckViolations, 0),
       promptTokensTotal: rows.reduce((n, r) => n + r.promptTokensTotal, 0),
@@ -495,8 +539,11 @@ async function main() {
 
   console.log(`\nwrote ${out}/metrics.json, key.json, reader-sheet.md and ${Object.keys(key).length} blinded pair(s) under ${pairsDir}/`);
   for (const arm of ARMS) {
-    const { violations, ...rest } = metrics.byArm[arm];
+    const { violations, firstTryByPart, ...rest } = metrics.byArm[arm];
     console.log(`memory ${arm}: ${JSON.stringify(rest)}`);
+    // DIG-126: the Board's targets (walkthrough and summary >= 0.95 first try) read off this line.
+    const fmtPart = (p) => `${(p.passRate === null ? 'n/a' : (p.passRate * 100).toFixed(0) + '%')} (${p.firstTry}/${p.attempted})`;
+    console.log(`  first-try by part: summary ${fmtPart(firstTryByPart.summary)}, area ${fmtPart(firstTryByPart.area)}, walkthrough ${fmtPart(firstTryByPart.walkthrough)}`);
     console.log(`  validator findings: ${violations.callsWithViolations} call(s), by part ${JSON.stringify(violations.byPart)}`);
     // DIG-118 item 2: hard violations and style warnings both cause a retry (DIG-94); length notes
     // never do. Split so a lower first-try rate is traceable to its kind without opening the DB.
